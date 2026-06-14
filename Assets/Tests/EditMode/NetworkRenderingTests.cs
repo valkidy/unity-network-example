@@ -70,6 +70,58 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             Assert.That(beamVisual.GetComponent<NetworkProjectileView>(), Is.Null);
         }
 
+        [Test]
+        public void Apply_WithPredictedProjectileState_RegistersVisualByClientActionId()
+        {
+            var states = new[]
+            {
+                new RenderEntityState
+                {
+                    entity_type = KernelEntityType.Projectile,
+                    client_action_id = 42,
+                    position = new KernelVec3(5f, 0f, 6f),
+                    rotation = new KernelQuat(0f, 0f, 0f, 1f),
+                    status = RenderEntityStatus.Predicted,
+                },
+            };
+
+            applier.Apply(states, states.Length);
+
+            Assert.That(rootObject.transform.childCount, Is.EqualTo(1));
+            GameObject projectileVisual = rootObject.transform.GetChild(0).gameObject;
+            NetworkProjectileView projectileView = projectileVisual.GetComponent<NetworkProjectileView>();
+            Assert.That(projectileView, Is.Not.Null);
+            Assert.That(projectileView.ClientActionId, Is.EqualTo(42));
+            Assert.That(projectileVisual.name, Is.EqualTo("PredictedProjectile_42"));
+            Assert.That(projectileVisual.transform.position, Is.EqualTo(new Vector3(5f, 0f, 6f)));
+        }
+
+        [Test]
+        public void Apply_WithPredictedProjectileBoundToServerNetId_UpdatesExistingVisual()
+        {
+            var predictedState = new RenderEntityState
+            {
+                entity_type = KernelEntityType.Projectile,
+                client_action_id = 42,
+                position = new KernelVec3(5f, 0f, 6f),
+                rotation = new KernelQuat(0f, 0f, 0f, 1f),
+                status = RenderEntityStatus.Predicted,
+            };
+            var boundState = predictedState;
+            boundState.net_id = 402;
+            boundState.position = new KernelVec3(7f, 0f, 8f);
+
+            applier.Apply(new[] { predictedState }, 1);
+            GameObject projectileVisual = rootObject.transform.GetChild(0).gameObject;
+
+            applier.Apply(new[] { boundState }, 1);
+
+            NetworkProjectileView projectileView = projectileVisual.GetComponent<NetworkProjectileView>();
+            Assert.That(projectileView.ServerEntityId, Is.EqualTo(402));
+            Assert.That(projectileVisual.name, Is.EqualTo("NetProjectile_402"));
+            Assert.That(projectileVisual.transform.position, Is.EqualTo(new Vector3(7f, 0f, 8f)));
+        }
+
         private GameObject AssertPlaceholder(KernelEntityType entityType)
         {
             GameObject visual = prefabRegistry.InstantiateVisual(entityType, rootObject.transform);

@@ -26,7 +26,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             string message = NetworkGameplayCatalogBundle.FormatLoadResult(
                 new NetworkExample.Kernel.KernelGameplayCatalogLoadResult
                 {
-                    success = true,
+                    status = NetworkExample.Kernel.KernelConstants.GameplayCatalogLoadStatusSuccess,
                     catalog_version = 3,
                     catalog_hash = 0x1234abcdUL,
                     projectile_template_count = 4,
@@ -39,6 +39,31 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             Assert.That(message, Does.Contain("projectile_templates=4"));
             Assert.That(message, Does.Contain("collider_templates=5"));
             Assert.That(message, Does.Contain("collider_bindings=6"));
+        }
+
+        [Test]
+        public void FormatLoadResult_IncludesDiagnosticForFailedCatalogLoad()
+        {
+            string message = NetworkGameplayCatalogBundle.FormatLoadResult(
+                new NetworkExample.Kernel.KernelGameplayCatalogLoadResult
+                {
+                    status = NetworkExample.Kernel.KernelConstants.GameplayCatalogLoadStatusFailed,
+                    error_code = NetworkExample.Kernel.KernelConstants.GameplayCatalogLoadErrorInvalidYaml,
+                    source_kind = NetworkExample.Kernel.KernelConstants.GameplayCatalogLoadSourceBundle,
+                    line = 7,
+                    column = 11,
+                    path = "gameplay_catalog.yaml",
+                    field = "projectiles",
+                    diagnostic = "invalid yaml",
+                });
+
+            Assert.That(message, Does.Contain("error=invalid yaml"));
+            Assert.That(message, Does.Contain("error_code=2"));
+            Assert.That(message, Does.Contain("source=2"));
+            Assert.That(message, Does.Contain("path=gameplay_catalog.yaml"));
+            Assert.That(message, Does.Contain("field=projectiles"));
+            Assert.That(message, Does.Contain("line=7"));
+            Assert.That(message, Does.Contain("column=11"));
         }
     }
 }

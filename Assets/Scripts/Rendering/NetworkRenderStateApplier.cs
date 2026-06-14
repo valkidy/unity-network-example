@@ -7,6 +7,8 @@ namespace NetworkExample.UnityDemo.Rendering
     [DisallowMultipleComponent]
     public sealed class NetworkRenderStateApplier : MonoBehaviour
     {
+        private const ulong PredictedProjectileKeyMask = 1UL << 63;
+
         [SerializeField]
         private NetworkEntityRegistry entityRegistry;
 
@@ -89,7 +91,9 @@ namespace NetworkExample.UnityDemo.Rendering
         {
             if (state.entity_type == KernelEntityType.Projectile)
             {
-                return state.entity_id != 0 || state.net_id != 0;
+                return state.entity_id != 0 ||
+                    state.net_id != 0 ||
+                    state.client_action_id != 0;
             }
 
             return state.net_id != 0;
@@ -97,7 +101,19 @@ namespace NetworkExample.UnityDemo.Rendering
 
         private static ulong EntityKeyFor(RenderEntityState state)
         {
-            return state.entity_id != 0 ? state.entity_id : state.net_id;
+            if (state.entity_id != 0)
+            {
+                return state.entity_id;
+            }
+
+            if (state.entity_type == KernelEntityType.Projectile &&
+                state.status == RenderEntityStatus.Predicted &&
+                state.client_action_id != 0)
+            {
+                return PredictedProjectileKeyMask | state.client_action_id;
+            }
+
+            return state.net_id;
         }
 
         private static void ApplyProjectileState(GameObject visual, RenderEntityState state)

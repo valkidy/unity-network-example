@@ -51,9 +51,38 @@ namespace NetworkExample.UnityDemo.Common
                 " collider_bindings=" +
                 result.collider_binding_count;
 
-            if (!result.success && !string.IsNullOrEmpty(result.error_message))
+            if (result.status != KernelConstants.GameplayCatalogLoadStatusSuccess)
             {
-                message += " error=" + result.error_message;
+                if (!string.IsNullOrEmpty(result.diagnostic))
+                {
+                    message += " error=" + result.diagnostic;
+                }
+
+                message +=
+                    " error_code=" +
+                    result.error_code +
+                    " source=" +
+                    result.source_kind;
+
+                if (!string.IsNullOrEmpty(result.path))
+                {
+                    message += " path=" + result.path;
+                }
+
+                if (!string.IsNullOrEmpty(result.field))
+                {
+                    message += " field=" + result.field;
+                }
+
+                if (result.line > 0)
+                {
+                    message += " line=" + result.line;
+                }
+
+                if (result.column > 0)
+                {
+                    message += " column=" + result.column;
+                }
             }
 
             return message;
