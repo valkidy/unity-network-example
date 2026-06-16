@@ -353,9 +353,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   serverAddress: 127.0.0.1:7801
-  maxEvents: 256
-  maxRenderStates: 256
-  enableDiagnostics: 1
+  maxEvents: 2048
+  maxRenderStates: 2048
+  enableDiagnostics: 0
   diagnosticLogIntervalSeconds: 1
   readyWithoutRenderWarningSeconds: 1
 --- !u!1660057539 &9223372036854775807

@@ -140,7 +140,7 @@ namespace NetworkExample.UnityDemo.Input
                 input_seq = inputSequence,
                 client_action_time_us = NowMicroseconds(),
                 client_action_id = clientActionId,
-                move = new KernelVec2(move.x, move.y),
+                move = new KernelVec2(move.x * 0.1f, move.y * 0.1f), // Scale down movement input for better control at lower tick rates
                 look_delta = new KernelVec2(0f, 0f),
                 aim_dir = new KernelVec3(aimDirection.x, aimDirection.y, aimDirection.z),
                 buttons = buttons,
