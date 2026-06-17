@@ -279,10 +279,16 @@ namespace NetworkExample.UnityDemo.Rendering
                     DrawOrientedBox(center, ToVector3(shape.half_extents), ToQuaternion(shape.world_rotation));
                     break;
                 case KernelColliderShapeType.Segment:
-                    Line(ToVector3(shape.segment_start), ToVector3(shape.segment_end));
+                    Vector3 start = ToVector3(shape.segment_start);
+                    Vector3 end = ToVector3(shape.segment_end);
                     if (shape.radius > 0f)
                     {
-                        DrawWireSphere(center, shape.radius);
+                        // A segment with a radius is a capsule.
+                        DrawWireCapsule(start, end, shape.radius);
+                    }
+                    else
+                    {
+                        Line(start, end);
                     }
                     break;
             }
@@ -377,6 +383,72 @@ namespace NetworkExample.UnityDemo.Rendering
                 prevXy = xy;
                 prevXz = xz;
                 prevYz = yz;
+            }
+        }
+
+        private static void DrawWireCapsule(Vector3 start, Vector3 end, float radius)
+        {
+            Vector3 axis = end - start;
+            float length = axis.magnitude;
+            if (length < 1e-5f)
+            {
+                // Degenerate capsule collapses to a sphere.
+                DrawWireSphere(start, radius);
+                return;
+            }
+
+            axis /= length;
+            Vector3 u = Vector3.Cross(axis, Vector3.up);
+            if (u.sqrMagnitude < 1e-6f)
+            {
+                u = Vector3.Cross(axis, Vector3.right);
+            }
+            u.Normalize();
+            Vector3 v = Vector3.Cross(axis, u);
+
+            const int segments = 16;
+            float step = Mathf.PI * 2f / segments;
+
+            // End rings (perpendicular to the axis) at each hemisphere center.
+            Vector3 prevRingStart = start + u * radius;
+            Vector3 prevRingEnd = end + u * radius;
+            for (int i = 1; i <= segments; ++i)
+            {
+                float a = i * step;
+                Vector3 offset = (u * Mathf.Cos(a) + v * Mathf.Sin(a)) * radius;
+                Vector3 ringStart = start + offset;
+                Vector3 ringEnd = end + offset;
+                Line(prevRingStart, ringStart);
+                Line(prevRingEnd, ringEnd);
+                prevRingStart = ringStart;
+                prevRingEnd = ringEnd;
+            }
+
+            // Connecting lines along the body at the four cardinal offsets.
+            Line(start + u * radius, end + u * radius);
+            Line(start - u * radius, end - u * radius);
+            Line(start + v * radius, end + v * radius);
+            Line(start - v * radius, end - v * radius);
+
+            // Hemispherical caps: half arcs in the u-axis and v-axis planes.
+            DrawCapArc(start, -axis, u, radius);
+            DrawCapArc(start, -axis, v, radius);
+            DrawCapArc(end, axis, u, radius);
+            DrawCapArc(end, axis, v, radius);
+        }
+
+        // Draws a half-circle arc from the side, bulging along outward (the cap apex direction).
+        private static void DrawCapArc(Vector3 center, Vector3 outward, Vector3 side, float radius)
+        {
+            const int segments = 8;
+            float step = Mathf.PI / segments;
+            Vector3 prev = center + side * radius;
+            for (int i = 1; i <= segments; ++i)
+            {
+                float a = i * step;
+                Vector3 point = center + side * (Mathf.Cos(a) * radius) + outward * (Mathf.Sin(a) * radius);
+                Line(prev, point);
+                prev = point;
             }
         }
 
