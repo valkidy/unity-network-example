@@ -67,8 +67,14 @@ namespace NetworkExample.UnityDemo.Rendering
         private int renderStateCount;
         private KernelColliderShapeView[] colliderShapes;
         private int colliderShapeCount;
+        private KernelColliderShapeView[] colliderScratch;
         private KernelNetworkStats networkStats;
         private bool hasNetworkStats;
+
+        private const uint AllColliderPurposes =
+            (uint)KernelColliderPurpose.Hit |
+            (uint)KernelColliderPurpose.Damage |
+            (uint)KernelColliderPurpose.Trigger;
 
         public void SetEnabled(bool value)
         {
@@ -91,15 +97,44 @@ namespace NetworkExample.UnityDemo.Rendering
                 return;
             }
 
-            if (colliderShapes == null || colliderShapes.Length != Mathf.Max(1, maxColliderShapes))
+            int capacity = Mathf.Max(1, maxColliderShapes);
+            if (colliderShapes == null || colliderShapes.Length != capacity)
             {
-                colliderShapes = new KernelColliderShapeView[Mathf.Max(1, maxColliderShapes)];
+                colliderShapes = new KernelColliderShapeView[capacity];
+            }
+            if (colliderScratch == null)
+            {
+                colliderScratch = new KernelColliderShapeView[8];
             }
 
-            uint shapeCount = kernel.QueryColliderShapes(null, colliderShapes);
-            colliderShapeCount = shapeCount > (uint)colliderShapes.Length
-                ? colliderShapes.Length
-                : (int)shapeCount;
+            // QueryColliderShapes is driven per-entity (entity_net_id + purpose_mask), matching
+            // the kernel's tested usage. A null/zero-mask query returns nothing, so we issue one
+            // query per live render entity and accumulate every collider into the draw buffer.
+            colliderShapeCount = 0;
+            for (int index = 0; index < count && colliderShapeCount < colliderShapes.Length; ++index)
+            {
+                uint netId = states[index].net_id;
+                if (netId == 0)
+                {
+                    continue;
+                }
+
+                KernelColliderShapeQuery query = new KernelColliderShapeQuery
+                {
+                    struct_size = KernelColliderShapeQuery.StructSize,
+                    entity_net_id = netId,
+                    purpose_mask = AllColliderPurposes,
+                };
+
+                uint found = kernel.QueryColliderShapes(query, colliderScratch);
+                int safeFound = found > (uint)colliderScratch.Length
+                    ? colliderScratch.Length
+                    : (int)found;
+                for (int shape = 0; shape < safeFound && colliderShapeCount < colliderShapes.Length; ++shape)
+                {
+                    colliderShapes[colliderShapeCount++] = colliderScratch[shape];
+                }
+            }
 
             hasNetworkStats = kernel.TryGetNetworkStats(out networkStats);
         }
