@@ -1,5 +1,7 @@
+using System.Collections.Generic;
 using System.Text;
 using NetworkExample.Kernel;
+using NetworkExample.UnityDemo.Common;
 using UnityEngine;
 
 namespace NetworkExample.UnityDemo.Rendering
@@ -71,6 +73,9 @@ namespace NetworkExample.UnityDemo.Rendering
         private KernelNetworkStats networkStats;
         private bool hasNetworkStats;
 
+        private Dictionary<KernelEntityType, ColliderBindingInfo> catalogBindings;
+        private bool catalogLoaded;
+
         private const uint AllColliderPurposes =
             (uint)KernelColliderPurpose.Hit |
             (uint)KernelColliderPurpose.Damage |
@@ -106,37 +111,81 @@ namespace NetworkExample.UnityDemo.Rendering
             {
                 colliderScratch = new KernelColliderShapeView[8];
             }
+            if (!catalogLoaded)
+            {
+                catalogBindings = NetworkColliderCatalog.LoadBindings();
+                catalogLoaded = true;
+            }
 
-            // QueryColliderShapes is driven per-entity (entity_net_id + purpose_mask), matching
-            // the kernel's tested usage. A null/zero-mask query returns nothing, so we issue one
-            // query per live render entity and accumulate every collider into the draw buffer.
+            // For each live render entity, try the kernel's per-entity collider query first
+            // (exact, server-authoritative). If the kernel exposes no collider for that entity
+            // (e.g. client-side, where collider instances aren't materialized), fall back to the
+            // catalog binding from bundle.bytes applied to the entity's render transform.
             colliderShapeCount = 0;
             for (int index = 0; index < count && colliderShapeCount < colliderShapes.Length; ++index)
             {
-                uint netId = states[index].net_id;
-                if (netId == 0)
+                RenderEntityState state = states[index];
+                int before = colliderShapeCount;
+
+                if (state.net_id != 0)
                 {
-                    continue;
+                    KernelColliderShapeQuery query = new KernelColliderShapeQuery
+                    {
+                        struct_size = KernelColliderShapeQuery.StructSize,
+                        entity_net_id = state.net_id,
+                        purpose_mask = AllColliderPurposes,
+                    };
+
+                    uint found = kernel.QueryColliderShapes(query, colliderScratch);
+                    int safeFound = found > (uint)colliderScratch.Length
+                        ? colliderScratch.Length
+                        : (int)found;
+                    for (int shape = 0; shape < safeFound && colliderShapeCount < colliderShapes.Length; ++shape)
+                    {
+                        colliderShapes[colliderShapeCount++] = colliderScratch[shape];
+                    }
                 }
 
-                KernelColliderShapeQuery query = new KernelColliderShapeQuery
+                if (colliderShapeCount == before &&
+                    TryBuildCatalogShape(state, out KernelColliderShapeView catalogShape))
                 {
-                    struct_size = KernelColliderShapeQuery.StructSize,
-                    entity_net_id = netId,
-                    purpose_mask = AllColliderPurposes,
-                };
-
-                uint found = kernel.QueryColliderShapes(query, colliderScratch);
-                int safeFound = found > (uint)colliderScratch.Length
-                    ? colliderScratch.Length
-                    : (int)found;
-                for (int shape = 0; shape < safeFound && colliderShapeCount < colliderShapes.Length; ++shape)
-                {
-                    colliderShapes[colliderShapeCount++] = colliderScratch[shape];
+                    colliderShapes[colliderShapeCount++] = catalogShape;
                 }
             }
 
             hasNetworkStats = kernel.TryGetNetworkStats(out networkStats);
+        }
+
+        private bool TryBuildCatalogShape(RenderEntityState state, out KernelColliderShapeView shape)
+        {
+            shape = default;
+            if (catalogBindings == null ||
+                !catalogBindings.TryGetValue(state.entity_type, out ColliderBindingInfo binding))
+            {
+                return false;
+            }
+
+            Vector3 entityPos = ToVector3(state.position);
+            Quaternion entityRot = ToQuaternion(state.rotation);
+            Quaternion worldRot = entityRot * binding.localRotation;
+            Vector3 worldCenter = entityPos + entityRot * (binding.localPosition + binding.center);
+
+            shape.entity_net_id = state.net_id;
+            shape.entity_type = (ushort)state.entity_type;
+            shape.shape_type = (byte)binding.shapeType;
+            shape.world_center = ToKernelVec3(worldCenter);
+            shape.half_extents = ToKernelVec3(binding.halfExtents);
+            shape.radius = binding.radius;
+            shape.world_rotation = ToKernelQuat(worldRot);
+
+            if (binding.shapeType == KernelColliderShapeType.Segment)
+            {
+                Vector3 axis = worldRot * Vector3.forward * (binding.length * 0.5f);
+                shape.segment_start = ToKernelVec3(worldCenter - axis);
+                shape.segment_end = ToKernelVec3(worldCenter + axis);
+            }
+
+            return true;
         }
 
         private void OnRenderObject()
@@ -550,6 +599,16 @@ namespace NetworkExample.UnityDemo.Rendering
         private static Vector3 ToVector3(KernelVec3 value)
         {
             return new Vector3(value.x, value.y, value.z);
+        }
+
+        private static KernelVec3 ToKernelVec3(Vector3 value)
+        {
+            return new KernelVec3(value.x, value.y, value.z);
+        }
+
+        private static KernelQuat ToKernelQuat(Quaternion value)
+        {
+            return new KernelQuat(value.x, value.y, value.z, value.w);
         }
 
         private static Quaternion ToQuaternion(KernelQuat value)
