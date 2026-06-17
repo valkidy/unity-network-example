@@ -79,7 +79,7 @@ namespace NetworkExample.UnityDemo.Rendering
         /// Captures the current frame's render states and queries collider shapes and
         /// network stats from the kernel. Called from the runner's Update.
         /// </summary>
-        public void Capture(Kernel kernel, RenderEntityState[] states, int count)
+        public void Capture(NetworkExample.Kernel.Kernel kernel, RenderEntityState[] states, int count)
         {
             renderStates = states;
             renderStateCount = count;
