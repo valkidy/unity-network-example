@@ -29,11 +29,15 @@ namespace NetworkExample.UnityDemo.Client
         [SerializeField]
         private float readyWithoutRenderWarningSeconds = 1.0f;
 
+        [SerializeField]
+        private bool enableVisualDebug = true;
+
         private NetworkClient client;
         private KernelEvent[] events;
         private RenderEntityState[] renderStates;
         private NetworkInputSampler inputSampler;
         private NetworkRenderStateApplier renderStateApplier;
+        private NetworkDebugView debugView;
         private readonly NetworkPresentationClock presentationClock = new NetworkPresentationClock();
         private bool started;
         private bool readinessLogged;
@@ -129,6 +133,11 @@ namespace NetworkExample.UnityDemo.Client
             WarnIfReadyWithoutRenderStates(safeRenderCount);
             renderStateApplier.Apply(renderStates, safeRenderCount);
 
+            if (debugView != null)
+            {
+                debugView.Capture(client.Kernel, renderStates, safeRenderCount);
+            }
+
             if (!readinessLogged && client.IsReady)
             {
                 readinessLogged = true;
@@ -180,6 +189,13 @@ namespace NetworkExample.UnityDemo.Client
             {
                 renderStateApplier = gameObject.AddComponent<NetworkRenderStateApplier>();
             }
+
+            debugView = GetComponent<NetworkDebugView>();
+            if (debugView == null)
+            {
+                debugView = gameObject.AddComponent<NetworkDebugView>();
+            }
+            debugView.SetEnabled(enableVisualDebug);
 
             Debug.Log("ClientRunner configured with input sampler " + inputSampler.GetType().Name);
             Transform entityRoot = NetworkDemoScene.EnsureEntityRoot("Network Entities");

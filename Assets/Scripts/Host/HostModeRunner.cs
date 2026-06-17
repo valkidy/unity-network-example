@@ -20,11 +20,15 @@ namespace NetworkExample.UnityDemo.Host
         [SerializeField]
         private int maxRenderStates = 256;
 
+        [SerializeField]
+        private bool enableVisualDebug = true;
+
         private NetworkHost host;
         private KernelEvent[] events;
         private RenderEntityState[] renderStates;
         private NetworkInputSampler inputSampler;
         private NetworkRenderStateApplier renderStateApplier;
+        private NetworkDebugView debugView;
         private readonly NetworkPresentationClock presentationClock = new NetworkPresentationClock();
         private bool started;
         private bool readinessLogged;
@@ -104,6 +108,11 @@ namespace NetworkExample.UnityDemo.Host
                 : (int)renderCount;
             renderStateApplier.Apply(renderStates, safeRenderCount);
 
+            if (debugView != null)
+            {
+                debugView.Capture(host.Kernel, renderStates, safeRenderCount);
+            }
+
             if (!readinessLogged && host.IsLocalClientReady)
             {
                 readinessLogged = true;
@@ -153,6 +162,13 @@ namespace NetworkExample.UnityDemo.Host
             {
                 renderStateApplier = gameObject.AddComponent<NetworkRenderStateApplier>();
             }
+
+            debugView = GetComponent<NetworkDebugView>();
+            if (debugView == null)
+            {
+                debugView = gameObject.AddComponent<NetworkDebugView>();
+            }
+            debugView.SetEnabled(enableVisualDebug);
 
             Transform entityRoot = NetworkDemoScene.EnsureEntityRoot("Network Entities");
             renderStateApplier.Configure(entityRegistry, prefabRegistry, entityRoot);
