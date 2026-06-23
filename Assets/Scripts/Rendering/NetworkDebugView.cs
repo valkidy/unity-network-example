@@ -141,8 +141,15 @@ namespace NetworkExample.UnityDemo.Rendering
 
             // Request 1 + 2: one query-all call returns every active collider the kernel has
             // materialized (live projectile/beam/segment colliders, and on a server the
-            // player/enemy hit colliders too).
+            // player/enemy hit colliders too). The kernel reports the full count it found even
+            // when our buffer is too small, so growing once and re-querying captures them all
+            // instead of silently truncating.
             uint colliderFound = kernel.QueryColliderShapes(null, colliderShapes);
+            if (colliderFound > (uint)colliderShapes.Length)
+            {
+                GrowColliderBuffer((int)colliderFound);
+                colliderFound = kernel.QueryColliderShapes(null, colliderShapes);
+            }
             colliderShapeCount = colliderFound > (uint)colliderShapes.Length
                 ? colliderShapes.Length
                 : (int)colliderFound;
@@ -162,7 +169,7 @@ namespace NetworkExample.UnityDemo.Rendering
             // For every render entity the live query did not cover, reconstruct its collider
             // from the kernel's parsed catalog (per-instance collider_template_id when present,
             // otherwise the entity-type binding) applied to the render transform.
-            for (int index = 0; index < renderStateCount && colliderShapeCount < colliderShapes.Length; ++index)
+            for (int index = 0; index < renderStateCount; ++index)
             {
                 RenderEntityState state = states[index];
                 if (state.net_id != 0 && liveColliderNetIds.Contains(state.net_id))
@@ -172,6 +179,11 @@ namespace NetworkExample.UnityDemo.Rendering
 
                 if (TryReconstructColliderShape(state, out KernelColliderShapeView shape))
                 {
+                    if (colliderShapeCount == colliderShapes.Length)
+                    {
+                        GrowColliderBuffer(colliderShapeCount + 1);
+                    }
+
                     colliderShapes[colliderShapeCount++] = shape;
                 }
             }
@@ -204,6 +216,33 @@ namespace NetworkExample.UnityDemo.Rendering
             {
                 visionStates = new KernelVisionStateView[visionCapacity];
             }
+        }
+
+        // Grows the collider shape buffer so it can hold at least <paramref name="required"/>
+        // entries, preserving the shapes captured so far. Doubling keeps repeated growth
+        // amortized, and the new capacity is written back to maxColliderShapes so EnsureBuffers
+        // does not shrink it on the next frame. A warning is logged whenever the cap changes.
+        private void GrowColliderBuffer(int required)
+        {
+            int oldCapacity = colliderShapes != null ? colliderShapes.Length : 0;
+            if (required <= oldCapacity)
+            {
+                return;
+            }
+
+            int newCapacity = Mathf.Max(required, oldCapacity * 2);
+            KernelColliderShapeView[] grown = new KernelColliderShapeView[newCapacity];
+            if (colliderShapeCount > 0 && colliderShapes != null)
+            {
+                System.Array.Copy(colliderShapes, grown, Mathf.Min(colliderShapeCount, oldCapacity));
+            }
+
+            colliderShapes = grown;
+            maxColliderShapes = newCapacity;
+
+            Debug.LogWarning(
+                $"[NetworkDebugView] Collider debug buffer grew from {oldCapacity} to {newCapacity} " +
+                $"(needed {required}) to avoid truncating collider shapes.");
         }
 
         // Request 4: read the loaded collider templates and entity-type bindings straight from
@@ -619,7 +658,23 @@ namespace NetworkExample.UnityDemo.Rendering
             }
 
             Vector3 position = ToVector3(state.position);
-            Vector3 forward = ToQuaternion(state.rotation) * Vector3.forward;
+
+            // Projectiles do not maintain a meaningful orientation, so segment the
+            // direction line from their velocity (actual travel direction) instead of
+            // rotation. Fall back to rotation when velocity is effectively zero.
+            Vector3 forward;
+            if (state.entity_type == KernelEntityType.Projectile)
+            {
+                Vector3 velocity = ToVector3(state.velocity);
+                forward = velocity.sqrMagnitude < 1e-6f
+                    ? ToQuaternion(state.rotation) * Vector3.forward
+                    : velocity.normalized;
+            }
+            else
+            {
+                forward = ToQuaternion(state.rotation) * Vector3.forward;
+            }
+
             GL.Color(BrightColorForType(state.entity_type));
             Line(position, position + forward * directionLength);
         }
