@@ -358,6 +358,7 @@ MonoBehaviour:
   enableDiagnostics: 0
   diagnosticLogIntervalSeconds: 1
   readyWithoutRenderWarningSeconds: 1
+  enableVisualDebug: 1
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

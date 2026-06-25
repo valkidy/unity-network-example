@@ -101,6 +101,13 @@ namespace NetworkExample.UnityDemo.Rendering
             new Dictionary<uint, KernelColliderTemplateDefinition>();
         private readonly Dictionary<ushort, KernelColliderBindingDefinition> colliderBindings =
             new Dictionary<ushort, KernelColliderBindingDefinition>();
+
+        // Projectile templates by id. Projectiles have no entity-type collider binding (their
+        // collider is defined per projectile template, not per entity type), so the binding
+        // lookup never covers them. This map lets a projectile's collider be resolved through
+        // its projectile_template_id -> collider_template_id.
+        private readonly Dictionary<uint, KernelProjectileTemplateDefinition> projectileTemplates =
+            new Dictionary<uint, KernelProjectileTemplateDefinition>();
         private bool catalogLoaded;
 
         // net_id -> world position for this frame's render states, so vision visibility/target
@@ -281,6 +288,19 @@ namespace NetworkExample.UnityDemo.Rendering
                 }
             }
 
+            projectileTemplates.Clear();
+            uint projectileCount = kernel.GetProjectileTemplates(null);
+            if (projectileCount > 0)
+            {
+                var projectileBuffer = new KernelProjectileTemplateDefinition[projectileCount];
+                uint readProjectiles = kernel.GetProjectileTemplates(projectileBuffer);
+                for (int index = 0; index < readProjectiles && index < projectileBuffer.Length; ++index)
+                {
+                    projectileTemplates[projectileBuffer[index].projectile_template_id] =
+                        projectileBuffer[index];
+                }
+            }
+
             catalogLoaded = true;
         }
 
@@ -316,6 +336,17 @@ namespace NetworkExample.UnityDemo.Rendering
             if (templateId == 0 && hasBinding)
             {
                 templateId = binding.collider_template_id;
+            }
+
+            // Projectiles have no entity-type binding (their collider lives on the projectile
+            // template), so resolve through projectile_template_id -> collider_template_id.
+            if (templateId == 0 &&
+                state.entity_type == KernelEntityType.Projectile &&
+                projectileTemplates.TryGetValue(
+                    state.projectile_template_id,
+                    out KernelProjectileTemplateDefinition projectileTemplate))
+            {
+                templateId = projectileTemplate.collider_template_id;
             }
 
             if (templateId == 0 ||
@@ -496,6 +527,8 @@ namespace NetworkExample.UnityDemo.Rendering
                 .Append(colliderTemplates.Count)
                 .Append(" B:")
                 .Append(colliderBindings.Count)
+                .Append(" P:")
+                .Append(projectileTemplates.Count)
                 .Append(")");
             if (drawVision)
             {
