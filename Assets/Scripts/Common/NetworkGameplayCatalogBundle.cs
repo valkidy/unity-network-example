@@ -1,10 +1,16 @@
 using NetworkExample.Kernel;
 using UnityEngine;
+#if UNITY_EDITOR
+using System.IO;
+using UnityEditor.PackageManager;
+#endif
 
 namespace NetworkExample.UnityDemo.Common
 {
     public static class NetworkGameplayCatalogBundle
     {
+        public const string DefaultBundleDisplayPath =
+            "Network Example Kernel/Runtime/Resources/gameplay_catalog_bundle/bundle.bytes";
         public const string DefaultResourcePath = "gameplay_catalog_bundle/bundle";
         public const string DefaultEntryPath = "gameplay_catalog.yaml";
 
@@ -12,15 +18,21 @@ namespace NetworkExample.UnityDemo.Common
         {
             entryPath = DefaultEntryPath;
 
+            if (TryLoadKernelPackageBundle(out bundleBytes))
+            {
+                return true;
+            }
+
             TextAsset bundleAsset = Resources.Load<TextAsset>(DefaultResourcePath);
             if (bundleAsset == null)
             {
                 bundleBytes = null;
                 Debug.LogError(
-                    "Gameplay catalog bundle not found at Resources/" +
+                    "Gameplay catalog bundle not found at " +
+                    DefaultBundleDisplayPath +
+                    " or Resources/" +
                     DefaultResourcePath +
-                    ".bytes. Build game_server/gameplay_catalog_bundle:bundle.zip " +
-                    "and copy it to Assets/Resources/gameplay_catalog_bundle/bundle.bytes.");
+                    ".bytes.");
                 return false;
             }
 
@@ -35,6 +47,30 @@ namespace NetworkExample.UnityDemo.Common
             }
 
             return true;
+        }
+
+        private static bool TryLoadKernelPackageBundle(out byte[] bundleBytes)
+        {
+#if UNITY_EDITOR
+            PackageInfo packageInfo = PackageInfo.FindForAssembly(
+                typeof(global::NetworkExample.Kernel.Kernel).Assembly);
+            if (packageInfo != null && !string.IsNullOrEmpty(packageInfo.resolvedPath))
+            {
+                string path = Path.Combine(
+                    packageInfo.resolvedPath,
+                    "Runtime",
+                    "Resources",
+                    "gameplay_catalog_bundle",
+                    "bundle.bytes");
+                if (File.Exists(path))
+                {
+                    bundleBytes = File.ReadAllBytes(path);
+                    return bundleBytes != null && bundleBytes.Length > 0;
+                }
+            }
+#endif
+            bundleBytes = null;
+            return false;
         }
 
         public static string FormatLoadResult(KernelGameplayCatalogLoadResult result)

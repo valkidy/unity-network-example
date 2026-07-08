@@ -52,7 +52,7 @@ namespace NetworkExample.UnityDemo.Rendering
                 visibleThisFrame.Add(entityKey);
                 if (!entityRegistry.TryGet(entityKey, out GameObject visual))
                 {
-                    visual = prefabRegistry.InstantiateVisual(state.entity_type, entityRoot);
+                    visual = prefabRegistry.InstantiateVisual(state, entityRoot);
                     entityRegistry.Register(entityKey, visual);
                     knownEntities.Add(entityKey);
                 }

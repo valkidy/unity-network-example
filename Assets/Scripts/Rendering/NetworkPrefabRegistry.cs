@@ -7,8 +7,6 @@ namespace NetworkExample.UnityDemo.Rendering
     public sealed class NetworkPrefabRegistry : MonoBehaviour
     {
         private static readonly Vector3 ProjectileLocalScale = new Vector3(0.1f, 0.1f, 0.1f);
-        private static readonly Vector3 AreaEffectLocalScale = new Vector3(2.0f, 0.05f, 2.0f);
-        private static readonly Vector3 BeamLocalScale = new Vector3(0.2f, 0.2f, 3.0f);
 
         [SerializeField]
         private GameObject playerPrefab = null;
@@ -20,49 +18,51 @@ namespace NetworkExample.UnityDemo.Rendering
         private GameObject projectilePrefab = null;
 
         [SerializeField]
-        private GameObject areaEffectPrefab = null;
-
-        [SerializeField]
-        private GameObject beamPrefab = null;
-
-        [SerializeField]
         private GameObject fallbackPrefab = null;
 
         public GameObject InstantiateVisual(KernelEntityType entityType, Transform parent)
         {
-            GameObject prefab = GetPrefab(entityType);
+            return InstantiateVisual(
+                new RenderEntityState { entity_type = entityType, actor_type = KernelActorType.Unknown },
+                parent);
+        }
+
+        public GameObject InstantiateVisual(RenderEntityState state, Transform parent)
+        {
+            GameObject prefab = GetPrefab(state);
             GameObject visual = prefab == null
-                ? CreatePlaceholder(entityType)
+                ? CreatePlaceholder(state)
                 : Instantiate(prefab);
 
-            visual.name = "NetEntity_" + entityType;
+            visual.name = NameFor(state);
             visual.transform.SetParent(parent, false);
-            ApplyVisualDefaults(visual, entityType);
+            ApplyVisualDefaults(visual, state);
             return visual;
         }
 
-        private GameObject GetPrefab(KernelEntityType entityType)
+        private GameObject GetPrefab(RenderEntityState state)
         {
-            switch (entityType)
+            if (state.entity_type == KernelEntityType.Projectile)
             {
-                case KernelEntityType.Player:
-                    return playerPrefab;
-                case KernelEntityType.Enemy:
-                    return enemyPrefab != null ? enemyPrefab : playerPrefab;
-                case KernelEntityType.Projectile:
-                    return projectilePrefab;
-                case KernelEntityType.AreaEffect:
-                    return areaEffectPrefab;
-                case KernelEntityType.Beam:
-                    return beamPrefab;
-                default:
-                    return fallbackPrefab;
+                return projectilePrefab;
             }
+
+            if (state.entity_type == KernelEntityType.Actor)
+            {
+                if (state.actor_type == KernelActorType.Agent)
+                {
+                    return enemyPrefab != null ? enemyPrefab : playerPrefab;
+                }
+
+                return playerPrefab;
+            }
+
+            return fallbackPrefab;
         }
 
-        private static GameObject CreatePlaceholder(KernelEntityType entityType)
+        private static GameObject CreatePlaceholder(RenderEntityState state)
         {
-            PrimitiveType primitiveType = PrimitiveFor(entityType);
+            PrimitiveType primitiveType = PrimitiveFor(state.entity_type);
 
             GameObject placeholder = GameObject.CreatePrimitive(primitiveType);
 
@@ -75,25 +75,17 @@ namespace NetworkExample.UnityDemo.Rendering
             Renderer renderer = placeholder.GetComponent<Renderer>();
             if (renderer != null)
             {
-                renderer.material.color = ColorFor(entityType);
+                renderer.material.color = ColorFor(state);
             }
 
             return placeholder;
         }
 
-        private static void ApplyVisualDefaults(GameObject visual, KernelEntityType entityType)
+        private static void ApplyVisualDefaults(GameObject visual, RenderEntityState state)
         {
-            if (entityType == KernelEntityType.Projectile)
+            if (state.entity_type == KernelEntityType.Projectile)
             {
                 visual.transform.localScale = ProjectileLocalScale;
-            }
-            else if (entityType == KernelEntityType.AreaEffect)
-            {
-                visual.transform.localScale = AreaEffectLocalScale;
-            }
-            else if (entityType == KernelEntityType.Beam)
-            {
-                visual.transform.localScale = BeamLocalScale;
             }
         }
 
@@ -103,32 +95,36 @@ namespace NetworkExample.UnityDemo.Rendering
             {
                 case KernelEntityType.Projectile:
                     return PrimitiveType.Sphere;
-                case KernelEntityType.AreaEffect:
-                    return PrimitiveType.Cylinder;
-                case KernelEntityType.Beam:
-                    return PrimitiveType.Cube;
                 default:
                     return PrimitiveType.Capsule;
             }
         }
 
-        private static Color ColorFor(KernelEntityType entityType)
+        private static Color ColorFor(RenderEntityState state)
         {
-            switch (entityType)
+            if (state.entity_type == KernelEntityType.Projectile)
             {
-                case KernelEntityType.Player:
-                    return new Color(0.18f, 0.55f, 1f);
-                case KernelEntityType.Enemy:
-                    return new Color(1f, 0.32f, 0.24f);
-                case KernelEntityType.Projectile:
-                    return new Color(1f, 0.86f, 0.2f);
-                case KernelEntityType.AreaEffect:
-                    return new Color(1f, 0.38f, 0.08f);
-                case KernelEntityType.Beam:
-                    return new Color(0.35f, 0.95f, 1f);
-                default:
-                    return new Color(0.65f, 0.65f, 0.65f);
+                return new Color(1f, 0.86f, 0.2f);
             }
+
+            if (state.entity_type == KernelEntityType.Actor)
+            {
+                return state.actor_type == KernelActorType.Agent
+                    ? new Color(1f, 0.32f, 0.24f)
+                    : new Color(0.18f, 0.55f, 1f);
+            }
+
+            return new Color(0.65f, 0.65f, 0.65f);
+        }
+
+        private static string NameFor(RenderEntityState state)
+        {
+            if (state.entity_type == KernelEntityType.Actor && state.actor_type != KernelActorType.Unknown)
+            {
+                return "NetEntity_" + state.entity_type + "_" + state.actor_type;
+            }
+
+            return "NetEntity_" + state.entity_type;
         }
     }
 }

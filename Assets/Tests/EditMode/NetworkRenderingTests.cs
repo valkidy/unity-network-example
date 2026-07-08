@@ -39,35 +39,33 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
-        public void InstantiateVisual_WithKnownAbiV15EntityTypes_CreatesPlaceholders()
+        public void InstantiateVisual_WithKnownAbi34EntityTypes_CreatesPlaceholders()
         {
             AssertPlaceholder(KernelEntityType.Player);
-            AssertPlaceholder(KernelEntityType.Enemy);
             AssertPlaceholder(KernelEntityType.Projectile);
-            GameObject areaEffect = AssertPlaceholder(KernelEntityType.AreaEffect);
-            GameObject beam = AssertPlaceholder(KernelEntityType.Beam);
+            GameObject agent = AssertPlaceholder(
+                State(1, KernelEntityType.Actor, new KernelVec3(), KernelActorType.Agent));
 
-            Assert.That(areaEffect.transform.localScale.y, Is.LessThan(areaEffect.transform.localScale.x));
-            Assert.That(beam.transform.localScale.z, Is.GreaterThan(beam.transform.localScale.x));
+            Assert.That(agent.GetComponent<NetworkProjectileView>(), Is.Null);
         }
 
         [Test]
-        public void Apply_WithAreaEffectAndBeamStates_RegistersVisualsWithoutProjectileViews()
+        public void Apply_WithActorStates_RegistersVisualsWithoutProjectileViews()
         {
             var states = new[]
             {
-                State(100, KernelEntityType.AreaEffect, new KernelVec3(1f, 0f, 2f)),
-                State(101, KernelEntityType.Beam, new KernelVec3(3f, 0f, 4f)),
+                State(100, KernelEntityType.Actor, new KernelVec3(1f, 0f, 2f), KernelActorType.Player),
+                State(101, KernelEntityType.Actor, new KernelVec3(3f, 0f, 4f), KernelActorType.Agent),
             };
 
             applier.Apply(states, states.Length);
 
             Assert.That(entityRegistry.Contains(100), Is.True);
             Assert.That(entityRegistry.Contains(101), Is.True);
-            Assert.That(entityRegistry.TryGet(100, out GameObject areaEffectVisual), Is.True);
-            Assert.That(entityRegistry.TryGet(101, out GameObject beamVisual), Is.True);
-            Assert.That(areaEffectVisual.GetComponent<NetworkProjectileView>(), Is.Null);
-            Assert.That(beamVisual.GetComponent<NetworkProjectileView>(), Is.Null);
+            Assert.That(entityRegistry.TryGet(100, out GameObject playerVisual), Is.True);
+            Assert.That(entityRegistry.TryGet(101, out GameObject agentVisual), Is.True);
+            Assert.That(playerVisual.GetComponent<NetworkProjectileView>(), Is.Null);
+            Assert.That(agentVisual.GetComponent<NetworkProjectileView>(), Is.Null);
         }
 
         [Test]
@@ -132,15 +130,26 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             return visual;
         }
 
+        private GameObject AssertPlaceholder(RenderEntityState state)
+        {
+            GameObject visual = prefabRegistry.InstantiateVisual(state, rootObject.transform);
+
+            Assert.That(visual, Is.Not.Null);
+            Assert.That(visual.transform.parent, Is.EqualTo(rootObject.transform));
+            return visual;
+        }
+
         private static RenderEntityState State(
             uint netId,
             KernelEntityType entityType,
-            KernelVec3 position)
+            KernelVec3 position,
+            KernelActorType actorType = KernelActorType.Unknown)
         {
             return new RenderEntityState
             {
                 net_id = netId,
                 entity_type = entityType,
+                actor_type = actorType,
                 position = position,
                 rotation = new KernelQuat(0f, 0f, 0f, 1f),
             };

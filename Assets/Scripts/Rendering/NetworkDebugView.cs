@@ -346,7 +346,7 @@ namespace NetworkExample.UnityDemo.Rendering
                     state.projectile_template_id,
                     out KernelProjectileTemplateDefinition projectileTemplate))
             {
-                templateId = projectileTemplate.collider_template_id;
+                templateId = projectileTemplate.mechanics.collider_template_id;
             }
 
             if (templateId == 0 ||
@@ -370,6 +370,7 @@ namespace NetworkExample.UnityDemo.Rendering
 
             shape.entity_net_id = state.net_id;
             shape.entity_type = (ushort)state.entity_type;
+            shape.actor_type = state.actor_type;
             shape.collider_template_id = templateId;
             shape.shape_type = template.shape_type;
             shape.shape_params = template.shape_params;
@@ -451,26 +452,36 @@ namespace NetworkExample.UnityDemo.Rendering
             {
                 for (int index = 0; index < renderStateCount; ++index)
                 {
-                    switch (renderStates[index].entity_type)
+                    RenderEntityState state = renderStates[index];
+                    if (state.entity_type == KernelEntityType.Projectile)
                     {
-                        case KernelEntityType.Player:
-                            players++;
-                            break;
-                        case KernelEntityType.Enemy:
-                            enemies++;
-                            break;
-                        case KernelEntityType.Projectile:
-                            projectiles++;
-                            break;
-                        case KernelEntityType.AreaEffect:
+                        KernelProjectileType projectileType = ProjectileTypeFor(state);
+                        if (projectileType == KernelProjectileType.AreaEffect)
+                        {
                             areaEffects++;
-                            break;
-                        case KernelEntityType.Beam:
+                        }
+                        else if (projectileType == KernelProjectileType.Beam)
+                        {
                             beams++;
-                            break;
-                        default:
-                            others++;
-                            break;
+                        }
+                        else
+                        {
+                            projectiles++;
+                        }
+                    }
+                    else if (state.entity_type == KernelEntityType.Actor &&
+                        state.actor_type == KernelActorType.Agent)
+                    {
+                        enemies++;
+                    }
+                    else if (state.entity_type == KernelEntityType.Actor &&
+                        state.actor_type == KernelActorType.Player)
+                    {
+                        players++;
+                    }
+                    else
+                    {
+                        others++;
                     }
                 }
             }
@@ -569,7 +580,7 @@ namespace NetworkExample.UnityDemo.Rendering
         private void DrawColliderShape(KernelColliderShapeView shape)
         {
             bool isVision = (shape.purpose_flags & (uint)KernelColliderPurpose.Vision) != 0;
-            GL.Color(isVision ? visionColor : ColorForType((KernelEntityType)shape.entity_type));
+            GL.Color(isVision ? visionColor : ColorForType((KernelEntityType)shape.entity_type, shape.actor_type));
             Vector3 center = ToVector3(shape.world_center);
 
             switch ((KernelColliderShapeType)shape.shape_type)
@@ -708,7 +719,7 @@ namespace NetworkExample.UnityDemo.Rendering
                 forward = ToQuaternion(state.rotation) * Vector3.forward;
             }
 
-            GL.Color(BrightColorForType(state.entity_type));
+            GL.Color(BrightColorForState(state));
             Line(position, position + forward * directionLength);
         }
 
@@ -898,28 +909,54 @@ namespace NetworkExample.UnityDemo.Rendering
             Line(apex, baseCenter - v * baseRadius);
         }
 
-        private Color ColorForType(KernelEntityType type)
+        private KernelProjectileType ProjectileTypeFor(RenderEntityState state)
         {
-            switch (type)
+            if (state.entity_type == KernelEntityType.Projectile &&
+                projectileTemplates.TryGetValue(
+                    state.projectile_template_id,
+                    out KernelProjectileTemplateDefinition projectileTemplate))
             {
-                case KernelEntityType.Player:
-                    return playerColor;
-                case KernelEntityType.Enemy:
-                    return enemyColor;
-                case KernelEntityType.Projectile:
-                    return projectileColor;
-                case KernelEntityType.AreaEffect:
-                    return areaEffectColor;
-                case KernelEntityType.Beam:
-                    return beamColor;
-                default:
-                    return unknownColor;
+                return (KernelProjectileType)projectileTemplate.mechanics.projectile_type;
             }
+
+            return KernelProjectileType.Standard;
         }
 
-        private Color BrightColorForType(KernelEntityType type)
+        private Color ColorForType(KernelEntityType type, KernelActorType actorType = KernelActorType.Unknown)
         {
-            Color color = ColorForType(type);
+            if (type == KernelEntityType.Projectile)
+            {
+                return projectileColor;
+            }
+
+            if (type == KernelEntityType.Actor)
+            {
+                return actorType == KernelActorType.Agent ? enemyColor : playerColor;
+            }
+
+            return unknownColor;
+        }
+
+        private Color ColorForProjectileType(KernelProjectileType type)
+        {
+            if (type == KernelProjectileType.AreaEffect)
+            {
+                return areaEffectColor;
+            }
+
+            if (type == KernelProjectileType.Beam)
+            {
+                return beamColor;
+            }
+
+            return projectileColor;
+        }
+
+        private Color BrightColorForState(RenderEntityState state)
+        {
+            Color color = state.entity_type == KernelEntityType.Projectile
+                ? ColorForProjectileType(ProjectileTypeFor(state))
+                : ColorForType(state.entity_type, state.actor_type);
             return Color.Lerp(color, Color.white, 0.4f);
         }
 

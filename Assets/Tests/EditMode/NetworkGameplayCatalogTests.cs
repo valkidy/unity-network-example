@@ -21,6 +21,14 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
+        public void DefaultBundlePath_PointsAtKernelPluginResource()
+        {
+            Assert.That(
+                NetworkGameplayCatalogBundle.DefaultBundleDisplayPath,
+                Is.EqualTo("Network Example Kernel/Runtime/Resources/gameplay_catalog_bundle/bundle.bytes"));
+        }
+
+        [Test]
         public void FormatLoadResult_IncludesCatalogMetadata()
         {
             string message = NetworkGameplayCatalogBundle.FormatLoadResult(

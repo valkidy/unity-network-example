@@ -259,20 +259,24 @@ namespace NetworkExample.UnityDemo.Client
             int otherCount = 0;
             for (int index = 0; index < safeRenderCount; ++index)
             {
-                switch (renderStates[index].entity_type)
+                RenderEntityState state = renderStates[index];
+                if (state.entity_type == KernelEntityType.Projectile)
                 {
-                    case KernelEntityType.Player:
-                        playerCount++;
-                        break;
-                    case KernelEntityType.Enemy:
-                        enemyCount++;
-                        break;
-                    case KernelEntityType.Projectile:
-                        projectileCount++;
-                        break;
-                    default:
-                        otherCount++;
-                        break;
+                    projectileCount++;
+                }
+                else if (state.entity_type == KernelEntityType.Actor &&
+                    state.actor_type == KernelActorType.Agent)
+                {
+                    enemyCount++;
+                }
+                else if (state.entity_type == KernelEntityType.Actor &&
+                    state.actor_type == KernelActorType.Player)
+                {
+                    playerCount++;
+                }
+                else
+                {
+                    otherCount++;
                 }
             }
 
