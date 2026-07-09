@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using NetworkExample.Kernel;
 using NetworkExample.Kernel.Client;
 using NetworkExample.UnityDemo.Common;
@@ -44,6 +45,7 @@ namespace NetworkExample.UnityDemo.Client
         private float nextDiagnosticLogTime;
         private float readyWithoutRenderSeconds;
         private bool readyWithoutRenderWarningLogged;
+        private NetworkClientConnectionState lastConnectionState;
 
         private void Awake()
         {
@@ -58,44 +60,24 @@ namespace NetworkExample.UnityDemo.Client
             {
                 NetworkKernelVersionLogger.Log();
                 client = new NetworkClient();
-                if (!NetworkGameplayCatalogBundle.TryLoadDefault(
-                        out byte[] bundleBytes,
-                        out string entryPath))
-                {
-                    client.Dispose();
-                    client = null;
-                    return;
-                }
-
-                if (!client.LoadGameplayCatalogFromMemory(
-                        bundleBytes,
-                        entryPath,
-                        out KernelGameplayCatalogLoadResult loadResult))
-                {
-                    Debug.LogError(
-                        "Client failed to load gameplay catalog bundle '" +
-                        entryPath +
-                        "': " +
-                        NetworkGameplayCatalogBundle.FormatLoadResult(loadResult));
-                    client.Dispose();
-                    client = null;
-                    return;
-                }
-
-                Debug.Log(
-                    "Client loaded gameplay catalog bundle " +
-                    NetworkGameplayCatalogBundle.FormatLoadResult(loadResult));
-
-                started = client.Start(serverAddress);
+                GameplayCatalogSyncOptions syncOptions = CreateGameplayCatalogSyncOptions();
+                started = client.Start(serverAddress, syncOptions);
                 if (!started)
                 {
-                    Debug.LogError("Client failed to start for " + serverAddress);
+                    Debug.LogError(
+                        "Client failed to start gameplay catalog sync for " +
+                        serverAddress +
+                        ": " +
+                        FormatCatalogSyncResult(client.CatalogSyncResult));
                     client.Dispose();
                     client = null;
                     return;
                 }
 
-                Debug.Log("Client connecting to " + serverAddress);
+                lastConnectionState = client.ConnectionState;
+                Debug.Log(
+                    "Client syncing gameplay catalog and connecting to " +
+                    serverAddress);
             }
             catch (Exception exception)
             {
@@ -116,6 +98,14 @@ namespace NetworkExample.UnityDemo.Client
             uint eventCount = client.Update(Time.deltaTime, events);
             WarnIfBufferFilled(eventCount, events.Length, "event");
             LogDiagnosticEvents(eventCount);
+            LogConnectionState();
+
+            if (client.ConnectionState == NetworkClientConnectionState.Failed ||
+                client.ConnectionState == NetworkClientConnectionState.Disconnected)
+            {
+                started = false;
+                return;
+            }
 
             if (client.IsReady)
             {
@@ -159,6 +149,7 @@ namespace NetworkExample.UnityDemo.Client
             nextDiagnosticLogTime = 0f;
             readyWithoutRenderSeconds = 0f;
             readyWithoutRenderWarningLogged = false;
+            lastConnectionState = NetworkClientConnectionState.Idle;
             presentationClock.Reset();
         }
 
@@ -202,6 +193,17 @@ namespace NetworkExample.UnityDemo.Client
             renderStateApplier.Configure(entityRegistry, prefabRegistry, entityRoot);
         }
 
+        private static GameplayCatalogSyncOptions CreateGameplayCatalogSyncOptions()
+        {
+            return new GameplayCatalogSyncOptions
+            {
+                CacheDirectory = Path.Combine(
+                    Application.persistentDataPath,
+                    "NetworkExample",
+                    "GameplayCatalogCache"),
+            };
+        }
+
         private static void WarnIfBufferFilled(uint count, int capacity, string bufferName)
         {
             if (count >= capacity)
@@ -241,6 +243,71 @@ namespace NetworkExample.UnityDemo.Client
                     " presentation_time_us=" +
                     kernelEvent.presentation_time_us);
             }
+        }
+
+        private void LogConnectionState()
+        {
+            NetworkClientConnectionState connectionState = client.ConnectionState;
+            if (connectionState == lastConnectionState)
+            {
+                return;
+            }
+
+            lastConnectionState = connectionState;
+            if (connectionState == NetworkClientConnectionState.Ready)
+            {
+                GameplayCatalogSyncResult syncResult = client.CatalogSyncResult;
+                Debug.Log(
+                    "Client gameplay catalog sync ready cache_hit=" +
+                    syncResult.CacheHit +
+                    " memory_only=" +
+                    syncResult.MemoryOnly +
+                    " " +
+                    NetworkGameplayCatalogBundle.FormatLoadResult(syncResult.LoadResult));
+                if (!string.IsNullOrEmpty(syncResult.CacheWarning))
+                {
+                    Debug.LogWarning(
+                        "Client gameplay catalog cache warning: " +
+                        syncResult.CacheWarning);
+                }
+                return;
+            }
+
+            if (connectionState == NetworkClientConnectionState.Failed)
+            {
+                Debug.LogError(
+                    "Client gameplay catalog sync failed: " +
+                    FormatCatalogSyncResult(client.CatalogSyncResult));
+                return;
+            }
+
+            Debug.Log("Client connection state=" + connectionState);
+        }
+
+        private static string FormatCatalogSyncResult(GameplayCatalogSyncResult result)
+        {
+            string message =
+                "error=" +
+                result.Error +
+                " message=" +
+                result.ErrorMessage;
+            if (result.Manifest.bundle_size != 0)
+            {
+                message +=
+                    " server_catalog_version=" +
+                    result.Manifest.catalog_version +
+                    " server_catalog_hash=" +
+                    result.Manifest.catalog_hash.ToString("x16") +
+                    " bundle_size=" +
+                    result.Manifest.bundle_size;
+            }
+
+            if (!string.IsNullOrEmpty(result.CacheWarning))
+            {
+                message += " cache_warning=" + result.CacheWarning;
+            }
+
+            return message;
         }
 
         private void LogDiagnosticRenderSummary(uint renderCount, int safeRenderCount)

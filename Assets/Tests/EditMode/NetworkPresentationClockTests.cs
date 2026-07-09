@@ -68,6 +68,18 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
+        public void ClientRunner_UsesServerGameplayCatalogSyncBeforeHandshake()
+        {
+            string clientRunner = ReadAssetText("Scripts/Client/ClientRunner.cs");
+
+            StringAssert.Contains("new GameplayCatalogSyncOptions", clientRunner);
+            StringAssert.Contains("client.Start(serverAddress, syncOptions)", clientRunner);
+            StringAssert.DoesNotContain("NetworkGameplayCatalogBundle.TryLoadDefault", clientRunner);
+            StringAssert.DoesNotContain("LoadGameplayCatalogFromMemory", clientRunner);
+            StringAssert.DoesNotContain("client.Start(serverAddress);", clientRunner);
+        }
+
+        [Test]
         public void HostModeRunner_ForwardsInitialLocalPlayerJoinToGameServer()
         {
             string hostModeRunner = ReadAssetText("Scripts/Host/HostModeRunner.cs");
