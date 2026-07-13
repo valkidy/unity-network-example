@@ -1,0 +1,17 @@
+{
+  "name": "NetworkExample.UnityDemo.Runtime",
+  "rootNamespace": "NetworkExample.UnityDemo",
+  "references": [
+    "NetworkExample.Kernel",
+    "Unity.InputSystem"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

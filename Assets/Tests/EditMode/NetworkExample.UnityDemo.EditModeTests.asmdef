@@ -1,0 +1,23 @@
+{
+  "name": "NetworkExample.UnityDemo.EditModeTests",
+  "rootNamespace": "NetworkExample.UnityDemo.Tests.EditMode",
+  "references": [
+    "NetworkExample.UnityDemo.Runtime",
+    "NetworkExample.Kernel",
+    "Unity.InputSystem"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false,
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ]
+}
