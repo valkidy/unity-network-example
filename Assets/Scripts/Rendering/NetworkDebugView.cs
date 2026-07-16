@@ -7,7 +7,7 @@ namespace NetworkExample.UnityDemo.Rendering
 {
     /// <summary>
     /// Immediate-mode visual debugger overlay. Draws collider shapes, entity facing
-    /// directions, AI agent vision cones and a ground grid with Unity <see cref="GL"/>
+    /// directions and AI agent vision cones with Unity <see cref="GL"/>
     /// (so it renders in the Game view and in standalone builds), and a stats panel via
     /// <see cref="OnGUI"/>. Both the client and host runners feed it each frame through
     /// <see cref="Capture"/>.
@@ -26,9 +26,6 @@ namespace NetworkExample.UnityDemo.Rendering
     {
         [SerializeField]
         private bool enableVisualDebug = true;
-
-        [SerializeField]
-        private bool drawGrid = true;
 
         [SerializeField]
         private bool drawColliders = true;
@@ -50,9 +47,6 @@ namespace NetworkExample.UnityDemo.Rendering
 
         [SerializeField]
         private int maxVisionAgents = 64;
-
-        [SerializeField]
-        private int gridHalfExtent = 16;
 
         [Header("Entity type colors")]
         [SerializeField]
@@ -78,9 +72,6 @@ namespace NetworkExample.UnityDemo.Rendering
 
         [SerializeField]
         private Color visionTargetColor = new Color(1f, 0.2f, 0.2f, 1f);
-
-        [SerializeField]
-        private Color gridColor = new Color(0.3f, 0.3f, 0.3f, 1f);
 
         private Material lineMaterial;
         private GUIStyle statsStyle;
@@ -400,11 +391,6 @@ namespace NetworkExample.UnityDemo.Rendering
             GL.MultMatrix(Matrix4x4.identity);
             GL.Begin(GL.LINES);
 
-            if (drawGrid)
-            {
-                DrawGrid();
-            }
-
             if (drawColliders && colliderShapes != null)
             {
                 for (int index = 0; index < colliderShapeCount; ++index)
@@ -561,19 +547,6 @@ namespace NetworkExample.UnityDemo.Rendering
             {
                 Destroy(lineMaterial);
                 lineMaterial = null;
-            }
-        }
-
-        private void DrawGrid()
-        {
-            GL.Color(gridColor);
-            int extent = Mathf.Max(1, gridHalfExtent);
-            for (int line = -extent; line <= extent; ++line)
-            {
-                GL.Vertex3(line, 0f, -extent);
-                GL.Vertex3(line, 0f, extent);
-                GL.Vertex3(-extent, 0f, line);
-                GL.Vertex3(extent, 0f, line);
             }
         }
 
