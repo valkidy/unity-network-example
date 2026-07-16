@@ -36,6 +36,13 @@ namespace NetworkExample.UnityDemo.Client
         [SerializeField]
         private bool enableVisualDebug = true;
 
+        [SerializeField]
+        [Min(1f)]
+        [Tooltip(
+            "Temporary prediction workaround: limits input submission to the " +
+            "server simulation rate so high render rates do not oversimulate prediction.")]
+        private float inputSubmissionRateHz = 30f;
+
         private NetworkClient client;
         private KernelEvent[] events;
         private RenderEntityState[] renderStates;
@@ -45,6 +52,7 @@ namespace NetworkExample.UnityDemo.Client
         private NetworkRenderStateApplier renderStateApplier;
         private NetworkDebugView debugView;
         private readonly NetworkPresentationClock presentationClock = new NetworkPresentationClock();
+        private NetworkInputSubmissionClock inputSubmissionClock;
         private bool started;
         private bool readinessLogged;
         private float nextDiagnosticLogTime;
@@ -55,6 +63,8 @@ namespace NetworkExample.UnityDemo.Client
         private void Awake()
         {
             EnsureComponents();
+            inputSubmissionClock = new NetworkInputSubmissionClock(
+                Mathf.Max(1f, inputSubmissionRateHz));
             events = new KernelEvent[Mathf.Max(1, maxEvents)];
             renderStates = new RenderEntityState[Mathf.Max(1, maxRenderStates)];
             localActionResults = new KernelLocalActionResult[Mathf.Max(1, maxActionEvents)];
@@ -127,12 +137,13 @@ namespace NetworkExample.UnityDemo.Client
                 client.ConnectionState == NetworkClientConnectionState.Disconnected)
             {
                 inputSampler.ResetSession();
+                inputSubmissionClock.Reset();
                 started = false;
                 return;
             }
 
             ActionIntent predictedIntent = default;
-            if (client.IsReady)
+            if (client.IsReady && inputSubmissionClock.ShouldSubmit(Time.deltaTime))
             {
                 PlayerInput input = inputSampler.Sample();
                 if (client.TrySubmitInput(input))
@@ -143,6 +154,10 @@ namespace NetworkExample.UnityDemo.Client
                 {
                     inputSampler.StopActionInput(input.action_intent.action_instance_id);
                 }
+            }
+            else if (!client.IsReady)
+            {
+                inputSubmissionClock.Reset();
             }
 
             ulong clientRenderTimeUs = presentationClock.Advance(Time.deltaTime);
@@ -194,6 +209,7 @@ namespace NetworkExample.UnityDemo.Client
             readyWithoutRenderWarningLogged = false;
             lastConnectionState = NetworkClientConnectionState.Idle;
             presentationClock.Reset();
+            inputSubmissionClock?.Reset();
         }
 
         private void EnsureComponents()
