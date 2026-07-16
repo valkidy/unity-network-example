@@ -128,6 +128,10 @@ PrefabInstance:
     m_TransformParent: {fileID: 0}
     m_Modifications:
     - target: {fileID: -8679921383154817045, guid: 6b77253c46d1e48619a9fcab65f571d4, type: 3}
+      propertyPath: m_LocalScale.x
+      value: -1
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 6b77253c46d1e48619a9fcab65f571d4, type: 3}
       propertyPath: m_LocalPosition.x
       value: 0
       objectReference: {fileID: 0}
@@ -167,6 +171,10 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: -7635826562936255635, guid: 6b77253c46d1e48619a9fcab65f571d4, type: 3}
+      propertyPath: 'm_Materials.Array.data[0]'
+      value: 
+      objectReference: {fileID: 2100000, guid: d84aab9d8f32243b0bbdf0eac1b1057b, type: 2}
     - target: {fileID: 919132149155446097, guid: 6b77253c46d1e48619a9fcab65f571d4, type: 3}
       propertyPath: m_Name
       value: undulating_centered
@@ -359,7 +367,7 @@ Transform:
   m_GameObject: {fileID: 1996834438}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 1, z: -10}
+  m_LocalPosition: {x: 0, y: 3, z: -10}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -417,6 +425,7 @@ MonoBehaviour:
   diagnosticLogIntervalSeconds: 1
   readyWithoutRenderWarningSeconds: 1
   enableVisualDebug: 1
+  inputSubmissionRateHz: 30
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
