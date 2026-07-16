@@ -49,6 +49,35 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             Assert.That(agent.GetComponent<NetworkProjectileView>(), Is.Null);
         }
 
+        [TestCase(KernelActorType.Player, 0.9f, 0.7f)]
+        [TestCase(KernelActorType.Agent, 0.8f, 0.8f)]
+        public void InstantiateVisual_WithActorPlaceholder_AlignsCapsuleBottomToGround(
+            KernelActorType actorType,
+            float expectedCenterHeight,
+            float expectedDiameter)
+        {
+            GameObject visual = AssertPlaceholder(
+                State(1, KernelEntityType.Actor, new KernelVec3(), actorType));
+
+            Assert.That(visual.transform.localPosition, Is.EqualTo(Vector3.zero));
+            Assert.That(visual.transform.childCount, Is.EqualTo(1));
+
+            Transform capsule = visual.transform.GetChild(0);
+            Assert.That(capsule.localPosition, Is.EqualTo(Vector3.up * expectedCenterHeight));
+            Assert.That(
+                capsule.localScale,
+                Is.EqualTo(new Vector3(
+                    expectedDiameter,
+                    expectedCenterHeight,
+                    expectedDiameter)));
+
+            MeshFilter meshFilter = capsule.GetComponent<MeshFilter>();
+            Assert.That(meshFilter, Is.Not.Null);
+            float bottom = capsule.localPosition.y +
+                meshFilter.sharedMesh.bounds.min.y * capsule.localScale.y;
+            Assert.That(bottom, Is.EqualTo(0f).Within(0.0001f));
+        }
+
         [Test]
         public void Apply_WithActorStates_RegistersVisualsWithoutProjectileViews()
         {
