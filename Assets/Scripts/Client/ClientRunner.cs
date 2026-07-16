@@ -22,6 +22,9 @@ namespace NetworkExample.UnityDemo.Client
         private int maxRenderStates = 256;
 
         [SerializeField]
+        private int maxActionEvents = 128;
+
+        [SerializeField]
         private bool enableDiagnostics = true;
 
         [SerializeField]
@@ -36,6 +39,8 @@ namespace NetworkExample.UnityDemo.Client
         private NetworkClient client;
         private KernelEvent[] events;
         private RenderEntityState[] renderStates;
+        private KernelLocalActionResult[] localActionResults;
+        private KernelRemoteActionPresentationEvent[] remoteActionEvents;
         private NetworkInputSampler inputSampler;
         private NetworkRenderStateApplier renderStateApplier;
         private NetworkDebugView debugView;
@@ -52,6 +57,9 @@ namespace NetworkExample.UnityDemo.Client
             EnsureComponents();
             events = new KernelEvent[Mathf.Max(1, maxEvents)];
             renderStates = new RenderEntityState[Mathf.Max(1, maxRenderStates)];
+            localActionResults = new KernelLocalActionResult[Mathf.Max(1, maxActionEvents)];
+            remoteActionEvents =
+                new KernelRemoteActionPresentationEvent[Mathf.Max(1, maxActionEvents)];
         }
 
         private void OnEnable()
@@ -60,6 +68,7 @@ namespace NetworkExample.UnityDemo.Client
             {
                 NetworkKernelVersionLogger.Log();
                 client = new NetworkClient();
+                ConfigurePhysicsBeforeStart(client.Kernel);
                 GameplayCatalogSyncOptions syncOptions = CreateGameplayCatalogSyncOptions();
                 started = client.Start(serverAddress, syncOptions);
                 if (!started)
@@ -100,17 +109,40 @@ namespace NetworkExample.UnityDemo.Client
             LogDiagnosticEvents(eventCount);
             LogConnectionState();
 
+            uint localActionResultCount = client.Kernel.PollLocalActionResults(
+                localActionResults);
+            uint remoteActionEventCount = client.Kernel.PollRemoteActionPresentationEvents(
+                remoteActionEvents);
+            WarnIfBufferFilled(
+                localActionResultCount,
+                localActionResults.Length,
+                "local action result");
+            WarnIfBufferFilled(
+                remoteActionEventCount,
+                remoteActionEvents.Length,
+                "remote action presentation");
+            CompleteLocalActions(localActionResultCount);
+
             if (client.ConnectionState == NetworkClientConnectionState.Failed ||
                 client.ConnectionState == NetworkClientConnectionState.Disconnected)
             {
+                inputSampler.ResetSession();
                 started = false;
                 return;
             }
 
+            ActionIntent predictedIntent = default;
             if (client.IsReady)
             {
                 PlayerInput input = inputSampler.Sample();
-                client.TrySubmitInput(input);
+                if (client.TrySubmitInput(input))
+                {
+                    predictedIntent = input.action_intent;
+                }
+                else
+                {
+                    inputSampler.StopActionInput(input.action_intent.action_instance_id);
+                }
             }
 
             ulong clientRenderTimeUs = presentationClock.Advance(Time.deltaTime);
@@ -122,6 +154,16 @@ namespace NetworkExample.UnityDemo.Client
             LogDiagnosticRenderSummary(renderCount, safeRenderCount);
             WarnIfReadyWithoutRenderStates(safeRenderCount);
             renderStateApplier.Apply(renderStates, safeRenderCount);
+            renderStateApplier.ApplyLocalActionResults(
+                client.LocalPlayerNetId,
+                localActionResults,
+                SafeCount(localActionResultCount, localActionResults.Length));
+            renderStateApplier.ApplyRemoteActionPresentationEvents(
+                remoteActionEvents,
+                SafeCount(remoteActionEventCount, remoteActionEvents.Length));
+            renderStateApplier.BeginPredictedLocalAction(
+                client.LocalPlayerNetId,
+                predictedIntent);
 
             if (debugView != null)
             {
@@ -142,6 +184,7 @@ namespace NetworkExample.UnityDemo.Client
         private void OnDisable()
         {
             renderStateApplier?.Clear();
+            inputSampler?.ResetSession();
             client?.Dispose();
             client = null;
             started = false;
@@ -204,12 +247,63 @@ namespace NetworkExample.UnityDemo.Client
             };
         }
 
+        private static void ConfigurePhysicsBeforeStart(
+            global::NetworkExample.Kernel.Kernel kernel)
+        {
+            var physicsConfig = new KernelPhysicsConfig
+            {
+                physics_simulation = 0,
+                physics_workers = 0,
+            };
+
+            try
+            {
+                if (!kernel.SetPhysicsConfig(physicsConfig))
+                {
+                    throw new InvalidOperationException(
+                        "Kernel_SetPhysicsConfig failed before client start.");
+                }
+            }
+            catch (EntryPointNotFoundException)
+            {
+                // com.network-example.kernel 0.6.6 at commit 77c1679 has ABI 42
+                // managed bindings, but its macOS export list omitted this symbol.
+                // These values exactly match the ABI 42 native defaults, so this
+                // compatibility path is behaviorally equivalent until the packaged
+                // dylib is rebuilt with Kernel_SetPhysicsConfig exported.
+                Debug.LogWarning(
+                    "Native plugin does not export Kernel_SetPhysicsConfig; " +
+                    "continuing with equivalent ABI 42 physics defaults " +
+                    "(physics_simulation=0, physics_workers=0). Update the " +
+                    "com.network-example.kernel native plugin to remove this fallback.");
+            }
+        }
+
         private static void WarnIfBufferFilled(uint count, int capacity, string bufferName)
         {
             if (count >= capacity)
             {
                 Debug.LogWarning("Client " + bufferName + " buffer reached capacity " + capacity + ".");
             }
+        }
+
+        private void CompleteLocalActions(uint count)
+        {
+            int safeCount = SafeCount(count, localActionResults.Length);
+            for (int index = 0; index < safeCount; ++index)
+            {
+                KernelLocalActionResult result = localActionResults[index];
+                inputSampler.CompleteAction(result.action_instance_id);
+                if (result.result != KernelLocalActionResultType.Accepted)
+                {
+                    inputSampler.StopActionInput(result.action_instance_id);
+                }
+            }
+        }
+
+        private static int SafeCount(uint count, int capacity)
+        {
+            return count > (uint)capacity ? capacity : (int)count;
         }
 
         private void LogDiagnosticEvents(uint eventCount)

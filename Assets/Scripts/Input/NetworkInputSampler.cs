@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using NetworkExample.Kernel;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -26,10 +27,15 @@ namespace NetworkExample.UnityDemo.Input
         private InputAction fireAction;
         private InputAction[] weaponSelectActions;
         private InputAction reloadAction;
+        private readonly HashSet<uint> outstandingActionIds = new HashSet<uint>();
         private uint inputSequence;
-        private uint nextClientActionId = 1;
+        private uint nextActionInstanceId = 1;
+        private uint heldFireActionInstanceId;
         private byte selectedWeapon;
         private bool wasFirePressed;
+        private bool wasReloadPressed;
+
+        public int OutstandingActionCount => outstandingActionIds.Count;
 
         private void Awake()
         {
@@ -78,7 +84,7 @@ namespace NetworkExample.UnityDemo.Input
             fireAction?.Disable();
             SetWeaponSelectActionsEnabled(false);
             reloadAction?.Disable();
-            wasFirePressed = false;
+            ResetSession();
         }
 
         private void OnDestroy()
@@ -108,16 +114,41 @@ namespace NetworkExample.UnityDemo.Input
             UpdateSelectedWeapon();
             bool isFirePressed = IsFirePressed();
             bool fireTriggered = isFirePressed && !wasFirePressed;
+            bool fireReleased = !isFirePressed && wasFirePressed;
             wasFirePressed = isFirePressed;
+            bool isReloadPressed = IsActionPressed(reloadAction);
+            bool reloadTriggered = isReloadPressed && !wasReloadPressed;
+            wasReloadPressed = isReloadPressed;
 
-            uint buttons = 0U;
+            ActionIntent actionIntent = default;
+            ActionInput actionInput = default;
             if (fireTriggered)
             {
-                buttons |= (uint)InputButton.Fire;
+                heldFireActionInstanceId = AllocateActionInstanceId();
+                actionIntent = CreateActionIntent(
+                    heldFireActionInstanceId,
+                    KernelActionBinding.PrimaryFire);
             }
-            if (IsActionPressed(reloadAction))
+            else if (heldFireActionInstanceId != 0)
             {
-                buttons |= (uint)InputButton.Reload;
+                actionInput = new ActionInput
+                {
+                    action_instance_id = heldFireActionInstanceId,
+                    held = isFirePressed ? (byte)1 : (byte)0,
+                };
+                if (fireReleased)
+                {
+                    heldFireActionInstanceId = 0;
+                }
+            }
+
+            // PlayerInput has one intent slot. When both actions begin on the same
+            // sample, primary fire wins and reload can be attempted again later.
+            if (reloadTriggered && actionIntent.action_instance_id == 0)
+            {
+                actionIntent = CreateActionIntent(
+                    AllocateActionInstanceId(),
+                    KernelActionBinding.Reload);
             }
 
             Vector3 aimDirection = move.sqrMagnitude > 0.0001f
@@ -125,26 +156,74 @@ namespace NetworkExample.UnityDemo.Input
                 : Vector3.forward;
 
             inputSequence++;
-            uint clientActionId = 0;
-            if ((buttons & (uint)InputButton.Fire) != 0)
-            {
-                clientActionId = nextClientActionId++;
-                if (nextClientActionId == 0)
-                {
-                    nextClientActionId = 1;
-                }
-            }
 
             return new KernelPlayerInput
             {
                 input_seq = inputSequence,
                 client_action_time_us = NowMicroseconds(),
-                client_action_id = clientActionId,
-                move = new KernelVec2(move.x * 0.1f, move.y * 0.1f), // Scale down movement input for better control at lower tick rates
+                // move = new KernelVec2(move.x * 0.1f, move.y * 0.1f), // Scale down movement input for better control at lower tick rates
+                move = new KernelVec2(move.x, move.y),
                 look_delta = new KernelVec2(0f, 0f),
                 aim_dir = new KernelVec3(aimDirection.x, aimDirection.y, aimDirection.z),
-                buttons = buttons,
+                buttons = 0U,
                 selected_weapon = selectedWeapon,
+                action_intent = actionIntent,
+                action_input = actionInput,
+            };
+        }
+
+        public void CompleteAction(uint actionInstanceId)
+        {
+            if (actionInstanceId == 0)
+            {
+                return;
+            }
+
+            outstandingActionIds.Remove(actionInstanceId);
+        }
+
+        public void StopActionInput(uint actionInstanceId)
+        {
+            CompleteAction(actionInstanceId);
+            if (heldFireActionInstanceId == actionInstanceId)
+            {
+                heldFireActionInstanceId = 0;
+            }
+        }
+
+        public void ResetSession()
+        {
+            outstandingActionIds.Clear();
+            inputSequence = 0;
+            nextActionInstanceId = 1;
+            heldFireActionInstanceId = 0;
+            wasFirePressed = false;
+            wasReloadPressed = false;
+        }
+
+        private uint AllocateActionInstanceId()
+        {
+            uint actionInstanceId;
+            do
+            {
+                actionInstanceId = nextActionInstanceId++;
+            }
+            while (actionInstanceId == 0 ||
+                actionInstanceId == heldFireActionInstanceId ||
+                outstandingActionIds.Contains(actionInstanceId));
+
+            outstandingActionIds.Add(actionInstanceId);
+            return actionInstanceId;
+        }
+
+        private static ActionIntent CreateActionIntent(
+            uint actionInstanceId,
+            KernelActionBinding binding)
+        {
+            return new ActionIntent
+            {
+                action_instance_id = actionInstanceId,
+                binding_id = binding,
             };
         }
 

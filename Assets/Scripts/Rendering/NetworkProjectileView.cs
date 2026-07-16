@@ -7,14 +7,14 @@ namespace NetworkExample.UnityDemo.Rendering
     public sealed class NetworkProjectileView : MonoBehaviour
     {
         public ulong EntityId { get; private set; }
-        public uint ClientActionId { get; private set; }
+        public uint ActionInstanceId { get; private set; }
         public uint ServerEntityId { get; private set; }
         public bool IsConfirmed => ServerEntityId != 0;
 
         public void ApplyKernelState(RenderEntityState state)
         {
             EntityId = state.entity_id;
-            ClientActionId = state.client_action_id;
+            ActionInstanceId = state.action_instance_id;
             if (state.net_id != 0)
             {
                 ServerEntityId = state.net_id;
@@ -43,9 +43,9 @@ namespace NetworkExample.UnityDemo.Rendering
                 return "NetProjectile_" + state.net_id;
             }
 
-            if (state.client_action_id != 0)
+            if (state.action_instance_id != 0)
             {
-                return "PredictedProjectile_" + state.client_action_id;
+                return "PredictedProjectile_" + state.action_instance_id;
             }
 
             return "PredictedProjectile";

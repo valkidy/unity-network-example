@@ -42,7 +42,8 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             KernelPlayerInput input = sampler.Sample();
 
             Assert.That(input.selected_weapon, Is.EqualTo(0));
-            Assert.That(input.client_action_id, Is.Zero);
+            Assert.That(input.action_intent.action_instance_id, Is.Zero);
+            Assert.That(input.action_input.action_instance_id, Is.Zero);
         }
 
         [Test]
@@ -53,8 +54,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             KernelPlayerInput input = sampler.Sample();
 
             Assert.That(input.selected_weapon, Is.EqualTo(0));
-            Assert.That(HasButton(input, InputButton.Fire), Is.False);
-            Assert.That(input.client_action_id, Is.Zero);
+            Assert.That(input.action_intent.action_instance_id, Is.Zero);
         }
 
         [Test]
@@ -76,8 +76,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             KernelPlayerInput input = sampler.Sample();
 
             Assert.That(input.selected_weapon, Is.EqualTo(6));
-            Assert.That(HasButton(input, InputButton.Fire), Is.False);
-            Assert.That(input.client_action_id, Is.Zero);
+            Assert.That(input.action_intent.action_instance_id, Is.Zero);
         }
 
         [Test]
@@ -93,19 +92,21 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
-        public void Sample_WhileFireButtonRemainsPressed_OnlyFirstSampleSubmitsFire()
+        public void Sample_WhileFireButtonRemainsPressed_ReusesActionIdForHeldInput()
         {
             SetKey(Key.Space);
 
             KernelPlayerInput first = sampler.Sample();
             KernelPlayerInput second = sampler.Sample();
 
-            Assert.That(HasButton(first, InputButton.Fire), Is.True);
             Assert.That(first.selected_weapon, Is.EqualTo(0));
-            Assert.That(first.client_action_id, Is.Not.Zero);
-            Assert.That(HasButton(second, InputButton.Fire), Is.False);
+            Assert.That(first.action_intent.binding_id, Is.EqualTo(KernelActionBinding.PrimaryFire));
+            Assert.That(first.action_intent.action_instance_id, Is.Not.Zero);
             Assert.That(second.selected_weapon, Is.EqualTo(0));
-            Assert.That(second.client_action_id, Is.Zero);
+            Assert.That(second.action_intent.action_instance_id, Is.Zero);
+            Assert.That(second.action_input.action_instance_id,
+                Is.EqualTo(first.action_intent.action_instance_id));
+            Assert.That(second.action_input.held, Is.EqualTo(1));
         }
 
         [Test]
@@ -120,15 +121,16 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             SetKey(Key.Space);
             KernelPlayerInput pressedAgain = sampler.Sample();
 
-            Assert.That(HasButton(first, InputButton.Fire), Is.True);
-            Assert.That(HasButton(released, InputButton.Fire), Is.False);
-            Assert.That(HasButton(pressedAgain, InputButton.Fire), Is.True);
-            Assert.That(pressedAgain.client_action_id, Is.Not.Zero);
-            Assert.That(pressedAgain.client_action_id, Is.Not.EqualTo(first.client_action_id));
+            Assert.That(released.action_input.action_instance_id,
+                Is.EqualTo(first.action_intent.action_instance_id));
+            Assert.That(released.action_input.held, Is.Zero);
+            Assert.That(pressedAgain.action_intent.action_instance_id, Is.Not.Zero);
+            Assert.That(pressedAgain.action_intent.action_instance_id,
+                Is.Not.EqualTo(first.action_intent.action_instance_id));
         }
 
         [Test]
-        public void Sample_WhenReloadIsPressed_PreservesWeaponAndDoesNotCreateClientAction()
+        public void Sample_WhenReloadIsPressed_CreatesReloadActionIntent()
         {
             SetKey(Key.Digit7);
             sampler.Sample();
@@ -137,8 +139,8 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             KernelPlayerInput input = sampler.Sample();
 
             Assert.That(input.selected_weapon, Is.EqualTo(6));
-            Assert.That(HasButton(input, InputButton.Reload), Is.True);
-            Assert.That(input.client_action_id, Is.Zero);
+            Assert.That(input.action_intent.binding_id, Is.EqualTo(KernelActionBinding.Reload));
+            Assert.That(input.action_intent.action_instance_id, Is.Not.Zero);
         }
 
         [Test]
@@ -157,10 +159,38 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             KernelPlayerInput slotSixFire = sampler.Sample();
 
             Assert.That(slotZeroFire.selected_weapon, Is.EqualTo(0));
-            Assert.That(slotZeroFire.client_action_id, Is.Not.Zero);
+            Assert.That(slotZeroFire.action_intent.action_instance_id, Is.Not.Zero);
             Assert.That(slotSixFire.selected_weapon, Is.EqualTo(6));
-            Assert.That(slotSixFire.client_action_id, Is.Not.Zero);
-            Assert.That(slotSixFire.client_action_id, Is.Not.EqualTo(slotZeroFire.client_action_id));
+            Assert.That(slotSixFire.action_intent.action_instance_id, Is.Not.Zero);
+            Assert.That(slotSixFire.action_intent.action_instance_id,
+                Is.Not.EqualTo(slotZeroFire.action_intent.action_instance_id));
+        }
+
+        [Test]
+        public void CompleteAction_ReleasesOutstandingActionBookkeeping()
+        {
+            SetKey(Key.Space);
+            KernelPlayerInput input = sampler.Sample();
+
+            Assert.That(sampler.OutstandingActionCount, Is.EqualTo(1));
+
+            sampler.CompleteAction(input.action_intent.action_instance_id);
+
+            Assert.That(sampler.OutstandingActionCount, Is.Zero);
+        }
+
+        [Test]
+        public void CompleteAcceptedAction_DoesNotChangeHeldActionIdentity()
+        {
+            SetKey(Key.Space);
+            KernelPlayerInput first = sampler.Sample();
+            sampler.CompleteAction(first.action_intent.action_instance_id);
+
+            KernelPlayerInput held = sampler.Sample();
+
+            Assert.That(held.action_input.action_instance_id,
+                Is.EqualTo(first.action_intent.action_instance_id));
+            Assert.That(held.action_input.held, Is.EqualTo(1));
         }
 
         private void SetKey(params Key[] keys)
@@ -169,9 +199,5 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             InputSystem.Update();
         }
 
-        private static bool HasButton(KernelPlayerInput input, InputButton button)
-        {
-            return (input.buttons & (uint)button) != 0;
-        }
     }
 }

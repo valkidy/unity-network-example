@@ -21,11 +21,16 @@ namespace NetworkExample.UnityDemo.Host
         private int maxRenderStates = 256;
 
         [SerializeField]
+        private int maxActionEvents = 128;
+
+        [SerializeField]
         private bool enableVisualDebug = true;
 
         private NetworkHost host;
         private KernelEvent[] events;
         private RenderEntityState[] renderStates;
+        private KernelLocalActionResult[] localActionResults;
+        private KernelRemoteActionPresentationEvent[] remoteActionEvents;
         private NetworkInputSampler inputSampler;
         private NetworkRenderStateApplier renderStateApplier;
         private NetworkDebugView debugView;
@@ -39,6 +44,9 @@ namespace NetworkExample.UnityDemo.Host
             EnsureComponents();
             events = new KernelEvent[Mathf.Max(1, maxEvents)];
             renderStates = new RenderEntityState[Mathf.Max(1, maxRenderStates)];
+            localActionResults = new KernelLocalActionResult[Mathf.Max(1, maxActionEvents)];
+            remoteActionEvents =
+                new KernelRemoteActionPresentationEvent[Mathf.Max(1, maxActionEvents)];
         }
 
         private void OnEnable()
@@ -94,10 +102,32 @@ namespace NetworkExample.UnityDemo.Host
             MarkInitialLocalJoinForwardedFromEvents(eventCount);
             ForwardInitialLocalPlayerJoinToGameServer();
 
+            uint localActionResultCount = host.Kernel.PollLocalActionResults(
+                localActionResults);
+            uint remoteActionEventCount = host.Kernel.PollRemoteActionPresentationEvents(
+                remoteActionEvents);
+            WarnIfBufferFilled(
+                localActionResultCount,
+                localActionResults.Length,
+                "local action result");
+            WarnIfBufferFilled(
+                remoteActionEventCount,
+                remoteActionEvents.Length,
+                "remote action presentation");
+            CompleteLocalActions(localActionResultCount);
+
+            ActionIntent predictedIntent = default;
             if (host.IsLocalClientReady)
             {
                 PlayerInput input = inputSampler.Sample();
-                host.TrySubmitLocalInput(input);
+                if (host.TrySubmitLocalInput(input))
+                {
+                    predictedIntent = input.action_intent;
+                }
+                else
+                {
+                    inputSampler.StopActionInput(input.action_intent.action_instance_id);
+                }
             }
 
             ulong clientRenderTimeUs = presentationClock.Advance(Time.deltaTime);
@@ -107,6 +137,16 @@ namespace NetworkExample.UnityDemo.Host
                 ? renderStates.Length
                 : (int)renderCount;
             renderStateApplier.Apply(renderStates, safeRenderCount);
+            renderStateApplier.ApplyLocalActionResults(
+                host.LocalPlayerNetId,
+                localActionResults,
+                SafeCount(localActionResultCount, localActionResults.Length));
+            renderStateApplier.ApplyRemoteActionPresentationEvents(
+                remoteActionEvents,
+                SafeCount(remoteActionEventCount, remoteActionEvents.Length));
+            renderStateApplier.BeginPredictedLocalAction(
+                host.LocalPlayerNetId,
+                predictedIntent);
 
             if (debugView != null)
             {
@@ -127,6 +167,7 @@ namespace NetworkExample.UnityDemo.Host
         private void OnDisable()
         {
             renderStateApplier?.Clear();
+            inputSampler?.ResetSession();
             host?.Dispose();
             host = null;
             started = false;
@@ -220,6 +261,25 @@ namespace NetworkExample.UnityDemo.Host
             {
                 Debug.LogWarning("HostMode " + bufferName + " buffer reached capacity " + capacity + ".");
             }
+        }
+
+        private void CompleteLocalActions(uint count)
+        {
+            int safeCount = SafeCount(count, localActionResults.Length);
+            for (int index = 0; index < safeCount; ++index)
+            {
+                KernelLocalActionResult result = localActionResults[index];
+                inputSampler.CompleteAction(result.action_instance_id);
+                if (result.result != KernelLocalActionResultType.Accepted)
+                {
+                    inputSampler.StopActionInput(result.action_instance_id);
+                }
+            }
+        }
+
+        private static int SafeCount(uint count, int capacity)
+        {
+            return count > (uint)capacity ? capacity : (int)count;
         }
     }
 }

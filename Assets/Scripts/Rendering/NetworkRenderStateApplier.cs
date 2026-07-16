@@ -20,6 +20,12 @@ namespace NetworkExample.UnityDemo.Rendering
 
         private readonly HashSet<ulong> visibleThisFrame = new HashSet<ulong>();
         private readonly List<ulong> knownEntities = new List<ulong>();
+        private readonly HashSet<RemoteCommitKey> remoteCommitDedup =
+            new HashSet<RemoteCommitKey>();
+        private readonly Queue<RemoteCommitKey> remoteCommitOrder =
+            new Queue<RemoteCommitKey>();
+
+        private const int MaxRememberedRemoteCommits = 512;
 
         public void Configure(
             NetworkEntityRegistry registry,
@@ -64,6 +70,7 @@ namespace NetworkExample.UnityDemo.Rendering
                 else
                 {
                     ApplyTransform(visual.transform, state);
+                    ApplyActorState(visual, state);
                 }
             }
 
@@ -84,7 +91,80 @@ namespace NetworkExample.UnityDemo.Rendering
         {
             knownEntities.Clear();
             visibleThisFrame.Clear();
+            remoteCommitDedup.Clear();
+            remoteCommitOrder.Clear();
             entityRegistry?.Clear();
+        }
+
+        public void BeginPredictedLocalAction(uint localPlayerNetId, ActionIntent intent)
+        {
+            if (intent.action_instance_id == 0 ||
+                entityRegistry == null ||
+                !entityRegistry.TryGet(localPlayerNetId, out GameObject visual))
+            {
+                return;
+            }
+
+            GetOrAddActorView(visual).BeginPredictedAction(intent);
+        }
+
+        public void ApplyLocalActionResults(
+            uint localPlayerNetId,
+            KernelLocalActionResult[] results,
+            int count)
+        {
+            if (results == null ||
+                entityRegistry == null ||
+                !entityRegistry.TryGet(localPlayerNetId, out GameObject visual))
+            {
+                return;
+            }
+
+            NetworkActorView view = GetOrAddActorView(visual);
+            int safeCount = Mathf.Clamp(count, 0, results.Length);
+            for (int index = 0; index < safeCount; ++index)
+            {
+                view.ApplyLocalActionResult(results[index]);
+            }
+        }
+
+        public void ApplyRemoteActionPresentationEvents(
+            KernelRemoteActionPresentationEvent[] events,
+            int count)
+        {
+            if (events == null || entityRegistry == null)
+            {
+                return;
+            }
+
+            int safeCount = Mathf.Clamp(count, 0, events.Length);
+            for (int eventIndex = 0; eventIndex < safeCount; ++eventIndex)
+            {
+                KernelRemoteActionPresentationEvent remoteEvent = events[eventIndex];
+                if (!entityRegistry.TryGet(remoteEvent.actor_net_id, out GameObject visual))
+                {
+                    continue;
+                }
+
+                NetworkActorView view = GetOrAddActorView(visual);
+                uint endCommit = (uint)remoteEvent.first_commit_index + remoteEvent.commit_count;
+                for (uint commitIndex = remoteEvent.first_commit_index;
+                    commitIndex < endCommit;
+                    ++commitIndex)
+                {
+                    var key = new RemoteCommitKey(
+                        remoteEvent.actor_net_id,
+                        remoteEvent.action_instance_id,
+                        commitIndex,
+                        remoteEvent.event_type);
+                    if (!RememberRemoteCommit(key))
+                    {
+                        continue;
+                    }
+
+                    view.PlayRemoteCommit(remoteEvent, commitIndex);
+                }
+            }
         }
 
         private static bool ShouldRender(RenderEntityState state)
@@ -93,7 +173,7 @@ namespace NetworkExample.UnityDemo.Rendering
             {
                 return state.entity_id != 0 ||
                     state.net_id != 0 ||
-                    state.client_action_id != 0;
+                    state.action_instance_id != 0;
             }
 
             return state.net_id != 0;
@@ -108,9 +188,9 @@ namespace NetworkExample.UnityDemo.Rendering
 
             if (state.entity_type == KernelEntityType.Projectile &&
                 state.status == RenderEntityStatus.Predicted &&
-                state.client_action_id != 0)
+                state.action_instance_id != 0)
             {
-                return PredictedProjectileKeyMask | state.client_action_id;
+                return PredictedProjectileKeyMask | state.action_instance_id;
             }
 
             return state.net_id;
@@ -136,6 +216,81 @@ namespace NetworkExample.UnityDemo.Rendering
                     state.rotation.y,
                     state.rotation.z,
                     state.rotation.w));
+        }
+
+        private static void ApplyActorState(GameObject visual, RenderEntityState state)
+        {
+            if (state.entity_type != KernelEntityType.Actor)
+            {
+                return;
+            }
+
+            GetOrAddActorView(visual).ApplyContinuousState(state);
+        }
+
+        private static NetworkActorView GetOrAddActorView(GameObject visual)
+        {
+            NetworkActorView view = visual.GetComponent<NetworkActorView>();
+            return view != null ? view : visual.AddComponent<NetworkActorView>();
+        }
+
+        private bool RememberRemoteCommit(RemoteCommitKey key)
+        {
+            if (!remoteCommitDedup.Add(key))
+            {
+                return false;
+            }
+
+            remoteCommitOrder.Enqueue(key);
+            while (remoteCommitOrder.Count > MaxRememberedRemoteCommits)
+            {
+                remoteCommitDedup.Remove(remoteCommitOrder.Dequeue());
+            }
+            return true;
+        }
+
+        private readonly struct RemoteCommitKey : System.IEquatable<RemoteCommitKey>
+        {
+            private readonly uint actorNetId;
+            private readonly uint actionInstanceId;
+            private readonly uint commitIndex;
+            private readonly KernelRemoteActionPresentationEventType eventType;
+
+            public RemoteCommitKey(
+                uint actorNetId,
+                uint actionInstanceId,
+                uint commitIndex,
+                KernelRemoteActionPresentationEventType eventType)
+            {
+                this.actorNetId = actorNetId;
+                this.actionInstanceId = actionInstanceId;
+                this.commitIndex = commitIndex;
+                this.eventType = eventType;
+            }
+
+            public bool Equals(RemoteCommitKey other)
+            {
+                return actorNetId == other.actorNetId &&
+                    actionInstanceId == other.actionInstanceId &&
+                    commitIndex == other.commitIndex &&
+                    eventType == other.eventType;
+            }
+
+            public override bool Equals(object obj)
+            {
+                return obj is RemoteCommitKey other && Equals(other);
+            }
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    int hash = (int)actorNetId;
+                    hash = (hash * 397) ^ (int)actionInstanceId;
+                    hash = (hash * 397) ^ (int)commitIndex;
+                    return (hash * 397) ^ (int)eventType;
+                }
+            }
         }
     }
 }
