@@ -69,26 +69,26 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
-        public void Sample_WhenDigitSevenIsPressed_SelectsWeaponSlotSix()
+        public void Sample_WhenDigitFourIsPressed_SelectsWeaponSlotThree()
         {
-            SetKey(Key.Digit7);
+            SetKey(Key.Digit4);
 
             KernelPlayerInput input = sampler.Sample();
 
-            Assert.That(input.selected_weapon, Is.EqualTo(6));
+            Assert.That(input.selected_weapon, Is.EqualTo(3));
             Assert.That(input.action_intent.action_instance_id, Is.Zero);
         }
 
         [Test]
         public void Sample_AfterWeaponSelectionIsReleased_PreservesSelectedWeapon()
         {
-            SetKey(Key.Digit7);
+            SetKey(Key.Digit4);
             sampler.Sample();
 
             SetKey();
             KernelPlayerInput input = sampler.Sample();
 
-            Assert.That(input.selected_weapon, Is.EqualTo(6));
+            Assert.That(input.selected_weapon, Is.EqualTo(3));
         }
 
         [Test]
@@ -132,19 +132,19 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         [Test]
         public void Sample_WhenReloadIsPressed_CreatesReloadActionIntent()
         {
-            SetKey(Key.Digit7);
+            SetKey(Key.Digit4);
             sampler.Sample();
 
             SetKey(Key.R);
             KernelPlayerInput input = sampler.Sample();
 
-            Assert.That(input.selected_weapon, Is.EqualTo(6));
+            Assert.That(input.selected_weapon, Is.EqualTo(3));
             Assert.That(input.action_intent.binding_id, Is.EqualTo(KernelActionBinding.Reload));
             Assert.That(input.action_intent.action_instance_id, Is.Not.Zero);
         }
 
         [Test]
-        public void Sample_WhenFireIsPressedForSlotZeroAndSlotSix_CreatesClientActions()
+        public void Sample_WhenFireIsPressedForSlotZeroAndSlotThree_CreatesClientActions()
         {
             SetKey(Key.Space);
             KernelPlayerInput slotZeroFire = sampler.Sample();
@@ -152,17 +152,17 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             SetKey();
             sampler.Sample();
 
-            SetKey(Key.Digit7);
+            SetKey(Key.Digit4);
             sampler.Sample();
 
             SetKey(Key.Space);
-            KernelPlayerInput slotSixFire = sampler.Sample();
+            KernelPlayerInput slotThreeFire = sampler.Sample();
 
             Assert.That(slotZeroFire.selected_weapon, Is.EqualTo(0));
             Assert.That(slotZeroFire.action_intent.action_instance_id, Is.Not.Zero);
-            Assert.That(slotSixFire.selected_weapon, Is.EqualTo(6));
-            Assert.That(slotSixFire.action_intent.action_instance_id, Is.Not.Zero);
-            Assert.That(slotSixFire.action_intent.action_instance_id,
+            Assert.That(slotThreeFire.selected_weapon, Is.EqualTo(3));
+            Assert.That(slotThreeFire.action_intent.action_instance_id, Is.Not.Zero);
+            Assert.That(slotThreeFire.action_intent.action_instance_id,
                 Is.Not.EqualTo(slotZeroFire.action_intent.action_instance_id));
         }
 

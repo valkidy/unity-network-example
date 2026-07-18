@@ -52,7 +52,7 @@ namespace NetworkExample.UnityDemo.Input
             fireAction.AddBinding("<Keyboard>/space");
             fireAction.AddBinding("<Gamepad>/rightTrigger");
 
-            weaponSelectActions = new InputAction[KernelConstants.MaxWeapons];
+            weaponSelectActions = new InputAction[KernelConstants.MaxWeaponSlots];
             for (int index = 0; index < weaponSelectActions.Length; ++index)
             {
                 InputAction selectAction = new InputAction(
