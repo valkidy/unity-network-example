@@ -1,0 +1,38 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8c541f814a1b243c49f2b7d67870a96a, type: 3}
+  m_Name: NetworkPrefabCatalog
+  m_EditorClassIdentifier: NetworkExample.UnityDemo.Runtime::NetworkExample.UnityDemo.Rendering.NetworkPrefabCatalog
+  actorPrefabs:
+  - actorTemplateId: 1
+    prefab: {fileID: 4385249257082475097, guid: 2869f6d5674cd4027aafbcdd722dd7dd, type: 3}
+  - actorTemplateId: 2
+    prefab: {fileID: 1856945008544614001, guid: fc47cec2e61ab4c74ba57d58878ce6ac, type: 3}
+  projectilePrefabs:
+  - projectileTemplateId: 2
+    prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
+  - projectileTemplateId: 3
+    prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
+  - projectileTemplateId: 4
+    prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
+  - projectileTemplateId: 5
+    prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
+  - projectileTemplateId: 6
+    prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
+  - projectileTemplateId: 7
+    prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
+  - projectileTemplateId: 8
+    prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
+  playerActorFallback: {fileID: 4385249257082475097, guid: 2869f6d5674cd4027aafbcdd722dd7dd, type: 3}
+  agentActorFallback: {fileID: 1856945008544614001, guid: fc47cec2e61ab4c74ba57d58878ce6ac, type: 3}
+  projectileFallback: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
+  entityFallback: {fileID: 0}

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using NetworkExample.Kernel;
 using UnityEngine;
 
@@ -6,6 +7,8 @@ namespace NetworkExample.UnityDemo.Rendering
     [DisallowMultipleComponent]
     public sealed class NetworkPrefabRegistry : MonoBehaviour
     {
+        public const string DefaultCatalogResourcePath = "NetworkPrefabCatalog";
+
         private static readonly Vector3 ProjectileLocalScale = new Vector3(0.1f, 0.1f, 0.1f);
         private const float PlayerCapsuleHalfHeight = 0.55f;
         private const float PlayerCapsuleRadius = 0.35f;
@@ -13,16 +16,22 @@ namespace NetworkExample.UnityDemo.Rendering
         private const float AgentCapsuleRadius = 0.4f;
 
         [SerializeField]
-        private GameObject playerPrefab = null;
+        [Tooltip(
+            "Shared template-id to prefab index. When empty, " +
+            "Resources/NetworkPrefabCatalog is loaded automatically.")]
+        private NetworkPrefabCatalog catalog;
 
-        [SerializeField]
-        private GameObject enemyPrefab = null;
+        private readonly HashSet<string> warnings = new HashSet<string>();
+        private bool catalogValidated;
 
-        [SerializeField]
-        private GameObject projectilePrefab = null;
+        public NetworkPrefabCatalog Catalog => ResolveCatalog();
 
-        [SerializeField]
-        private GameObject fallbackPrefab = null;
+        public void Configure(NetworkPrefabCatalog prefabCatalog)
+        {
+            catalog = prefabCatalog;
+            warnings.Clear();
+            catalogValidated = false;
+        }
 
         public GameObject InstantiateVisual(KernelEntityType entityType, Transform parent)
         {
@@ -34,34 +43,158 @@ namespace NetworkExample.UnityDemo.Rendering
         public GameObject InstantiateVisual(RenderEntityState state, Transform parent)
         {
             GameObject prefab = GetPrefab(state);
+            bool usesProceduralPlaceholder = prefab == null;
             GameObject visual = prefab == null
                 ? CreatePlaceholder(state)
                 : Instantiate(prefab);
 
             visual.name = NameFor(state);
             visual.transform.SetParent(parent, false);
-            ApplyVisualDefaults(visual, state);
+            ApplyVisualDefaults(visual, state, usesProceduralPlaceholder);
             return visual;
         }
 
         private GameObject GetPrefab(RenderEntityState state)
         {
+            NetworkPrefabCatalog resolvedCatalog = ResolveCatalog();
+            ValidateCatalogOnce(resolvedCatalog);
+
             if (state.entity_type == KernelEntityType.Projectile)
             {
-                return projectilePrefab;
+                if (resolvedCatalog != null &&
+                    resolvedCatalog.TryGetProjectilePrefab(
+                        state.projectile_template_id,
+                        out GameObject projectilePrefab))
+                {
+                    return projectilePrefab;
+                }
+
+                WarnMissingOnce("projectile", state.projectile_template_id);
+                return resolvedCatalog != null
+                    ? resolvedCatalog.ProjectileFallback
+                    : null;
             }
 
             if (state.entity_type == KernelEntityType.Actor)
             {
-                if (state.actor_type == KernelActorType.Agent)
+                if (resolvedCatalog != null &&
+                    resolvedCatalog.TryGetActorPrefab(
+                        state.actor_template_id,
+                        out GameObject actorPrefab))
                 {
-                    return enemyPrefab != null ? enemyPrefab : playerPrefab;
+                    return actorPrefab;
                 }
 
-                return playerPrefab;
+                WarnMissingOnce("actor", state.actor_template_id);
+                if (resolvedCatalog == null)
+                {
+                    return null;
+                }
+
+                return state.actor_type == KernelActorType.Agent
+                    ? resolvedCatalog.AgentActorFallback ??
+                        resolvedCatalog.PlayerActorFallback
+                    : resolvedCatalog.PlayerActorFallback;
             }
 
-            return fallbackPrefab;
+            return resolvedCatalog != null ? resolvedCatalog.EntityFallback : null;
+        }
+
+        private NetworkPrefabCatalog ResolveCatalog()
+        {
+            if (catalog == null)
+            {
+                catalog = Resources.Load<NetworkPrefabCatalog>(
+                    DefaultCatalogResourcePath);
+            }
+
+            return catalog;
+        }
+
+        private void ValidateCatalogOnce(NetworkPrefabCatalog resolvedCatalog)
+        {
+            if (catalogValidated || resolvedCatalog == null)
+            {
+                return;
+            }
+
+            catalogValidated = true;
+            var actorIds = new HashSet<uint>();
+            NetworkPrefabCatalog.ActorPrefabBinding[] actorBindings =
+                resolvedCatalog.ActorPrefabs;
+            if (actorBindings != null)
+            {
+                for (int index = 0; index < actorBindings.Length; ++index)
+                {
+                    NetworkPrefabCatalog.ActorPrefabBinding binding =
+                        actorBindings[index];
+                    if (!actorIds.Add(binding.actorTemplateId))
+                    {
+                        WarnOnce(
+                            "duplicate-actor-" + binding.actorTemplateId,
+                            "Network prefab catalog contains duplicate actor template id " +
+                            binding.actorTemplateId +
+                            "; the first non-null prefab wins.");
+                    }
+                    if (binding.prefab == null)
+                    {
+                        WarnOnce(
+                            "null-actor-" + binding.actorTemplateId,
+                            "Network prefab catalog actor template id " +
+                            binding.actorTemplateId +
+                            " has no prefab.");
+                    }
+                }
+            }
+
+            var projectileIds = new HashSet<uint>();
+            NetworkPrefabCatalog.ProjectilePrefabBinding[] projectileBindings =
+                resolvedCatalog.ProjectilePrefabs;
+            if (projectileBindings == null)
+            {
+                return;
+            }
+
+            for (int index = 0; index < projectileBindings.Length; ++index)
+            {
+                NetworkPrefabCatalog.ProjectilePrefabBinding binding =
+                    projectileBindings[index];
+                if (!projectileIds.Add(binding.projectileTemplateId))
+                {
+                    WarnOnce(
+                        "duplicate-projectile-" + binding.projectileTemplateId,
+                        "Network prefab catalog contains duplicate projectile template id " +
+                        binding.projectileTemplateId +
+                        "; the first non-null prefab wins.");
+                }
+                if (binding.prefab == null)
+                {
+                    WarnOnce(
+                        "null-projectile-" + binding.projectileTemplateId,
+                        "Network prefab catalog projectile template id " +
+                        binding.projectileTemplateId +
+                        " has no prefab.");
+                }
+            }
+        }
+
+        private void WarnMissingOnce(string kind, uint templateId)
+        {
+            WarnOnce(
+                "missing-" + kind + "-" + templateId,
+                "No exact " +
+                kind +
+                " prefab is registered for template id " +
+                templateId +
+                "; using the configured fallback.");
+        }
+
+        private void WarnOnce(string key, string message)
+        {
+            if (warnings.Add(key))
+            {
+                Debug.LogWarning(message, this);
+            }
         }
 
         private static GameObject CreatePlaceholder(RenderEntityState state)
@@ -73,7 +206,14 @@ namespace NetworkExample.UnityDemo.Rendering
             Collider collider = primitive.GetComponent<Collider>();
             if (collider != null)
             {
-                Destroy(collider);
+                if (Application.isPlaying)
+                {
+                    Destroy(collider);
+                }
+                else
+                {
+                    DestroyImmediate(collider);
+                }
             }
 
             Renderer renderer = primitive.GetComponent<Renderer>();
@@ -112,10 +252,16 @@ namespace NetworkExample.UnityDemo.Rendering
                 : new CapsuleDimensions(PlayerCapsuleHalfHeight, PlayerCapsuleRadius);
         }
 
-        private static void ApplyVisualDefaults(GameObject visual, RenderEntityState state)
+        private static void ApplyVisualDefaults(
+            GameObject visual,
+            RenderEntityState state,
+            bool usesProceduralPlaceholder)
         {
-            if (state.entity_type == KernelEntityType.Projectile)
+            if (state.entity_type == KernelEntityType.Projectile &&
+                usesProceduralPlaceholder)
             {
+                // This applies only to the procedural emergency fallback. Registered
+                // projectile prefabs retain the scale authored by the user.
                 visual.transform.localScale = ProjectileLocalScale;
             }
         }

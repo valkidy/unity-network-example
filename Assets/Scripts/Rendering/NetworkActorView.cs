@@ -25,9 +25,16 @@ namespace NetworkExample.UnityDemo.Rendering
         }
 
         private static readonly int MovingParameter = Animator.StringToHash("Moving");
+        private static readonly int SpeedParameter = Animator.StringToHash("Speed");
+        private static readonly int GroundedParameter = Animator.StringToHash("Grounded");
+        private static readonly int FallingParameter = Animator.StringToHash("Falling");
         private static readonly int ReloadingParameter = Animator.StringToHash("Reloading");
         private static readonly int DeadParameter = Animator.StringToHash("Dead");
         private static readonly int AimingParameter = Animator.StringToHash("Aiming");
+        private static readonly int ActionPhaseParameter = Animator.StringToHash("ActionPhase");
+        private static readonly int AimXParameter = Animator.StringToHash("AimX");
+        private static readonly int AimYParameter = Animator.StringToHash("AimY");
+        private static readonly int AimZParameter = Animator.StringToHash("AimZ");
         private static readonly int WindupParameter = Animator.StringToHash("Windup");
         private static readonly int FiringParameter = Animator.StringToHash("Firing");
         private static readonly int RecoveryParameter = Animator.StringToHash("Recovery");
@@ -37,9 +44,18 @@ namespace NetworkExample.UnityDemo.Rendering
         private static readonly int ReloadCommitParameter = Animator.StringToHash("ReloadCommit");
         private static readonly int HitReactionParameter = Animator.StringToHash("HitReaction");
         private static readonly int DeathTriggerParameter = Animator.StringToHash("DeathTrigger");
+        private static readonly int ActorLandedParameter = Animator.StringToHash("ActorLanded");
 
         private Animator animator;
         private readonly HashSet<uint> predictedActionInstanceIds = new HashSet<uint>();
+
+        [Header("Animation")]
+        [SerializeField]
+        [Min(0.001f)]
+        [Tooltip(
+            "Horizontal kernel speed is divided by this value before writing Animator.Speed. " +
+            "Set it to the prefab's authored maximum locomotion speed for a normalized 0..1 value.")]
+        private float speedNormalization = 1f;
 
         [SerializeField]
         private LocalActionTriggerBinding[] localActionTriggers;
@@ -51,7 +67,11 @@ namespace NetworkExample.UnityDemo.Rendering
         public uint VisualFlags { get; private set; }
         public KernelActionPhase ActionPhase { get; private set; }
         public uint ActionInstanceId { get; private set; }
+        public float Speed { get; private set; }
+        public Vector3 AimDirection { get; private set; }
         public bool IsMoving { get; private set; }
+        public bool IsGrounded { get; private set; }
+        public bool IsFalling { get; private set; }
         public bool IsReloading { get; private set; }
         public bool IsDead { get; private set; }
         public bool IsAiming { get; private set; }
@@ -59,11 +79,25 @@ namespace NetworkExample.UnityDemo.Rendering
         public bool IsFiring { get; private set; }
         public bool IsRecovery { get; private set; }
         public bool IsIdle { get; private set; }
+        public bool IsStale { get; private set; }
         public int PredictedCommitCount { get; private set; }
         public int RemoteCommitCount { get; private set; }
+        public int LandedCount { get; private set; }
+
+        public void SetStale(bool stale)
+        {
+            IsStale = stale;
+        }
 
         public void ApplyContinuousState(RenderEntityState state)
         {
+            if (state.status == RenderEntityStatus.Stale)
+            {
+                IsStale = true;
+                return;
+            }
+
+            IsStale = false;
             ActorType = state.actor_type;
             VisualFlags = state.visual_flags;
             ActionPhase = state.action.phase;
@@ -73,6 +107,8 @@ namespace NetworkExample.UnityDemo.Rendering
             IsReloading = !IsDead && HasFlag(KernelConstants.VisualFlagReloading);
             IsMoving = !IsDead && HasFlag(KernelConstants.VisualFlagMoving);
             IsAiming = !IsDead && HasFlag(KernelConstants.VisualFlagAiming);
+            IsGrounded = HasFlag(KernelConstants.VisualFlagGrounded);
+            IsFalling = HasFlag(KernelConstants.VisualFlagFalling);
             IsWindup = !IsDead && state.action.phase == KernelActionPhase.Windup;
             IsFiring = !IsDead && !IsReloading &&
                 (HasFlag(KernelConstants.VisualFlagFiring) ||
@@ -87,8 +123,26 @@ namespace NetworkExample.UnityDemo.Rendering
                 !IsRecovery &&
                 state.action.phase == KernelActionPhase.None;
 
+            float normalization = Mathf.Max(0.001f, speedNormalization);
+            Speed = new Vector2(state.velocity.x, state.velocity.z).magnitude /
+                normalization;
+
+            Vector3 worldAim = new Vector3(
+                state.aim_direction.x,
+                state.aim_direction.y,
+                state.aim_direction.z);
+            AimDirection = worldAim.sqrMagnitude > 0.000001f
+                ? transform.InverseTransformDirection(worldAim.normalized)
+                : Vector3.zero;
+
             Animator target = GetAnimator();
+            SetFloatIfPresent(target, SpeedParameter, Speed);
+            SetFloatIfPresent(target, AimXParameter, AimDirection.x);
+            SetFloatIfPresent(target, AimYParameter, AimDirection.y);
+            SetFloatIfPresent(target, AimZParameter, AimDirection.z);
             SetBoolIfPresent(target, MovingParameter, IsMoving);
+            SetBoolIfPresent(target, GroundedParameter, IsGrounded);
+            SetBoolIfPresent(target, FallingParameter, IsFalling);
             SetBoolIfPresent(target, ReloadingParameter, IsReloading);
             SetBoolIfPresent(target, DeadParameter, IsDead);
             SetBoolIfPresent(target, AimingParameter, IsAiming);
@@ -96,16 +150,18 @@ namespace NetworkExample.UnityDemo.Rendering
             SetBoolIfPresent(target, FiringParameter, IsFiring);
             SetBoolIfPresent(target, RecoveryParameter, IsRecovery);
             SetBoolIfPresent(target, IdleParameter, IsIdle);
+            SetIntegerIfPresent(target, ActionPhaseParameter, (int)ActionPhase);
         }
 
         public void BeginPredictedAction(ActionIntent intent)
         {
-            if (intent.action_instance_id == 0)
+            if (IsStale ||
+                intent.action_instance_id == 0 ||
+                !predictedActionInstanceIds.Add(intent.action_instance_id))
             {
                 return;
             }
 
-            predictedActionInstanceIds.Add(intent.action_instance_id);
             PredictedCommitCount++;
             int trigger = TriggerFor(intent.binding_id);
             SetTriggerIfPresent(GetAnimator(), trigger);
@@ -115,6 +171,11 @@ namespace NetworkExample.UnityDemo.Rendering
         {
             if (result.action_instance_id == 0 ||
                 !predictedActionInstanceIds.Remove(result.action_instance_id))
+            {
+                return;
+            }
+
+            if (IsStale)
             {
                 return;
             }
@@ -134,8 +195,24 @@ namespace NetworkExample.UnityDemo.Rendering
             KernelRemoteActionPresentationEvent remoteEvent,
             uint commitIndex)
         {
+            if (IsStale)
+            {
+                return;
+            }
+
             RemoteCommitCount++;
             SetTriggerIfPresent(GetAnimator(), TriggerFor(remoteEvent));
+        }
+
+        public void PlayActorLanded()
+        {
+            if (IsStale)
+            {
+                return;
+            }
+
+            LandedCount++;
+            SetTriggerIfPresent(GetAnimator(), ActorLandedParameter);
         }
 
         private bool HasFlag(uint flag)
@@ -147,7 +224,17 @@ namespace NetworkExample.UnityDemo.Rendering
         {
             if (animator == null)
             {
+                // USER ASSET HOOK:
+                // Keep NetworkActorView on the kernel-driven ActorRoot, then put the
+                // model and its Animator on a child named Visual. Replace the prefab
+                // reference in NetworkPrefabCatalog; no gameplay/native change is needed.
                 animator = GetComponentInChildren<Animator>();
+                if (animator != null)
+                {
+                    // ActorRoot movement is authoritative kernel presentation. Animation
+                    // root motion must never move it between render-state applications.
+                    animator.applyRootMotion = false;
+                }
             }
             return animator;
         }
@@ -217,6 +304,22 @@ namespace NetworkExample.UnityDemo.Rendering
             if (HasParameter(target, parameter, AnimatorControllerParameterType.Bool))
             {
                 target.SetBool(parameter, value);
+            }
+        }
+
+        private static void SetFloatIfPresent(Animator target, int parameter, float value)
+        {
+            if (HasParameter(target, parameter, AnimatorControllerParameterType.Float))
+            {
+                target.SetFloat(parameter, value);
+            }
+        }
+
+        private static void SetIntegerIfPresent(Animator target, int parameter, int value)
+        {
+            if (HasParameter(target, parameter, AnimatorControllerParameterType.Int))
+            {
+                target.SetInteger(parameter, value);
             }
         }
 

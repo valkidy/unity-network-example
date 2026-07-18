@@ -19,13 +19,20 @@ namespace NetworkExample.UnityDemo.Rendering
         private Transform entityRoot;
 
         private readonly HashSet<ulong> visibleThisFrame = new HashSet<ulong>();
-        private readonly List<ulong> knownEntities = new List<ulong>();
+        private readonly Dictionary<ulong, KnownEntity> knownEntities =
+            new Dictionary<ulong, KnownEntity>();
+        private readonly List<ulong> entityKeysToRemove = new List<ulong>();
         private readonly HashSet<RemoteCommitKey> remoteCommitDedup =
             new HashSet<RemoteCommitKey>();
         private readonly Queue<RemoteCommitKey> remoteCommitOrder =
             new Queue<RemoteCommitKey>();
+        private readonly HashSet<LandedEventKey> landedEventDedup =
+            new HashSet<LandedEventKey>();
+        private readonly Queue<LandedEventKey> landedEventOrder =
+            new Queue<LandedEventKey>();
 
         private const int MaxRememberedRemoteCommits = 512;
+        private const int MaxRememberedLandedEvents = 512;
 
         public void Configure(
             NetworkEntityRegistry registry,
@@ -60,13 +67,22 @@ namespace NetworkExample.UnityDemo.Rendering
                 {
                     visual = prefabRegistry.InstantiateVisual(state, entityRoot);
                     entityRegistry.Register(entityKey, visual);
-                    knownEntities.Add(entityKey);
                 }
                 entityRegistry.RegisterNetId(state.net_id, visual);
+                bool wasServerBacked =
+                    knownEntities.TryGetValue(entityKey, out KnownEntity known) &&
+                    known.serverBacked;
+                knownEntities[entityKey] = new KnownEntity(
+                    wasServerBacked || state.net_id != 0);
 
                 if (state.entity_type == KernelEntityType.Projectile)
                 {
                     ApplyProjectileState(visual, state);
+                }
+                else if (state.entity_type == KernelEntityType.Actor &&
+                    state.status == RenderEntityStatus.Stale)
+                {
+                    GetOrAddActorView(visual).SetStale(true);
                 }
                 else
                 {
@@ -75,17 +91,24 @@ namespace NetworkExample.UnityDemo.Rendering
                 }
             }
 
-            for (int index = knownEntities.Count - 1; index >= 0; --index)
+            entityKeysToRemove.Clear();
+            foreach (KeyValuePair<ulong, KnownEntity> pair in knownEntities)
             {
-                ulong entityKey = knownEntities[index];
-                if (visibleThisFrame.Contains(entityKey))
+                if (visibleThisFrame.Contains(pair.Key) || pair.Value.serverBacked)
                 {
                     continue;
                 }
 
-                entityRegistry.Remove(entityKey);
-                knownEntities.RemoveAt(index);
+                entityKeysToRemove.Add(pair.Key);
             }
+
+            for (int index = 0; index < entityKeysToRemove.Count; ++index)
+            {
+                ulong entityKey = entityKeysToRemove[index];
+                entityRegistry.Remove(entityKey);
+                knownEntities.Remove(entityKey);
+            }
+            entityKeysToRemove.Clear();
         }
 
         public void Clear()
@@ -94,6 +117,9 @@ namespace NetworkExample.UnityDemo.Rendering
             visibleThisFrame.Clear();
             remoteCommitDedup.Clear();
             remoteCommitOrder.Clear();
+            landedEventDedup.Clear();
+            landedEventOrder.Clear();
+            entityKeysToRemove.Clear();
             entityRegistry?.Clear();
         }
 
@@ -166,6 +192,60 @@ namespace NetworkExample.UnityDemo.Rendering
                     }
 
                     view.PlayRemoteCommit(remoteEvent, commitIndex);
+                }
+            }
+        }
+
+        public void ApplyKernelEvents(KernelEvent[] events, int count)
+        {
+            if (events == null || entityRegistry == null)
+            {
+                return;
+            }
+
+            int safeCount = Mathf.Clamp(count, 0, events.Length);
+            for (int index = 0; index < safeCount; ++index)
+            {
+                KernelEvent kernelEvent = events[index];
+                if (kernelEvent.type != KernelEventType.ActorLanded ||
+                    kernelEvent.net_id == 0 ||
+                    !RememberLandedEvent(
+                        new LandedEventKey(kernelEvent.net_id, kernelEvent.tick)) ||
+                    !entityRegistry.TryGetByNetId(
+                        kernelEvent.net_id,
+                        out GameObject visual))
+                {
+                    continue;
+                }
+
+                GetOrAddActorView(visual).PlayActorLanded();
+            }
+        }
+
+        public void ApplyEntityLifecycleEvents(
+            KernelEntityLifecycleEvent[] events,
+            int count)
+        {
+            if (events == null || entityRegistry == null)
+            {
+                return;
+            }
+
+            int safeCount = Mathf.Clamp(count, 0, events.Length);
+            for (int index = 0; index < safeCount; ++index)
+            {
+                KernelEntityLifecycleEvent lifecycleEvent = events[index];
+                if (lifecycleEvent.net_id == 0)
+                {
+                    continue;
+                }
+
+                if (entityRegistry.RemoveByNetId(
+                        lifecycleEvent.net_id,
+                        out ulong entityKey))
+                {
+                    knownEntities.Remove(entityKey);
+                    visibleThisFrame.Remove(entityKey);
                 }
             }
         }
@@ -250,6 +330,61 @@ namespace NetworkExample.UnityDemo.Rendering
                 remoteCommitDedup.Remove(remoteCommitOrder.Dequeue());
             }
             return true;
+        }
+
+        private bool RememberLandedEvent(LandedEventKey key)
+        {
+            if (!landedEventDedup.Add(key))
+            {
+                return false;
+            }
+
+            landedEventOrder.Enqueue(key);
+            while (landedEventOrder.Count > MaxRememberedLandedEvents)
+            {
+                landedEventDedup.Remove(landedEventOrder.Dequeue());
+            }
+            return true;
+        }
+
+        private readonly struct KnownEntity
+        {
+            public readonly bool serverBacked;
+
+            public KnownEntity(bool serverBacked)
+            {
+                this.serverBacked = serverBacked;
+            }
+        }
+
+        private readonly struct LandedEventKey : System.IEquatable<LandedEventKey>
+        {
+            private readonly uint actorNetId;
+            private readonly uint tick;
+
+            public LandedEventKey(uint actorNetId, uint tick)
+            {
+                this.actorNetId = actorNetId;
+                this.tick = tick;
+            }
+
+            public bool Equals(LandedEventKey other)
+            {
+                return actorNetId == other.actorNetId && tick == other.tick;
+            }
+
+            public override bool Equals(object obj)
+            {
+                return obj is LandedEventKey other && Equals(other);
+            }
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    return ((int)actorNetId * 397) ^ (int)tick;
+                }
+            }
         }
 
         private readonly struct RemoteCommitKey : System.IEquatable<RemoteCommitKey>

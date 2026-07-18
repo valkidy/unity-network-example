@@ -47,6 +47,7 @@ namespace NetworkExample.UnityDemo.Client
         private NetworkClient client;
         private KernelEvent[] events;
         private RenderEntityState[] renderStates;
+        private KernelEntityLifecycleEvent[] lifecycleEvents;
         private KernelLocalActionResult[] localActionResults;
         private KernelRemoteActionPresentationEvent[] remoteActionEvents;
         private NetworkInputSampler inputSampler;
@@ -70,6 +71,7 @@ namespace NetworkExample.UnityDemo.Client
                 Mathf.Max(1f, inputSubmissionRateHz));
             events = new KernelEvent[Mathf.Max(1, maxEvents)];
             renderStates = new RenderEntityState[Mathf.Max(1, maxRenderStates)];
+            lifecycleEvents = new KernelEntityLifecycleEvent[Mathf.Max(1, maxEvents)];
             localActionResults = new KernelLocalActionResult[Mathf.Max(1, maxActionEvents)];
             remoteActionEvents =
                 new KernelRemoteActionPresentationEvent[Mathf.Max(1, maxActionEvents)];
@@ -117,41 +119,17 @@ namespace NetworkExample.UnityDemo.Client
                 return;
             }
 
-            uint eventCount = client.Update(Time.deltaTime, events);
-            WarnIfBufferFilled(eventCount, events.Length, "event");
-            LogDiagnosticEvents(eventCount);
-            LogConnectionState();
-
-            uint localActionResultCount = client.Kernel.PollLocalActionResults(
-                localActionResults);
-            uint remoteActionEventCount = client.Kernel.PollRemoteActionPresentationEvents(
-                remoteActionEvents);
-            WarnIfBufferFilled(
-                localActionResultCount,
-                localActionResults.Length,
-                "local action result");
-            WarnIfBufferFilled(
-                remoteActionEventCount,
-                remoteActionEvents.Length,
-                "remote action presentation");
-            CompleteLocalActions(localActionResultCount);
-
-            if (client.ConnectionState == NetworkClientConnectionState.Failed ||
-                client.ConnectionState == NetworkClientConnectionState.Disconnected)
-            {
-                inputSampler.ResetSession();
-                inputSubmissionClock.Reset();
-                started = false;
-                return;
-            }
-
             ActionIntent predictedIntent = default;
-            if (client.IsReady && inputSubmissionClock.ShouldSubmit(Time.deltaTime))
+            if (client.IsReady &&
+                inputSubmissionClock.ShouldSubmit(Time.unscaledDeltaTime))
             {
                 PlayerInput input = inputSampler.Sample();
                 if (client.TrySubmitInput(input))
                 {
                     predictedIntent = input.action_intent;
+                    renderStateApplier.BeginPredictedLocalAction(
+                        client.LocalPlayerNetId,
+                        predictedIntent);
                 }
                 else
                 {
@@ -163,7 +141,42 @@ namespace NetworkExample.UnityDemo.Client
                 inputSubmissionClock.Reset();
             }
 
-            ulong clientRenderTimeUs = presentationClock.Advance(Time.deltaTime);
+            uint eventCount = client.Update(Time.unscaledDeltaTime, events);
+            WarnIfBufferFilled(eventCount, events.Length, "event");
+            LogDiagnosticEvents(eventCount);
+            LogConnectionState();
+
+            uint localActionResultCount = client.Kernel.PollLocalActionResults(
+                localActionResults);
+            uint remoteActionEventCount = client.Kernel.PollRemoteActionPresentationEvents(
+                remoteActionEvents);
+            uint lifecycleEventCount = client.Kernel.PollEntityLifecycleEvents(
+                lifecycleEvents);
+            WarnIfBufferFilled(
+                localActionResultCount,
+                localActionResults.Length,
+                "local action result");
+            WarnIfBufferFilled(
+                remoteActionEventCount,
+                remoteActionEvents.Length,
+                "remote action presentation");
+            WarnIfBufferFilled(
+                lifecycleEventCount,
+                lifecycleEvents.Length,
+                "entity lifecycle");
+            CompleteLocalActions(localActionResultCount);
+
+            if (client.ConnectionState == NetworkClientConnectionState.Failed ||
+                client.ConnectionState == NetworkClientConnectionState.Disconnected)
+            {
+                inputSampler.ResetSession();
+                inputSubmissionClock.Reset();
+                started = false;
+                return;
+            }
+
+            ulong clientRenderTimeUs = presentationClock.Advance(
+                Time.unscaledDeltaTime);
             uint renderCount = client.GetRenderStatesAtTime(clientRenderTimeUs, renderStates);
             WarnIfBufferFilled(renderCount, renderStates.Length, "render state");
             int safeRenderCount = renderCount > (uint)renderStates.Length
@@ -173,6 +186,9 @@ namespace NetworkExample.UnityDemo.Client
             WarnIfReadyWithoutRenderStates(safeRenderCount);
             renderStateApplier.Apply(renderStates, safeRenderCount);
             UpdateCameraTarget(client.LocalPlayerNetId);
+            renderStateApplier.ApplyKernelEvents(
+                events,
+                SafeCount(eventCount, events.Length));
             renderStateApplier.ApplyLocalActionResults(
                 client.LocalPlayerNetId,
                 localActionResults,
@@ -180,9 +196,9 @@ namespace NetworkExample.UnityDemo.Client
             renderStateApplier.ApplyRemoteActionPresentationEvents(
                 remoteActionEvents,
                 SafeCount(remoteActionEventCount, remoteActionEvents.Length));
-            renderStateApplier.BeginPredictedLocalAction(
-                client.LocalPlayerNetId,
-                predictedIntent);
+            renderStateApplier.ApplyEntityLifecycleEvents(
+                lifecycleEvents,
+                SafeCount(lifecycleEventCount, lifecycleEvents.Length));
 
             if (debugView != null)
             {
@@ -542,7 +558,7 @@ namespace NetworkExample.UnityDemo.Client
                 return;
             }
 
-            readyWithoutRenderSeconds += Time.deltaTime;
+            readyWithoutRenderSeconds += Time.unscaledDeltaTime;
             if (readyWithoutRenderWarningLogged ||
                 readyWithoutRenderSeconds < Mathf.Max(0f, readyWithoutRenderWarningSeconds))
             {
