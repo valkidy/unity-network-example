@@ -366,7 +366,9 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             Assert.That(actorView.IsGrounded, Is.True);
             Assert.That(actorView.IsFalling, Is.True);
             Assert.That(actorView.ActionPhase, Is.EqualTo(KernelActionPhase.Recovery));
-            Assert.That(actorView.AimDirection, Is.EqualTo(Vector3.forward));
+            Assert.That(actorView.AimDirection.x, Is.EqualTo(-0.6f).Within(0.0001f));
+            Assert.That(actorView.AimDirection.y, Is.EqualTo(0f).Within(0.0001f));
+            Assert.That(actorView.AimDirection.z, Is.EqualTo(0.8f).Within(0.0001f));
         }
 
         [Test]
@@ -410,6 +412,49 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             applier.Apply(new[] { resumed }, 1);
             Assert.That(actorView.IsStale, Is.False);
             Assert.That(visual.transform.position, Is.EqualTo(new Vector3(3f, 0f, 4f)));
+        }
+
+        [Test]
+        public void Apply_WithMovingActor_FacesHorizontalVelocity()
+        {
+            GameObject visual = RegisterActorVisual(100, 100);
+            RenderEntityState state = State(
+                100,
+                KernelEntityType.Actor,
+                new KernelVec3(),
+                KernelActorType.Player);
+            state.velocity = new KernelVec3(1f, 0.5f, 0f);
+
+            applier.Apply(new[] { state }, 1);
+
+            Assert.That(
+                Vector3.Angle(visual.transform.forward, Vector3.right),
+                Is.LessThan(0.01f));
+            Assert.That(
+                Vector3.Angle(visual.transform.up, Vector3.up),
+                Is.LessThan(0.01f));
+        }
+
+        [Test]
+        public void Apply_WhenMovingActorStops_PreservesLastMovementFacing()
+        {
+            GameObject visual = RegisterActorVisual(100, 100);
+            RenderEntityState moving = State(
+                100,
+                KernelEntityType.Actor,
+                new KernelVec3(),
+                KernelActorType.Player);
+            moving.velocity = new KernelVec3(-1f, 0f, 0f);
+            applier.Apply(new[] { moving }, 1);
+
+            RenderEntityState stopped = moving;
+            stopped.velocity = new KernelVec3();
+            stopped.rotation = new KernelQuat(0f, 0f, 0f, 1f);
+            applier.Apply(new[] { stopped }, 1);
+
+            Assert.That(
+                Vector3.Angle(visual.transform.forward, Vector3.left),
+                Is.LessThan(0.01f));
         }
 
         [Test]
