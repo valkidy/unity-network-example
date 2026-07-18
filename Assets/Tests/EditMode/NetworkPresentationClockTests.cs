@@ -88,6 +88,31 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             StringAssert.Contains("host.GameServer.HandleEvent", hostModeRunner);
         }
 
+        [Test]
+        public void Runners_BindFollowCameraToTheirLocalPlayerVisual()
+        {
+            string clientRunner = ReadAssetText("Scripts/Client/ClientRunner.cs");
+            string hostModeRunner = ReadAssetText("Scripts/Host/HostModeRunner.cs");
+            string renderStateApplier =
+                ReadAssetText("Scripts/Rendering/NetworkRenderStateApplier.cs");
+
+            StringAssert.Contains(
+                "UpdateCameraTarget(client.LocalPlayerNetId)",
+                clientRunner);
+            StringAssert.Contains(
+                "UpdateCameraTarget(host.LocalPlayerNetId)",
+                hostModeRunner);
+            StringAssert.Contains(
+                "entityRegistry.TryGetByNetId(localPlayerNetId, out GameObject visual)",
+                clientRunner);
+            StringAssert.Contains(
+                "entityRegistry.TryGetByNetId(localPlayerNetId, out GameObject visual)",
+                hostModeRunner);
+            StringAssert.Contains(
+                "entityRegistry.RegisterNetId(state.net_id, visual)",
+                renderStateApplier);
+        }
+
         private static string ReadAssetText(string projectRelativePath)
         {
             string path = Path.Combine(Application.dataPath, projectRelativePath);

@@ -62,6 +62,7 @@ namespace NetworkExample.UnityDemo.Rendering
                     entityRegistry.Register(entityKey, visual);
                     knownEntities.Add(entityKey);
                 }
+                entityRegistry.RegisterNetId(state.net_id, visual);
 
                 if (state.entity_type == KernelEntityType.Projectile)
                 {
@@ -100,7 +101,7 @@ namespace NetworkExample.UnityDemo.Rendering
         {
             if (intent.action_instance_id == 0 ||
                 entityRegistry == null ||
-                !entityRegistry.TryGet(localPlayerNetId, out GameObject visual))
+                !entityRegistry.TryGetByNetId(localPlayerNetId, out GameObject visual))
             {
                 return;
             }
@@ -115,7 +116,7 @@ namespace NetworkExample.UnityDemo.Rendering
         {
             if (results == null ||
                 entityRegistry == null ||
-                !entityRegistry.TryGet(localPlayerNetId, out GameObject visual))
+                !entityRegistry.TryGetByNetId(localPlayerNetId, out GameObject visual))
             {
                 return;
             }
@@ -141,7 +142,9 @@ namespace NetworkExample.UnityDemo.Rendering
             for (int eventIndex = 0; eventIndex < safeCount; ++eventIndex)
             {
                 KernelRemoteActionPresentationEvent remoteEvent = events[eventIndex];
-                if (!entityRegistry.TryGet(remoteEvent.actor_net_id, out GameObject visual))
+                if (!entityRegistry.TryGetByNetId(
+                        remoteEvent.actor_net_id,
+                        out GameObject visual))
                 {
                     continue;
                 }

@@ -1,3 +1,4 @@
+using NetworkExample.UnityDemo.CameraSystem;
 using UnityEngine;
 
 namespace NetworkExample.UnityDemo.Common
@@ -16,7 +17,7 @@ namespace NetworkExample.UnityDemo.Common
             return root.transform;
         }
 
-        public static void EnsureDefaultView()
+        public static ThirdPersonFollowCamera EnsureDefaultView()
         {
             Camera camera = Camera.main;
             if (camera == null)
@@ -27,11 +28,13 @@ namespace NetworkExample.UnityDemo.Common
                 cameraObject.AddComponent<AudioListener>();
             }
 
-            camera.transform.SetPositionAndRotation(
-                new Vector3(0f, 10f, -12f),
-                Quaternion.Euler(55f, 0f, 0f));
-            camera.fieldOfView = 60f;
             camera.clearFlags = CameraClearFlags.Skybox;
+            ThirdPersonFollowCamera followCamera =
+                camera.GetComponent<ThirdPersonFollowCamera>();
+            if (followCamera == null)
+            {
+                followCamera = camera.gameObject.AddComponent<ThirdPersonFollowCamera>();
+            }
 
             if (Object.FindAnyObjectByType<Light>() == null)
             {
@@ -41,6 +44,8 @@ namespace NetworkExample.UnityDemo.Common
                 light.intensity = 1.1f;
                 lightObject.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
             }
+
+            return followCamera;
         }
     }
 }

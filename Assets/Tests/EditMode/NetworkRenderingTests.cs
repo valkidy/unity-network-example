@@ -98,6 +98,36 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
+        public void Registry_WithDistinctEntityAndNetIds_IndexesVisualByBothIdDomains()
+        {
+            var entityEleven = new GameObject("Entity11_Net2997");
+            var entityTwelve = new GameObject("Entity12_Net11");
+            entityEleven.transform.SetParent(rootObject.transform);
+            entityTwelve.transform.SetParent(rootObject.transform);
+            entityRegistry.Register(11, entityEleven);
+            entityRegistry.RegisterNetId(2997, entityEleven);
+            entityRegistry.Register(12, entityTwelve);
+            entityRegistry.RegisterNetId(11, entityTwelve);
+
+            Assert.That(
+                entityRegistry.TryGet(11, out GameObject entityKeyEleven),
+                Is.True);
+            Assert.That(
+                entityRegistry.TryGetByNetId(2997, out GameObject netId2997),
+                Is.True);
+            Assert.That(netId2997, Is.SameAs(entityKeyEleven));
+
+            Assert.That(
+                entityRegistry.TryGet(12, out GameObject entityKeyTwelve),
+                Is.True);
+            Assert.That(
+                entityRegistry.TryGetByNetId(11, out GameObject netIdEleven),
+                Is.True);
+            Assert.That(netIdEleven, Is.SameAs(entityKeyTwelve));
+            Assert.That(netIdEleven, Is.Not.SameAs(entityKeyEleven));
+        }
+
+        [Test]
         public void Apply_WithPredictedProjectileState_RegistersVisualByActionInstanceId()
         {
             var states = new[]
@@ -181,12 +211,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         [Test]
         public void ApplyRemoteActionPresentationEvents_DeduplicatesEveryCommitInRange()
         {
-            RenderEntityState state = State(
-                101,
-                KernelEntityType.Actor,
-                new KernelVec3(),
-                KernelActorType.Agent);
-            applier.Apply(new[] { state }, 1);
+            GameObject visual = RegisterActorVisual(7, 101);
             var remoteEvent = new KernelRemoteActionPresentationEvent
             {
                 actor_net_id = 101,
@@ -199,19 +224,13 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             applier.ApplyRemoteActionPresentationEvents(new[] { remoteEvent }, 1);
             applier.ApplyRemoteActionPresentationEvents(new[] { remoteEvent }, 1);
 
-            Assert.That(entityRegistry.TryGet(101, out GameObject visual), Is.True);
             Assert.That(visual.GetComponent<NetworkActorView>().RemoteCommitCount, Is.EqualTo(2));
         }
 
         [Test]
         public void AcceptedLocalActionResult_ConfirmsWithoutReplayingPrediction()
         {
-            RenderEntityState state = State(
-                102,
-                KernelEntityType.Actor,
-                new KernelVec3(),
-                KernelActorType.Player);
-            applier.Apply(new[] { state }, 1);
+            GameObject visual = RegisterActorVisual(8, 102);
             var intent = new ActionIntent
             {
                 action_instance_id = 91,
@@ -231,8 +250,17 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
                 },
                 1);
 
-            Assert.That(entityRegistry.TryGet(102, out GameObject visual), Is.True);
             Assert.That(visual.GetComponent<NetworkActorView>().PredictedCommitCount, Is.EqualTo(1));
+        }
+
+        private GameObject RegisterActorVisual(ulong entityId, ulong netId)
+        {
+            var visual = new GameObject("Actor_" + entityId + "_" + netId);
+            visual.transform.SetParent(rootObject.transform);
+            visual.AddComponent<NetworkActorView>();
+            entityRegistry.Register(entityId, visual);
+            entityRegistry.RegisterNetId(netId, visual);
+            return visual;
         }
 
         private GameObject AssertPlaceholder(KernelEntityType entityType)

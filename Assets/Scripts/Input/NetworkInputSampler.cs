@@ -27,6 +27,7 @@ namespace NetworkExample.UnityDemo.Input
         private InputAction fireAction;
         private InputAction[] weaponSelectActions;
         private InputAction reloadAction;
+        private Transform viewTransform;
         private readonly HashSet<uint> outstandingActionIds = new HashSet<uint>();
         private uint inputSequence;
         private uint nextActionInstanceId = 1;
@@ -36,6 +37,11 @@ namespace NetworkExample.UnityDemo.Input
         private bool wasReloadPressed;
 
         public int OutstandingActionCount => outstandingActionIds.Count;
+
+        public void SetViewTransform(Transform target)
+        {
+            viewTransform = target;
+        }
 
         private void Awake()
         {
@@ -108,8 +114,9 @@ namespace NetworkExample.UnityDemo.Input
 
         public KernelPlayerInput Sample()
         {
-            Vector2 move = moveAction == null ? Vector2.zero : moveAction.ReadValue<Vector2>();
-            move = Vector2.ClampMagnitude(move, 1f);
+            Vector2 rawMove =
+                moveAction == null ? Vector2.zero : moveAction.ReadValue<Vector2>();
+            Vector2 move = TransformMoveToWorld(rawMove);
 
             UpdateSelectedWeapon();
             bool isFirePressed = IsFirePressed();
@@ -151,9 +158,7 @@ namespace NetworkExample.UnityDemo.Input
                     KernelActionBinding.Reload);
             }
 
-            Vector3 aimDirection = move.sqrMagnitude > 0.0001f
-                ? new Vector3(move.x, 0f, move.y).normalized
-                : Vector3.forward;
+            Vector3 aimDirection = GetAimDirection(move);
 
             inputSequence++;
 
@@ -170,6 +175,41 @@ namespace NetworkExample.UnityDemo.Input
                 action_intent = actionIntent,
                 action_input = actionInput,
             };
+        }
+
+        public Vector2 TransformMoveToWorld(Vector2 rawMove)
+        {
+            rawMove = Vector2.ClampMagnitude(rawMove, 1f);
+            if (viewTransform == null)
+            {
+                return rawMove;
+            }
+
+            Vector3 forward = Vector3.ProjectOnPlane(viewTransform.forward, Vector3.up);
+            Vector3 right = Vector3.ProjectOnPlane(viewTransform.right, Vector3.up);
+            if (forward.sqrMagnitude <= 0.0001f || right.sqrMagnitude <= 0.0001f)
+            {
+                return rawMove;
+            }
+
+            forward.Normalize();
+            right.Normalize();
+            Vector3 worldMove = Vector3.ClampMagnitude(
+                right * rawMove.x + forward * rawMove.y,
+                1f);
+            return new Vector2(worldMove.x, worldMove.z);
+        }
+
+        public Vector3 GetAimDirection(Vector2 worldMove)
+        {
+            if (viewTransform != null && viewTransform.forward.sqrMagnitude > 0.0001f)
+            {
+                return viewTransform.forward.normalized;
+            }
+
+            return worldMove.sqrMagnitude > 0.0001f
+                ? new Vector3(worldMove.x, 0f, worldMove.y).normalized
+                : Vector3.forward;
         }
 
         public void CompleteAction(uint actionInstanceId)

@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using NetworkExample.Kernel;
 using NetworkExample.Kernel.Client;
+using NetworkExample.UnityDemo.CameraSystem;
 using NetworkExample.UnityDemo.Common;
 using NetworkExample.UnityDemo.Input;
 using NetworkExample.UnityDemo.Rendering;
@@ -49,8 +50,10 @@ namespace NetworkExample.UnityDemo.Client
         private KernelLocalActionResult[] localActionResults;
         private KernelRemoteActionPresentationEvent[] remoteActionEvents;
         private NetworkInputSampler inputSampler;
+        private NetworkEntityRegistry entityRegistry;
         private NetworkRenderStateApplier renderStateApplier;
         private NetworkDebugView debugView;
+        private ThirdPersonFollowCamera followCamera;
         private readonly NetworkPresentationClock presentationClock = new NetworkPresentationClock();
         private NetworkInputSubmissionClock inputSubmissionClock;
         private bool started;
@@ -169,6 +172,7 @@ namespace NetworkExample.UnityDemo.Client
             LogDiagnosticRenderSummary(renderCount, safeRenderCount);
             WarnIfReadyWithoutRenderStates(safeRenderCount);
             renderStateApplier.Apply(renderStates, safeRenderCount);
+            UpdateCameraTarget(client.LocalPlayerNetId);
             renderStateApplier.ApplyLocalActionResults(
                 client.LocalPlayerNetId,
                 localActionResults,
@@ -198,6 +202,7 @@ namespace NetworkExample.UnityDemo.Client
 
         private void OnDisable()
         {
+            followCamera?.SetTarget(null);
             renderStateApplier?.Clear();
             inputSampler?.ResetSession();
             client?.Dispose();
@@ -214,15 +219,16 @@ namespace NetworkExample.UnityDemo.Client
 
         private void EnsureComponents()
         {
-            NetworkDemoScene.EnsureDefaultView();
+            followCamera = NetworkDemoScene.EnsureDefaultView();
 
             inputSampler = GetComponent<NetworkInputSampler>();
             if (inputSampler == null)
             {
                 inputSampler = gameObject.AddComponent<NetworkInputSampler>();
             }
+            inputSampler.SetViewTransform(followCamera.transform);
 
-            NetworkEntityRegistry entityRegistry = GetComponent<NetworkEntityRegistry>();
+            entityRegistry = GetComponent<NetworkEntityRegistry>();
             if (entityRegistry == null)
             {
                 entityRegistry = gameObject.AddComponent<NetworkEntityRegistry>();
@@ -250,6 +256,24 @@ namespace NetworkExample.UnityDemo.Client
             Debug.Log("ClientRunner configured with input sampler " + inputSampler.GetType().Name);
             Transform entityRoot = NetworkDemoScene.EnsureEntityRoot("Network Entities");
             renderStateApplier.Configure(entityRegistry, prefabRegistry, entityRoot);
+        }
+
+        private void UpdateCameraTarget(uint localPlayerNetId)
+        {
+            if (followCamera == null)
+            {
+                return;
+            }
+
+            if (localPlayerNetId != 0 &&
+                entityRegistry != null &&
+                entityRegistry.TryGetByNetId(localPlayerNetId, out GameObject visual))
+            {
+                followCamera.SetTarget(visual.transform);
+                return;
+            }
+
+            followCamera.SetTarget(null);
         }
 
         private static GameplayCatalogSyncOptions CreateGameplayCatalogSyncOptions()
