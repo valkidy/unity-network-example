@@ -264,6 +264,7 @@ namespace NetworkExample.UnityDemo.CameraSystem
                 .With("Down", "<Keyboard>/downArrow")
                 .With("Left", "<Keyboard>/leftArrow")
                 .With("Right", "<Keyboard>/rightArrow");
+            orbitAction.AddBinding("<Gamepad>/rightStick");
         }
     }
 }

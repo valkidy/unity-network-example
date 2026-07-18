@@ -1,6 +1,10 @@
+using System.Reflection;
 using NetworkExample.UnityDemo.CameraSystem;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.DualShock;
+using UnityEngine.InputSystem.LowLevel;
 
 namespace NetworkExample.UnityDemo.Tests.EditMode
 {
@@ -10,6 +14,8 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         private GameObject targetObject;
         private GameObject secondTargetObject;
         private ThirdPersonFollowCamera followCamera;
+        private Gamepad gamepad;
+        private DualSenseGamepadHID dualSense;
 
         [SetUp]
         public void SetUp()
@@ -22,6 +28,16 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         [TearDown]
         public void TearDown()
         {
+            if (gamepad != null && gamepad.added)
+            {
+                InputSystem.RemoveDevice(gamepad);
+            }
+
+            if (dualSense != null && dualSense.added)
+            {
+                InputSystem.RemoveDevice(dualSense);
+            }
+
             if (secondTargetObject != null)
             {
                 Object.DestroyImmediate(secondTargetObject);
@@ -93,6 +109,42 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             Assert.That(followCamera.FollowTarget, Is.EqualTo(secondTargetObject.transform));
             AssertVectorApproximately(cameraObject.transform.position, expected.position);
             Assert.That(Vector3.Distance(firstPose, expected.position), Is.GreaterThan(1f));
+        }
+
+        [Test]
+        public void GamepadRightStick_AppliesKeyboardEquivalentYaw()
+        {
+            gamepad = InputSystem.AddDevice<Gamepad>();
+            InputSystem.QueueStateEvent(
+                gamepad,
+                new GamepadState { rightStick = Vector2.right });
+            InputSystem.Update();
+
+            followCamera.ApplyOrbitInput(gamepad.rightStick.ReadValue(), 1f);
+
+            Assert.That(followCamera.CurrentYaw, Is.EqualTo(90f).Within(0.0001f));
+        }
+
+        [Test]
+        public void OrbitAction_BindsDualSenseRightStickThroughGamepadLayout()
+        {
+            dualSense = InputSystem.AddDevice<DualSenseGamepadHID>();
+            InputAction orbitAction = GetOrbitAction();
+            orbitAction.Enable();
+
+            Assert.That(orbitAction.controls, Does.Contain(dualSense.rightStick));
+        }
+
+        private InputAction GetOrbitAction()
+        {
+            MethodInfo ensureOrbitAction = typeof(ThirdPersonFollowCamera).GetMethod(
+                "EnsureOrbitAction",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            ensureOrbitAction.Invoke(followCamera, null);
+            FieldInfo orbitActionField = typeof(ThirdPersonFollowCamera).GetField(
+                "orbitAction",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            return (InputAction)orbitActionField.GetValue(followCamera);
         }
 
         private static void AssertVectorApproximately(Vector3 actual, Vector3 expected)
