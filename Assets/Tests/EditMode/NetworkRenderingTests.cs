@@ -209,6 +209,49 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
+        public void Apply_WithMovingActor_FacesHorizontalVelocity()
+        {
+            GameObject visual = RegisterActorVisual(100, 100);
+            RenderEntityState state = State(
+                100,
+                KernelEntityType.Actor,
+                new KernelVec3(),
+                KernelActorType.Player);
+            state.velocity = new KernelVec3(1f, 0.5f, 0f);
+
+            applier.Apply(new[] { state }, 1);
+
+            Assert.That(
+                Vector3.Angle(visual.transform.forward, Vector3.right),
+                Is.LessThan(0.01f));
+            Assert.That(
+                Vector3.Angle(visual.transform.up, Vector3.up),
+                Is.LessThan(0.01f));
+        }
+
+        [Test]
+        public void Apply_WhenMovingActorStops_PreservesLastMovementFacing()
+        {
+            GameObject visual = RegisterActorVisual(100, 100);
+            RenderEntityState moving = State(
+                100,
+                KernelEntityType.Actor,
+                new KernelVec3(),
+                KernelActorType.Player);
+            moving.velocity = new KernelVec3(-1f, 0f, 0f);
+            applier.Apply(new[] { moving }, 1);
+
+            RenderEntityState stopped = moving;
+            stopped.velocity = new KernelVec3();
+            stopped.rotation = new KernelQuat(0f, 0f, 0f, 1f);
+            applier.Apply(new[] { stopped }, 1);
+
+            Assert.That(
+                Vector3.Angle(visual.transform.forward, Vector3.left),
+                Is.LessThan(0.01f));
+        }
+
+        [Test]
         public void ApplyRemoteActionPresentationEvents_DeduplicatesEveryCommitInRange()
         {
             GameObject visual = RegisterActorVisual(7, 101);

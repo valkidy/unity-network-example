@@ -8,6 +8,8 @@ namespace NetworkExample.UnityDemo.Rendering
     [DisallowMultipleComponent]
     public sealed class NetworkActorView : MonoBehaviour
     {
+        private const float MovementFacingSpeedThresholdSqr = 0.0001f;
+
         [Serializable]
         private sealed class LocalActionTriggerBinding
         {
@@ -40,6 +42,8 @@ namespace NetworkExample.UnityDemo.Rendering
 
         private Animator animator;
         private readonly HashSet<uint> predictedActionInstanceIds = new HashSet<uint>();
+        private Quaternion lastMovementRotation;
+        private bool hasMovementRotation;
 
         [SerializeField]
         private LocalActionTriggerBinding[] localActionTriggers;
@@ -64,6 +68,8 @@ namespace NetworkExample.UnityDemo.Rendering
 
         public void ApplyContinuousState(RenderEntityState state)
         {
+            ApplyMovementFacing(state);
+
             ActorType = state.actor_type;
             VisualFlags = state.visual_flags;
             ActionPhase = state.action.phase;
@@ -96,6 +102,26 @@ namespace NetworkExample.UnityDemo.Rendering
             SetBoolIfPresent(target, FiringParameter, IsFiring);
             SetBoolIfPresent(target, RecoveryParameter, IsRecovery);
             SetBoolIfPresent(target, IdleParameter, IsIdle);
+        }
+
+        private void ApplyMovementFacing(RenderEntityState state)
+        {
+            Vector3 movement = new Vector3(
+                state.velocity.x,
+                0f,
+                state.velocity.z);
+            if (movement.sqrMagnitude > MovementFacingSpeedThresholdSqr)
+            {
+                lastMovementRotation = Quaternion.LookRotation(
+                    movement.normalized,
+                    Vector3.up);
+                hasMovementRotation = true;
+            }
+
+            if (hasMovementRotation)
+            {
+                transform.rotation = lastMovementRotation;
+            }
         }
 
         public void BeginPredictedAction(ActionIntent intent)
