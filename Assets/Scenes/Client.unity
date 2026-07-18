@@ -421,7 +421,7 @@ MonoBehaviour:
   maxEvents: 2048
   maxRenderStates: 2048
   maxActionEvents: 128
-  enableDiagnostics: 1
+  enableDiagnostics: 0
   diagnosticLogIntervalSeconds: 1
   readyWithoutRenderWarningSeconds: 1
   enableVisualDebug: 1

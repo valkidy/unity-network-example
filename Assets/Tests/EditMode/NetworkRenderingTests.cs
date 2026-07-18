@@ -2,6 +2,7 @@ using NetworkExample.Kernel;
 using NetworkExample.UnityDemo.Rendering;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace NetworkExample.UnityDemo.Tests.EditMode
 {
@@ -47,6 +48,136 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
                 State(1, KernelEntityType.Actor, new KernelVec3(), KernelActorType.Agent));
 
             Assert.That(agent.GetComponent<NetworkProjectileView>(), Is.Null);
+        }
+
+        [Test]
+        public void DefaultPrefabCatalog_RegistersCurrentActorAndProjectileTemplateIds()
+        {
+            NetworkPrefabCatalog catalog = Resources.Load<NetworkPrefabCatalog>(
+                NetworkPrefabRegistry.DefaultCatalogResourcePath);
+
+            Assert.That(catalog, Is.Not.Null);
+            Assert.That(catalog.TryGetActorPrefab(1, out GameObject player), Is.True);
+            Assert.That(catalog.TryGetActorPrefab(2, out GameObject agent), Is.True);
+            Assert.That(player, Is.Not.SameAs(agent));
+            Assert.That(player.GetComponent<NetworkActorView>(), Is.Not.Null);
+            Assert.That(agent.GetComponent<NetworkActorView>(), Is.Not.Null);
+            Assert.That(player.transform.Find("Visual"), Is.Not.Null);
+            Assert.That(agent.transform.Find("Visual"), Is.Not.Null);
+
+            GameObject sharedProjectile = null;
+            for (uint templateId = 2; templateId <= 8; ++templateId)
+            {
+                Assert.That(
+                    catalog.TryGetProjectilePrefab(templateId, out GameObject projectile),
+                    Is.True,
+                    "Missing projectile template " + templateId);
+                Assert.That(projectile.GetComponent<NetworkProjectileView>(), Is.Not.Null);
+                sharedProjectile = sharedProjectile == null ? projectile : sharedProjectile;
+                Assert.That(projectile, Is.SameAs(sharedProjectile));
+            }
+        }
+
+        [Test]
+        public void PrefabCatalog_ExactTemplateBindingWinsAndUnknownUsesActorFallback()
+        {
+            var exactPrefab = new GameObject("ExactActorPrefab");
+            var fallbackPrefab = new GameObject("FallbackActorPrefab");
+            var catalog = ScriptableObject.CreateInstance<NetworkPrefabCatalog>();
+            try
+            {
+                exactPrefab.transform.localScale = Vector3.one * 2f;
+                fallbackPrefab.transform.localScale = Vector3.one * 3f;
+                catalog.Configure(
+                    new[]
+                    {
+                        new NetworkPrefabCatalog.ActorPrefabBinding(99, exactPrefab),
+                    },
+                    null,
+                    fallbackPrefab,
+                    fallbackPrefab);
+                prefabRegistry.Configure(catalog);
+
+                RenderEntityState exactState = State(
+                    10,
+                    KernelEntityType.Actor,
+                    new KernelVec3(),
+                    KernelActorType.Player);
+                exactState.actor_template_id = 99;
+                RenderEntityState fallbackState = State(
+                    11,
+                    KernelEntityType.Actor,
+                    new KernelVec3(),
+                    KernelActorType.Player);
+                fallbackState.actor_template_id = 100;
+
+                GameObject exact = prefabRegistry.InstantiateVisual(
+                    exactState,
+                    rootObject.transform);
+                GameObject fallback = prefabRegistry.InstantiateVisual(
+                    fallbackState,
+                    rootObject.transform);
+
+                Assert.That(exact.transform.localScale, Is.EqualTo(Vector3.one * 2f));
+                Assert.That(fallback.transform.localScale, Is.EqualTo(Vector3.one * 3f));
+            }
+            finally
+            {
+                Object.DestroyImmediate(catalog);
+                Object.DestroyImmediate(exactPrefab);
+                Object.DestroyImmediate(fallbackPrefab);
+                prefabRegistry.Configure(null);
+            }
+        }
+
+        [Test]
+        public void PrefabCatalog_DuplicateIdSkipsNullAndWarnsOnlyDuringValidation()
+        {
+            var registeredPrefab = new GameObject("RegisteredActorPrefab");
+            var catalog = ScriptableObject.CreateInstance<NetworkPrefabCatalog>();
+            try
+            {
+                catalog.Configure(
+                    new[]
+                    {
+                        new NetworkPrefabCatalog.ActorPrefabBinding(77, null),
+                        new NetworkPrefabCatalog.ActorPrefabBinding(77, registeredPrefab),
+                    },
+                    null,
+                    registeredPrefab,
+                    registeredPrefab);
+                prefabRegistry.Configure(catalog);
+
+                LogAssert.Expect(
+                    LogType.Warning,
+                    "Network prefab catalog actor template id 77 has no prefab.");
+                LogAssert.Expect(
+                    LogType.Warning,
+                    "Network prefab catalog contains duplicate actor template id 77; " +
+                    "the first non-null prefab wins.");
+
+                RenderEntityState state = State(
+                    10,
+                    KernelEntityType.Actor,
+                    new KernelVec3(),
+                    KernelActorType.Player);
+                state.actor_template_id = 77;
+                GameObject first = prefabRegistry.InstantiateVisual(
+                    state,
+                    rootObject.transform);
+                GameObject second = prefabRegistry.InstantiateVisual(
+                    state,
+                    rootObject.transform);
+
+                Assert.That(first, Is.Not.Null);
+                Assert.That(second, Is.Not.Null);
+            }
+            finally
+            {
+                Object.DestroyImmediate(catalog);
+                Object.DestroyImmediate(registeredPrefab);
+                prefabRegistry.Configure(null);
+            }
         }
 
         [TestCase(KernelActorType.Player, 0.9f, 0.7f)]
@@ -209,6 +340,79 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
+        public void Apply_WithActorState_MapsSpeedGroundingPhaseAndLocalAim()
+        {
+            RenderEntityState state = State(
+                100,
+                KernelEntityType.Actor,
+                new KernelVec3(),
+                KernelActorType.Player);
+            state.actor_template_id = 1;
+            state.velocity = new KernelVec3(3f, 99f, 4f);
+            state.aim_direction = new KernelVec3(0f, 0f, 2f);
+            state.visual_flags = KernelConstants.VisualFlagGrounded |
+                KernelConstants.VisualFlagFalling;
+            state.animation_state = ushort.MaxValue;
+            state.action = new KernelActionRuntimeView
+            {
+                phase = KernelActionPhase.Recovery,
+            };
+
+            applier.Apply(new[] { state }, 1);
+
+            Assert.That(entityRegistry.TryGet(100, out GameObject visual), Is.True);
+            NetworkActorView actorView = visual.GetComponent<NetworkActorView>();
+            Assert.That(actorView.Speed, Is.EqualTo(5f).Within(0.0001f));
+            Assert.That(actorView.IsGrounded, Is.True);
+            Assert.That(actorView.IsFalling, Is.True);
+            Assert.That(actorView.ActionPhase, Is.EqualTo(KernelActionPhase.Recovery));
+            Assert.That(actorView.AimDirection, Is.EqualTo(Vector3.forward));
+        }
+
+        [Test]
+        public void Apply_WithStaleActor_KeepsLastPoseAndSuppressesPresentation()
+        {
+            RenderEntityState active = State(
+                100,
+                KernelEntityType.Actor,
+                new KernelVec3(1f, 0f, 2f),
+                KernelActorType.Player);
+            active.actor_template_id = 1;
+            active.visual_flags = KernelConstants.VisualFlagMoving;
+            applier.Apply(new[] { active }, 1);
+
+            var stale = active;
+            stale.status = RenderEntityStatus.Stale;
+            stale.position = new KernelVec3(9f, 0f, 9f);
+            stale.visual_flags = KernelConstants.VisualFlagDead;
+            applier.Apply(new[] { stale }, 1);
+
+            Assert.That(entityRegistry.TryGet(100, out GameObject visual), Is.True);
+            NetworkActorView actorView = visual.GetComponent<NetworkActorView>();
+            Assert.That(visual.transform.position, Is.EqualTo(new Vector3(1f, 0f, 2f)));
+            Assert.That(actorView.IsStale, Is.True);
+            Assert.That(actorView.IsMoving, Is.True);
+            Assert.That(actorView.IsDead, Is.False);
+
+            var remoteEvent = new KernelRemoteActionPresentationEvent
+            {
+                actor_net_id = 100,
+                action_instance_id = 5,
+                first_commit_index = 0,
+                commit_count = 1,
+                event_type = KernelRemoteActionPresentationEventType.FireCommit,
+            };
+            applier.ApplyRemoteActionPresentationEvents(new[] { remoteEvent }, 1);
+            Assert.That(actorView.RemoteCommitCount, Is.Zero);
+
+            var resumed = active;
+            resumed.position = new KernelVec3(3f, 0f, 4f);
+            applier.Apply(new[] { resumed }, 1);
+            Assert.That(actorView.IsStale, Is.False);
+            Assert.That(visual.transform.position, Is.EqualTo(new Vector3(3f, 0f, 4f)));
+        }
+
+        [Test]
         public void ApplyRemoteActionPresentationEvents_DeduplicatesEveryCommitInRange()
         {
             GameObject visual = RegisterActorVisual(7, 101);
@@ -251,6 +455,91 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
                 1);
 
             Assert.That(visual.GetComponent<NetworkActorView>().PredictedCommitCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void BeginPredictedLocalAction_DeduplicatesActionInstanceId()
+        {
+            GameObject visual = RegisterActorVisual(8, 102);
+            var intent = new ActionIntent
+            {
+                action_instance_id = 91,
+                binding_id = KernelActionBinding.PrimaryFire,
+            };
+
+            applier.BeginPredictedLocalAction(102, intent);
+            applier.BeginPredictedLocalAction(102, intent);
+
+            Assert.That(
+                visual.GetComponent<NetworkActorView>().PredictedCommitCount,
+                Is.EqualTo(1));
+        }
+
+        [Test]
+        public void ApplyKernelEvents_DeduplicatesActorLandedByActorAndTick()
+        {
+            GameObject visual = RegisterActorVisual(8, 102);
+            var landed = new KernelEvent
+            {
+                type = KernelEventType.ActorLanded,
+                net_id = 102,
+                tick = 45,
+            };
+
+            applier.ApplyKernelEvents(new[] { landed }, 1);
+            applier.ApplyKernelEvents(new[] { landed }, 1);
+
+            Assert.That(
+                visual.GetComponent<NetworkActorView>().LandedCount,
+                Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Apply_ServerBackedEntityPersistsUntilLifecycleEvent()
+        {
+            RenderEntityState actor = State(
+                100,
+                KernelEntityType.Actor,
+                new KernelVec3(),
+                KernelActorType.Player);
+            actor.actor_template_id = 1;
+            applier.Apply(new[] { actor }, 1);
+
+            applier.Apply(System.Array.Empty<RenderEntityState>(), 0);
+            Assert.That(entityRegistry.TryGet(100, out _), Is.True);
+
+            applier.ApplyEntityLifecycleEvents(
+                new[]
+                {
+                    new KernelEntityLifecycleEvent
+                    {
+                        type = KernelEntityLifecycleEventType.Destroyed,
+                        net_id = 100,
+                        entity_type = KernelEntityType.Actor,
+                    },
+                },
+                1);
+
+            Assert.That(entityRegistry.TryGet(100, out _), Is.False);
+        }
+
+        [Test]
+        public void Apply_PredictedProjectileMissingNextFrameIsRemoved()
+        {
+            var predicted = new RenderEntityState
+            {
+                entity_type = KernelEntityType.Projectile,
+                projectile_template_id = 2,
+                action_instance_id = 42,
+                rotation = new KernelQuat(0f, 0f, 0f, 1f),
+                status = RenderEntityStatus.Predicted,
+            };
+            applier.Apply(new[] { predicted }, 1);
+            Assert.That(rootObject.transform.childCount, Is.EqualTo(1));
+
+            applier.Apply(System.Array.Empty<RenderEntityState>(), 0);
+
+            Assert.That(rootObject.transform.childCount, Is.Zero);
         }
 
         private GameObject RegisterActorVisual(ulong entityId, ulong netId)

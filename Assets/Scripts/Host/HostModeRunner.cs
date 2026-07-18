@@ -30,6 +30,7 @@ namespace NetworkExample.UnityDemo.Host
         private NetworkHost host;
         private KernelEvent[] events;
         private RenderEntityState[] renderStates;
+        private KernelEntityLifecycleEvent[] lifecycleEvents;
         private KernelLocalActionResult[] localActionResults;
         private KernelRemoteActionPresentationEvent[] remoteActionEvents;
         private NetworkInputSampler inputSampler;
@@ -47,6 +48,7 @@ namespace NetworkExample.UnityDemo.Host
             EnsureComponents();
             events = new KernelEvent[Mathf.Max(1, maxEvents)];
             renderStates = new RenderEntityState[Mathf.Max(1, maxRenderStates)];
+            lifecycleEvents = new KernelEntityLifecycleEvent[Mathf.Max(1, maxEvents)];
             localActionResults = new KernelLocalActionResult[Mathf.Max(1, maxActionEvents)];
             remoteActionEvents =
                 new KernelRemoteActionPresentationEvent[Mathf.Max(1, maxActionEvents)];
@@ -100,7 +102,24 @@ namespace NetworkExample.UnityDemo.Host
                 return;
             }
 
-            uint eventCount = host.Update(Time.deltaTime, events);
+            ActionIntent predictedIntent = default;
+            if (host.IsLocalClientReady)
+            {
+                PlayerInput input = inputSampler.Sample();
+                if (host.TrySubmitLocalInput(input))
+                {
+                    predictedIntent = input.action_intent;
+                    renderStateApplier.BeginPredictedLocalAction(
+                        host.LocalPlayerNetId,
+                        predictedIntent);
+                }
+                else
+                {
+                    inputSampler.StopActionInput(input.action_intent.action_instance_id);
+                }
+            }
+
+            uint eventCount = host.Update(Time.unscaledDeltaTime, events);
             WarnIfBufferFilled(eventCount, events.Length, "event");
             MarkInitialLocalJoinForwardedFromEvents(eventCount);
             ForwardInitialLocalPlayerJoinToGameServer();
@@ -109,6 +128,8 @@ namespace NetworkExample.UnityDemo.Host
                 localActionResults);
             uint remoteActionEventCount = host.Kernel.PollRemoteActionPresentationEvents(
                 remoteActionEvents);
+            uint lifecycleEventCount = host.Kernel.PollEntityLifecycleEvents(
+                lifecycleEvents);
             WarnIfBufferFilled(
                 localActionResultCount,
                 localActionResults.Length,
@@ -117,23 +138,14 @@ namespace NetworkExample.UnityDemo.Host
                 remoteActionEventCount,
                 remoteActionEvents.Length,
                 "remote action presentation");
+            WarnIfBufferFilled(
+                lifecycleEventCount,
+                lifecycleEvents.Length,
+                "entity lifecycle");
             CompleteLocalActions(localActionResultCount);
 
-            ActionIntent predictedIntent = default;
-            if (host.IsLocalClientReady)
-            {
-                PlayerInput input = inputSampler.Sample();
-                if (host.TrySubmitLocalInput(input))
-                {
-                    predictedIntent = input.action_intent;
-                }
-                else
-                {
-                    inputSampler.StopActionInput(input.action_intent.action_instance_id);
-                }
-            }
-
-            ulong clientRenderTimeUs = presentationClock.Advance(Time.deltaTime);
+            ulong clientRenderTimeUs = presentationClock.Advance(
+                Time.unscaledDeltaTime);
             uint renderCount = host.GetRenderStatesAtTime(clientRenderTimeUs, renderStates);
             WarnIfBufferFilled(renderCount, renderStates.Length, "render state");
             int safeRenderCount = renderCount > (uint)renderStates.Length
@@ -141,6 +153,9 @@ namespace NetworkExample.UnityDemo.Host
                 : (int)renderCount;
             renderStateApplier.Apply(renderStates, safeRenderCount);
             UpdateCameraTarget(host.LocalPlayerNetId);
+            renderStateApplier.ApplyKernelEvents(
+                events,
+                SafeCount(eventCount, events.Length));
             renderStateApplier.ApplyLocalActionResults(
                 host.LocalPlayerNetId,
                 localActionResults,
@@ -148,9 +163,9 @@ namespace NetworkExample.UnityDemo.Host
             renderStateApplier.ApplyRemoteActionPresentationEvents(
                 remoteActionEvents,
                 SafeCount(remoteActionEventCount, remoteActionEvents.Length));
-            renderStateApplier.BeginPredictedLocalAction(
-                host.LocalPlayerNetId,
-                predictedIntent);
+            renderStateApplier.ApplyEntityLifecycleEvents(
+                lifecycleEvents,
+                SafeCount(lifecycleEventCount, lifecycleEvents.Length));
 
             if (debugView != null)
             {

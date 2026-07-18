@@ -52,8 +52,41 @@ namespace NetworkExample.UnityDemo.Rendering
             if (entity != null)
             {
                 RemoveNetIdsFor(entity);
-                Destroy(entity);
+                DestroyEntity(entity);
             }
+        }
+
+        public bool RemoveByNetId(ulong netId, out ulong entityId)
+        {
+            entityId = 0;
+            if (netId == 0 ||
+                !entitiesByNetId.TryGetValue(netId, out GameObject entity) ||
+                entity == null)
+            {
+                return false;
+            }
+
+            ulong matchingEntityId = 0;
+            bool found = false;
+            foreach (KeyValuePair<ulong, GameObject> pair in entities)
+            {
+                if (pair.Value == entity)
+                {
+                    matchingEntityId = pair.Key;
+                    found = true;
+                    break;
+                }
+            }
+
+            if (found)
+            {
+                entityId = matchingEntityId;
+                Remove(matchingEntityId);
+                return true;
+            }
+
+            entitiesByNetId.Remove(netId);
+            return false;
         }
 
         public void Clear()
@@ -62,7 +95,7 @@ namespace NetworkExample.UnityDemo.Rendering
             {
                 if (entity != null)
                 {
-                    Destroy(entity);
+                    DestroyEntity(entity);
                 }
             }
 
@@ -87,6 +120,18 @@ namespace NetworkExample.UnityDemo.Rendering
                 entitiesByNetId.Remove(netId);
             }
             netIdsToRemove.Clear();
+        }
+
+        private static void DestroyEntity(GameObject entity)
+        {
+            if (Application.isPlaying)
+            {
+                Destroy(entity);
+            }
+            else
+            {
+                DestroyImmediate(entity);
+            }
         }
     }
 }
