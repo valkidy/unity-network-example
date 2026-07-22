@@ -57,6 +57,7 @@ namespace NetworkExample.UnityDemo.Client
         private ThirdPersonFollowCamera followCamera;
         private readonly NetworkPresentationClock presentationClock = new NetworkPresentationClock();
         private NetworkInputSubmissionClock inputSubmissionClock;
+        private GameplayCatalogSyncOptions gameplayCatalogSyncOptions;
         private bool started;
         private bool readinessLogged;
         private float nextDiagnosticLogTime;
@@ -84,7 +85,8 @@ namespace NetworkExample.UnityDemo.Client
                 NetworkKernelVersionLogger.Log();
                 client = new NetworkClient();
                 ConfigurePhysicsBeforeStart(client.Kernel);
-                GameplayCatalogSyncOptions syncOptions = CreateGameplayCatalogSyncOptions();
+                gameplayCatalogSyncOptions = CreateGameplayCatalogSyncOptions();
+                GameplayCatalogSyncOptions syncOptions = gameplayCatalogSyncOptions;
                 started = client.Start(serverAddress, syncOptions);
                 if (!started)
                 {
@@ -121,6 +123,7 @@ namespace NetworkExample.UnityDemo.Client
 
             ActionIntent predictedIntent = default;
             if (client.IsReady &&
+                inputSampler.HasWeaponLoadout &&
                 inputSubmissionClock.ShouldSubmit(Time.unscaledDeltaTime))
             {
                 PlayerInput input = inputSampler.Sample();
@@ -223,6 +226,7 @@ namespace NetworkExample.UnityDemo.Client
             inputSampler?.ResetSession();
             client?.Dispose();
             client = null;
+            gameplayCatalogSyncOptions = null;
             started = false;
             readinessLogged = false;
             nextDiagnosticLogTime = 0f;
@@ -407,6 +411,10 @@ namespace NetworkExample.UnityDemo.Client
             if (connectionState == NetworkClientConnectionState.Ready)
             {
                 GameplayCatalogSyncResult syncResult = client.CatalogSyncResult;
+                if (!ConfigureInputWeaponLoadout(syncResult))
+                {
+                    return;
+                }
                 Debug.Log(
                     "Client gameplay catalog sync ready cache_hit=" +
                     syncResult.CacheHit +
@@ -432,6 +440,35 @@ namespace NetworkExample.UnityDemo.Client
             }
 
             Debug.Log("Client connection state=" + connectionState);
+        }
+
+        private bool ConfigureInputWeaponLoadout(GameplayCatalogSyncResult syncResult)
+        {
+            string diagnostic = null;
+            if (gameplayCatalogSyncOptions == null ||
+                !NetworkGameplayCatalogBundle.TryLoadSynchronizedBundle(
+                    gameplayCatalogSyncOptions.CacheDirectory,
+                    serverAddress,
+                    syncResult.Manifest,
+                    out byte[] bundleBytes,
+                    out diagnostic) ||
+                !NetworkGameplayCatalogBundle.TryReadPlayerWeaponLoadout(
+                    bundleBytes,
+                    syncResult.Manifest.entry_path,
+                    out byte[] weaponIds,
+                    out int activeWeaponSlot,
+                    out diagnostic) ||
+                !inputSampler.ConfigureWeaponLoadout(weaponIds, activeWeaponSlot))
+            {
+                Debug.LogError(
+                    "Client could not configure the synchronized player weapon loadout: " +
+                    (string.IsNullOrEmpty(diagnostic)
+                        ? "invalid weapon slot configuration"
+                        : diagnostic));
+                return false;
+            }
+
+            return true;
         }
 
         private static string FormatCatalogSyncResult(GameplayCatalogSyncResult result)

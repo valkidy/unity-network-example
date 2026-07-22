@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using NetworkExample.UnityDemo.Common;
 using NUnit.Framework;
 
@@ -26,6 +27,57 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             Assert.That(
                 NetworkGameplayCatalogBundle.DefaultBundleDisplayPath,
                 Is.EqualTo("Network Example Kernel/Runtime/Resources/gameplay_catalog_bundle/bundle.bytes"));
+        }
+
+        [Test]
+        public void TryReadPlayerWeaponLoadout_MapsSlotsToCatalogWeaponIds()
+        {
+            Assert.That(
+                NetworkGameplayCatalogBundle.TryLoadDefault(
+                    out byte[] bundleBytes,
+                    out string entryPath),
+                Is.True);
+
+            bool loaded = NetworkGameplayCatalogBundle.TryReadPlayerWeaponLoadout(
+                bundleBytes,
+                entryPath,
+                out byte[] weaponIds,
+                out int activeWeaponSlot,
+                out string diagnostic);
+
+            Assert.That(loaded, Is.True, diagnostic);
+            Assert.That(weaponIds, Is.EqualTo(new byte[] { 3, 1, 7 }));
+            Assert.That(activeWeaponSlot, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void TryLoadSynchronizedBundle_AcceptsMatchingPackagedBundle()
+        {
+            Assert.That(
+                NetworkGameplayCatalogBundle.TryLoadDefault(
+                    out byte[] expectedBytes,
+                    out _),
+                Is.True);
+            byte[] digest;
+            using (SHA256 sha256 = SHA256.Create())
+            {
+                digest = sha256.ComputeHash(expectedBytes);
+            }
+            var manifest = new NetworkExample.Kernel.KernelGameplayCatalogManifest
+            {
+                bundle_size = (uint)expectedBytes.Length,
+                bundle_sha256 = digest,
+            };
+
+            bool loaded = NetworkGameplayCatalogBundle.TryLoadSynchronizedBundle(
+                null,
+                "127.0.0.1:7777",
+                manifest,
+                out byte[] actualBytes,
+                out string diagnostic);
+
+            Assert.That(loaded, Is.True, diagnostic);
+            Assert.That(actualBytes, Is.EqualTo(expectedBytes));
         }
 
         [Test]
