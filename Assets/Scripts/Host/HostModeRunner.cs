@@ -65,6 +65,10 @@ namespace NetworkExample.UnityDemo.Host
                 {
                     return;
                 }
+                if (!ConfigureInputWeaponLoadout(bundleBytes, entryPath))
+                {
+                    return;
+                }
 
                 host = new NetworkHost();
                 started = host.Start(
@@ -103,7 +107,7 @@ namespace NetworkExample.UnityDemo.Host
             }
 
             ActionIntent predictedIntent = default;
-            if (host.IsLocalClientReady)
+            if (host.IsLocalClientReady && inputSampler.HasWeaponLoadout)
             {
                 PlayerInput input = inputSampler.Sample();
                 if (host.TrySubmitLocalInput(input))
@@ -252,6 +256,27 @@ namespace NetworkExample.UnityDemo.Host
             }
 
             followCamera.SetTarget(null);
+        }
+
+        private bool ConfigureInputWeaponLoadout(byte[] bundleBytes, string entryPath)
+        {
+            if (!NetworkGameplayCatalogBundle.TryReadPlayerWeaponLoadout(
+                    bundleBytes,
+                    entryPath,
+                    out byte[] weaponIds,
+                    out int activeWeaponSlot,
+                    out string diagnostic) ||
+                !inputSampler.ConfigureWeaponLoadout(weaponIds, activeWeaponSlot))
+            {
+                Debug.LogError(
+                    "HostMode could not configure the player weapon loadout: " +
+                    (string.IsNullOrEmpty(diagnostic)
+                        ? "invalid weapon slot configuration"
+                        : diagnostic));
+                return false;
+            }
+
+            return true;
         }
 
         private void MarkInitialLocalJoinForwardedFromEvents(uint eventCount)

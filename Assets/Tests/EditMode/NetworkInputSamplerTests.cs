@@ -20,6 +20,9 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             keyboard = InputSystem.AddDevice<Keyboard>();
             gameObject = new GameObject("NetworkInputSamplerTests");
             sampler = gameObject.AddComponent<NetworkInputSampler>();
+            Assert.That(
+                sampler.ConfigureWeaponLoadout(new byte[] { 3, 1, 7, 6 }, 0),
+                Is.True);
         }
 
         [TearDown]
@@ -37,23 +40,43 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
-        public void Sample_WithNoInput_DefaultsToWeaponSlotZero()
+        public void Sample_WithNoInput_UsesActiveSlotWeaponId()
         {
             KernelPlayerInput input = sampler.Sample();
 
-            Assert.That(input.selected_weapon, Is.EqualTo(0));
+            Assert.That(input.selected_weapon, Is.EqualTo(3));
             Assert.That(input.action_intent.action_instance_id, Is.Zero);
             Assert.That(input.action_input.action_instance_id, Is.Zero);
         }
 
         [Test]
-        public void Sample_WhenDigitOneIsPressed_SelectsWeaponSlotZero()
+        public void TrySelectWeaponSlot_MapsSlotToConfiguredWeaponId()
+        {
+            Assert.That(sampler.TrySelectWeaponSlot(2), Is.True);
+
+            KernelPlayerInput input = sampler.Sample();
+
+            Assert.That(sampler.SelectedWeaponSlot, Is.EqualTo(2));
+            Assert.That(sampler.SelectedWeaponId, Is.EqualTo(7));
+            Assert.That(input.selected_weapon, Is.EqualTo(7));
+        }
+
+        [Test]
+        public void ConfigureWeaponLoadout_RejectsDuplicateWeaponIds()
+        {
+            Assert.That(
+                sampler.ConfigureWeaponLoadout(new byte[] { 3, 3 }, 0),
+                Is.False);
+        }
+
+        [Test]
+        public void Sample_WhenDigitOneIsPressed_SelectsWeaponIdFromSlotZero()
         {
             SetKey(Key.Digit1);
 
             KernelPlayerInput input = sampler.Sample();
 
-            Assert.That(input.selected_weapon, Is.EqualTo(0));
+            Assert.That(input.selected_weapon, Is.EqualTo(3));
             Assert.That(input.action_intent.action_instance_id, Is.Zero);
         }
 
@@ -69,13 +92,13 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
-        public void Sample_WhenDigitFourIsPressed_SelectsWeaponSlotThree()
+        public void Sample_WhenDigitFourIsPressed_SelectsWeaponIdFromSlotThree()
         {
             SetKey(Key.Digit4);
 
             KernelPlayerInput input = sampler.Sample();
 
-            Assert.That(input.selected_weapon, Is.EqualTo(3));
+            Assert.That(input.selected_weapon, Is.EqualTo(6));
             Assert.That(input.action_intent.action_instance_id, Is.Zero);
         }
 
@@ -88,7 +111,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             SetKey();
             KernelPlayerInput input = sampler.Sample();
 
-            Assert.That(input.selected_weapon, Is.EqualTo(3));
+            Assert.That(input.selected_weapon, Is.EqualTo(6));
         }
 
         [Test]
@@ -99,10 +122,10 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             KernelPlayerInput first = sampler.Sample();
             KernelPlayerInput second = sampler.Sample();
 
-            Assert.That(first.selected_weapon, Is.EqualTo(0));
+            Assert.That(first.selected_weapon, Is.EqualTo(3));
             Assert.That(first.action_intent.binding_id, Is.EqualTo(KernelActionBinding.PrimaryFire));
             Assert.That(first.action_intent.action_instance_id, Is.Not.Zero);
-            Assert.That(second.selected_weapon, Is.EqualTo(0));
+            Assert.That(second.selected_weapon, Is.EqualTo(3));
             Assert.That(second.action_intent.action_instance_id, Is.Zero);
             Assert.That(second.action_input.action_instance_id,
                 Is.EqualTo(first.action_intent.action_instance_id));
@@ -138,13 +161,13 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             SetKey(Key.R);
             KernelPlayerInput input = sampler.Sample();
 
-            Assert.That(input.selected_weapon, Is.EqualTo(3));
+            Assert.That(input.selected_weapon, Is.EqualTo(6));
             Assert.That(input.action_intent.binding_id, Is.EqualTo(KernelActionBinding.Reload));
             Assert.That(input.action_intent.action_instance_id, Is.Not.Zero);
         }
 
         [Test]
-        public void Sample_WhenFireIsPressedForSlotZeroAndSlotThree_CreatesClientActions()
+        public void Sample_WhenFireIsPressedForDifferentWeaponIds_CreatesClientActions()
         {
             SetKey(Key.Space);
             KernelPlayerInput slotZeroFire = sampler.Sample();
@@ -158,9 +181,9 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             SetKey(Key.Space);
             KernelPlayerInput slotThreeFire = sampler.Sample();
 
-            Assert.That(slotZeroFire.selected_weapon, Is.EqualTo(0));
+            Assert.That(slotZeroFire.selected_weapon, Is.EqualTo(3));
             Assert.That(slotZeroFire.action_intent.action_instance_id, Is.Not.Zero);
-            Assert.That(slotThreeFire.selected_weapon, Is.EqualTo(3));
+            Assert.That(slotThreeFire.selected_weapon, Is.EqualTo(6));
             Assert.That(slotThreeFire.action_intent.action_instance_id, Is.Not.Zero);
             Assert.That(slotThreeFire.action_intent.action_instance_id,
                 Is.Not.EqualTo(slotZeroFire.action_intent.action_instance_id));

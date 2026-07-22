@@ -32,15 +32,65 @@ namespace NetworkExample.UnityDemo.Input
         private uint inputSequence;
         private uint nextActionInstanceId = 1;
         private uint heldFireActionInstanceId;
+        private readonly byte[] weaponIdsBySlot = new byte[KernelConstants.MaxWeaponSlots];
+        private int weaponSlotCount;
+        private int activeWeaponSlot;
+        private int selectedWeaponSlot;
+        // PlayerInput.selected_weapon carries a catalog weapon ID, while number
+        // keys select positions in the player's weapon_slots loadout.
         private byte selectedWeapon;
         private bool wasFirePressed;
         private bool wasReloadPressed;
 
         public int OutstandingActionCount => outstandingActionIds.Count;
+        public bool HasWeaponLoadout => weaponSlotCount > 0;
+        public int SelectedWeaponSlot => selectedWeaponSlot;
+        public byte SelectedWeaponId => selectedWeapon;
 
         public void SetViewTransform(Transform target)
         {
             viewTransform = target;
+        }
+
+        public bool ConfigureWeaponLoadout(byte[] weaponIds, int initialActiveSlot)
+        {
+            if (weaponIds == null ||
+                weaponIds.Length == 0 ||
+                weaponIds.Length > KernelConstants.MaxWeaponSlots ||
+                initialActiveSlot < 0 ||
+                initialActiveSlot >= weaponIds.Length)
+            {
+                return false;
+            }
+
+            for (int index = 0; index < weaponIds.Length; ++index)
+            {
+                for (int previous = 0; previous < index; ++previous)
+                {
+                    if (weaponIds[previous] == weaponIds[index])
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            System.Array.Clear(weaponIdsBySlot, 0, weaponIdsBySlot.Length);
+            System.Array.Copy(weaponIds, weaponIdsBySlot, weaponIds.Length);
+            weaponSlotCount = weaponIds.Length;
+            activeWeaponSlot = initialActiveSlot;
+            return TrySelectWeaponSlot(initialActiveSlot);
+        }
+
+        public bool TrySelectWeaponSlot(int slot)
+        {
+            if (slot < 0 || slot >= weaponSlotCount)
+            {
+                return false;
+            }
+
+            selectedWeaponSlot = slot;
+            selectedWeapon = weaponIdsBySlot[slot];
+            return true;
         }
 
         private void Awake()
@@ -239,6 +289,10 @@ namespace NetworkExample.UnityDemo.Input
             heldFireActionInstanceId = 0;
             wasFirePressed = false;
             wasReloadPressed = false;
+            if (weaponSlotCount > 0)
+            {
+                TrySelectWeaponSlot(activeWeaponSlot);
+            }
         }
 
         private uint AllocateActionInstanceId()
@@ -279,11 +333,14 @@ namespace NetworkExample.UnityDemo.Input
                 return;
             }
 
-            for (int index = 0; index < weaponSelectActions.Length; ++index)
+            int selectableSlotCount = Mathf.Min(
+                weaponSelectActions.Length,
+                weaponSlotCount);
+            for (int index = 0; index < selectableSlotCount; ++index)
             {
                 if (IsActionPressed(weaponSelectActions[index]))
                 {
-                    selectedWeapon = (byte)index;
+                    TrySelectWeaponSlot(index);
                     return;
                 }
             }
