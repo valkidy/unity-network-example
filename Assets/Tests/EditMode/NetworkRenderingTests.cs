@@ -480,7 +480,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         public void AcceptedLocalActionResult_ConfirmsWithoutReplayingPrediction()
         {
             GameObject visual = RegisterActorVisual(8, 102);
-            var intent = new ActionIntent
+            var intent = new KernelActionIntent
             {
                 action_instance_id = 91,
                 binding_id = KernelActionBinding.PrimaryFire,
@@ -506,7 +506,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         public void BeginPredictedLocalAction_DeduplicatesActionInstanceId()
         {
             GameObject visual = RegisterActorVisual(8, 102);
-            var intent = new ActionIntent
+            var intent = new KernelActionIntent
             {
                 action_instance_id = 91,
                 binding_id = KernelActionBinding.PrimaryFire,

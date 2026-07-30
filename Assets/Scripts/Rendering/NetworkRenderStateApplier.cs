@@ -123,7 +123,9 @@ namespace NetworkExample.UnityDemo.Rendering
             entityRegistry?.Clear();
         }
 
-        public void BeginPredictedLocalAction(uint localPlayerNetId, ActionIntent intent)
+        public void BeginPredictedLocalAction(
+            uint localPlayerNetId,
+            KernelActionIntent intent)
         {
             if (intent.action_instance_id == 0 ||
                 entityRegistry == null ||

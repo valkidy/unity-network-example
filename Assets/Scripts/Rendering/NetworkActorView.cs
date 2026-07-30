@@ -178,7 +178,7 @@ namespace NetworkExample.UnityDemo.Rendering
             }
         }
 
-        public void BeginPredictedAction(ActionIntent intent)
+        public void BeginPredictedAction(KernelActionIntent intent)
         {
             if (IsStale ||
                 intent.action_instance_id == 0 ||

@@ -121,12 +121,12 @@ namespace NetworkExample.UnityDemo.Client
                 return;
             }
 
-            ActionIntent predictedIntent = default;
+            KernelActionIntent predictedIntent = default;
             if (client.IsReady &&
                 inputSampler.HasWeaponLoadout &&
                 inputSubmissionClock.ShouldSubmit(Time.unscaledDeltaTime))
             {
-                PlayerInput input = inputSampler.Sample();
+                KernelPlayerInput input = inputSampler.Sample();
                 if (client.TrySubmitInput(input))
                 {
                     predictedIntent = input.action_intent;
