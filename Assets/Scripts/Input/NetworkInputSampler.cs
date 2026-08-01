@@ -94,6 +94,16 @@ namespace NetworkExample.UnityDemo.Input
 
         private void Awake()
         {
+            EnsureActionsCreated();
+        }
+
+        private void EnsureActionsCreated()
+        {
+            if (moveAction != null)
+            {
+                return;
+            }
+
             moveAction = new InputAction("Move", InputActionType.Value, expectedControlType: "Vector2");
             moveAction.AddCompositeBinding("2DVector")
                 .With("Up", "<Keyboard>/w")
@@ -163,6 +173,8 @@ namespace NetworkExample.UnityDemo.Input
 
         public KernelPlayerInput Sample()
         {
+            EnsureActionsCreated();
+            EnsureActionsEnabled();
             Vector2 rawMove =
                 moveAction == null ? Vector2.zero : moveAction.ReadValue<Vector2>();
             Vector2 move = TransformMoveToWorld(rawMove);
@@ -373,6 +385,14 @@ namespace NetworkExample.UnityDemo.Input
                     weaponSelectActions[index]?.Disable();
                 }
             }
+        }
+
+        private void EnsureActionsEnabled()
+        {
+            moveAction?.Enable();
+            fireAction?.Enable();
+            SetWeaponSelectActionsEnabled(true);
+            reloadAction?.Enable();
         }
 
         private static ulong NowMicroseconds()

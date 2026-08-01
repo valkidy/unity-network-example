@@ -14,7 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: NetworkExample.UnityDemo.Runtime::NetworkExample.UnityDemo.Rendering.NetworkPrefabCatalog
   actorPrefabs:
   - actorTemplateId: 1
-    prefab: {fileID: 4385249257082475097, guid: 2869f6d5674cd4027aafbcdd722dd7dd, type: 3}
+    prefab: {fileID: 8954853435508123706, guid: 7864c95d8ab694e728ca579190efa821, type: 3}
   - actorTemplateId: 2
     prefab: {fileID: 1856945008544614001, guid: fc47cec2e61ab4c74ba57d58878ce6ac, type: 3}
   projectilePrefabs:
@@ -23,7 +23,7 @@ MonoBehaviour:
   - projectileTemplateId: 3
     prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
   - projectileTemplateId: 4
-    prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
+    prefab: {fileID: 3836978848353393398, guid: aeafdcbfa7187490093761a4fe2efe65, type: 3}
   - projectileTemplateId: 5
     prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
   - projectileTemplateId: 6
@@ -32,7 +32,15 @@ MonoBehaviour:
     prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
   - projectileTemplateId: 8
     prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
+  propPrefabs:
+  - itemTemplateId: 3003
+    prefab: {fileID: 1918210473873687710, guid: 3ab47a83ed0404599baaf5509417beba, type: 3}
+  - itemTemplateId: 3004
+    prefab: {fileID: 2639555752078317490, guid: 0fe89d0f04d9d4ab4a36142c2033fcad, type: 3}
+  - itemTemplateId: 204
+    prefab: {fileID: 6643457848503167595, guid: 74e02f329fcb740c596bdd8e10952b65, type: 3}
   playerActorFallback: {fileID: 8954853435508123706, guid: 7864c95d8ab694e728ca579190efa821, type: 3}
   agentActorFallback: {fileID: 1856945008544614001, guid: fc47cec2e61ab4c74ba57d58878ce6ac, type: 3}
   projectileFallback: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
+  propFallback: {fileID: 7923727376853824161, guid: 4b778f70892c1408b9f70dd911655c5a, type: 3}
   entityFallback: {fileID: 0}

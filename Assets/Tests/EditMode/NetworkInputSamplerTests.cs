@@ -7,35 +7,37 @@ using UnityEngine.InputSystem.LowLevel;
 
 namespace NetworkExample.UnityDemo.Tests.EditMode
 {
-    public sealed class NetworkInputSamplerTests
+    public sealed class NetworkInputSamplerTests : InputTestFixture
     {
         private GameObject gameObject;
         private NetworkInputSampler sampler;
         private Keyboard keyboard;
 
         [SetUp]
-        public void SetUp()
+        public override void Setup()
         {
+            base.Setup();
             keyboard = InputSystem.AddDevice<Keyboard>();
             gameObject = new GameObject("NetworkInputSamplerTests");
             sampler = gameObject.AddComponent<NetworkInputSampler>();
             Assert.That(
                 sampler.ConfigureWeaponLoadout(new byte[] { 3, 1, 7, 6 }, 0),
                 Is.True);
+            // EditMode does not invoke MonoBehaviour.OnEnable. Prime the sampler so
+            // its programmatic InputActions are enabled before queuing device state.
+            sampler.Sample();
         }
 
         [TearDown]
-        public void TearDown()
+        public override void TearDown()
         {
             if (gameObject != null)
             {
                 Object.DestroyImmediate(gameObject);
             }
 
-            if (keyboard != null && keyboard.added)
-            {
-                InputSystem.RemoveDevice(keyboard);
-            }
+            keyboard = null;
+            base.TearDown();
         }
 
         [Test]

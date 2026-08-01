@@ -5,6 +5,7 @@ using NetworkExample.Kernel.Client;
 using NetworkExample.UnityDemo.CameraSystem;
 using NetworkExample.UnityDemo.Common;
 using NetworkExample.UnityDemo.Input;
+using NetworkExample.UnityDemo.Items;
 using NetworkExample.UnityDemo.Rendering;
 using UnityEngine;
 
@@ -51,6 +52,8 @@ namespace NetworkExample.UnityDemo.Client
         private KernelLocalActionResult[] localActionResults;
         private KernelRemoteActionPresentationEvent[] remoteActionEvents;
         private NetworkInputSampler inputSampler;
+        private NetworkItemPropInputSampler itemPropInputSampler;
+        private NetworkItemPropController itemPropController;
         private NetworkEntityRegistry entityRegistry;
         private NetworkRenderStateApplier renderStateApplier;
         private NetworkDebugView debugView;
@@ -148,6 +151,7 @@ namespace NetworkExample.UnityDemo.Client
             WarnIfBufferFilled(eventCount, events.Length, "event");
             LogDiagnosticEvents(eventCount);
             LogConnectionState();
+            itemPropController.UpdateAuthoritativeState(client);
 
             uint localActionResultCount = client.Kernel.PollLocalActionResults(
                 localActionResults);
@@ -173,6 +177,7 @@ namespace NetworkExample.UnityDemo.Client
                 client.ConnectionState == NetworkClientConnectionState.Disconnected)
             {
                 inputSampler.ResetSession();
+                itemPropController.ResetSession();
                 inputSubmissionClock.Reset();
                 started = false;
                 return;
@@ -202,6 +207,7 @@ namespace NetworkExample.UnityDemo.Client
             renderStateApplier.ApplyEntityLifecycleEvents(
                 lifecycleEvents,
                 SafeCount(lifecycleEventCount, lifecycleEvents.Length));
+            itemPropController.ProcessInput(client, renderStates, safeRenderCount);
 
             if (debugView != null)
             {
@@ -224,6 +230,7 @@ namespace NetworkExample.UnityDemo.Client
             followCamera?.SetTarget(null);
             renderStateApplier?.Clear();
             inputSampler?.ResetSession();
+            itemPropController?.ResetSession();
             client?.Dispose();
             client = null;
             gameplayCatalogSyncOptions = null;
@@ -247,6 +254,19 @@ namespace NetworkExample.UnityDemo.Client
                 inputSampler = gameObject.AddComponent<NetworkInputSampler>();
             }
             inputSampler.SetViewTransform(followCamera.transform);
+
+            itemPropInputSampler = GetComponent<NetworkItemPropInputSampler>();
+            if (itemPropInputSampler == null)
+            {
+                itemPropInputSampler = gameObject.AddComponent<NetworkItemPropInputSampler>();
+            }
+
+            itemPropController = GetComponent<NetworkItemPropController>();
+            if (itemPropController == null)
+            {
+                itemPropController = gameObject.AddComponent<NetworkItemPropController>();
+            }
+            itemPropController.Configure(itemPropInputSampler, followCamera.transform);
 
             entityRegistry = GetComponent<NetworkEntityRegistry>();
             if (entityRegistry == null)

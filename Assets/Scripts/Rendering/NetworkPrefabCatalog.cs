@@ -13,8 +13,8 @@ namespace NetworkExample.UnityDemo.Rendering
         {
             [InspectorName("Actor Entity Template ID")]
             [Tooltip(
-                "The current render ABI exposes an actor entity-template selection through " +
-                "RenderEntityState.actor_template_id.")]
+                "For actor render states, RenderEntityState.template_id contains " +
+                "the actor template ID.")]
             public uint actorTemplateId;
 
             public GameObject prefab;
@@ -39,12 +39,33 @@ namespace NetworkExample.UnityDemo.Rendering
             }
         }
 
+        [Serializable]
+        public struct PropPrefabBinding
+        {
+            [InspectorName("Item Template ID")]
+            [Tooltip(
+                "For item-backed prop render states, RenderEntityState.template_id " +
+                "contains the item template ID. Pure props use the fallback.")]
+            public uint itemTemplateId;
+
+            public GameObject prefab;
+
+            public PropPrefabBinding(uint itemTemplateId, GameObject prefab)
+            {
+                this.itemTemplateId = itemTemplateId;
+                this.prefab = prefab;
+            }
+        }
+
         [SerializeField]
         private ActorPrefabBinding[] actorPrefabs = Array.Empty<ActorPrefabBinding>();
 
         [SerializeField]
         private ProjectilePrefabBinding[] projectilePrefabs =
             Array.Empty<ProjectilePrefabBinding>();
+
+        [SerializeField]
+        private PropPrefabBinding[] propPrefabs = Array.Empty<PropPrefabBinding>();
 
         [Header("Fallbacks")]
         [SerializeField]
@@ -57,13 +78,18 @@ namespace NetworkExample.UnityDemo.Rendering
         private GameObject projectileFallback;
 
         [SerializeField]
+        private GameObject propFallback;
+
+        [SerializeField]
         private GameObject entityFallback;
 
         public ActorPrefabBinding[] ActorPrefabs => actorPrefabs;
         public ProjectilePrefabBinding[] ProjectilePrefabs => projectilePrefabs;
+        public PropPrefabBinding[] PropPrefabs => propPrefabs;
         public GameObject PlayerActorFallback => playerActorFallback;
         public GameObject AgentActorFallback => agentActorFallback;
         public GameObject ProjectileFallback => projectileFallback;
+        public GameObject PropFallback => propFallback;
         public GameObject EntityFallback => entityFallback;
 
         public bool TryGetActorPrefab(uint actorTemplateId, out GameObject prefab)
@@ -106,6 +132,26 @@ namespace NetworkExample.UnityDemo.Rendering
             return false;
         }
 
+        public bool TryGetPropPrefab(uint itemTemplateId, out GameObject prefab)
+        {
+            if (propPrefabs != null)
+            {
+                for (int index = 0; index < propPrefabs.Length; ++index)
+                {
+                    PropPrefabBinding binding = propPrefabs[index];
+                    if (binding.itemTemplateId == itemTemplateId &&
+                        binding.prefab != null)
+                    {
+                        prefab = binding.prefab;
+                        return true;
+                    }
+                }
+            }
+
+            prefab = null;
+            return false;
+        }
+
         public void Configure(
             ActorPrefabBinding[] actors,
             ProjectilePrefabBinding[] projectiles,
@@ -120,6 +166,14 @@ namespace NetworkExample.UnityDemo.Rendering
             agentActorFallback = agentFallback;
             projectileFallback = defaultProjectile;
             entityFallback = defaultEntity;
+        }
+
+        public void ConfigureProps(
+            PropPrefabBinding[] props,
+            GameObject defaultProp = null)
+        {
+            propPrefabs = props ?? Array.Empty<PropPrefabBinding>();
+            propFallback = defaultProp;
         }
     }
 }

@@ -96,7 +96,7 @@ namespace NetworkExample.UnityDemo.Rendering
         // Projectile templates by id. Projectiles have no entity-type collider binding (their
         // collider is defined per projectile template, not per entity type), so the binding
         // lookup never covers them. This map lets a projectile's collider be resolved through
-        // its projectile_template_id -> collider_template_id.
+        // its context-dependent template_id -> collider_template_id.
         private readonly Dictionary<uint, KernelProjectileTemplateDefinition> projectileTemplates =
             new Dictionary<uint, KernelProjectileTemplateDefinition>();
         private bool catalogLoaded;
@@ -330,11 +330,11 @@ namespace NetworkExample.UnityDemo.Rendering
             }
 
             // Projectiles have no entity-type binding (their collider lives on the projectile
-            // template), so resolve through projectile_template_id -> collider_template_id.
+            // template), so resolve through template_id -> collider_template_id.
             if (templateId == 0 &&
                 state.entity_type == KernelEntityType.Projectile &&
                 projectileTemplates.TryGetValue(
-                    state.projectile_template_id,
+                    state.template_id,
                     out KernelProjectileTemplateDefinition projectileTemplate))
             {
                 templateId = projectileTemplate.mechanics.collider_template_id;
@@ -886,7 +886,7 @@ namespace NetworkExample.UnityDemo.Rendering
         {
             if (state.entity_type == KernelEntityType.Projectile &&
                 projectileTemplates.TryGetValue(
-                    state.projectile_template_id,
+                    state.template_id,
                     out KernelProjectileTemplateDefinition projectileTemplate))
             {
                 return (KernelProjectileType)projectileTemplate.mechanics.projectile_type;

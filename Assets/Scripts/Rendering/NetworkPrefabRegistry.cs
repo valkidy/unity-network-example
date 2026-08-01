@@ -63,13 +63,13 @@ namespace NetworkExample.UnityDemo.Rendering
             {
                 if (resolvedCatalog != null &&
                     resolvedCatalog.TryGetProjectilePrefab(
-                        state.projectile_template_id,
+                        state.template_id,
                         out GameObject projectilePrefab))
                 {
                     return projectilePrefab;
                 }
 
-                WarnMissingOnce("projectile", state.projectile_template_id);
+                WarnMissingOnce("projectile", state.template_id);
                 return resolvedCatalog != null
                     ? resolvedCatalog.ProjectileFallback
                     : null;
@@ -79,13 +79,13 @@ namespace NetworkExample.UnityDemo.Rendering
             {
                 if (resolvedCatalog != null &&
                     resolvedCatalog.TryGetActorPrefab(
-                        state.actor_template_id,
+                        state.template_id,
                         out GameObject actorPrefab))
                 {
                     return actorPrefab;
                 }
 
-                WarnMissingOnce("actor", state.actor_template_id);
+                WarnMissingOnce("actor", state.template_id);
                 if (resolvedCatalog == null)
                 {
                     return null;
@@ -95,6 +95,25 @@ namespace NetworkExample.UnityDemo.Rendering
                     ? resolvedCatalog.AgentActorFallback ??
                         resolvedCatalog.PlayerActorFallback
                     : resolvedCatalog.PlayerActorFallback;
+            }
+
+            if (state.entity_type == KernelEntityType.Prop)
+            {
+                if (resolvedCatalog != null &&
+                    resolvedCatalog.TryGetPropPrefab(
+                        state.template_id,
+                        out GameObject propPrefab))
+                {
+                    return propPrefab;
+                }
+
+                WarnMissingOnce("prop item", state.template_id);
+                if (resolvedCatalog == null)
+                {
+                    return null;
+                }
+
+                return resolvedCatalog.PropFallback ?? resolvedCatalog.EntityFallback;
             }
 
             return resolvedCatalog != null ? resolvedCatalog.EntityFallback : null;
@@ -150,32 +169,58 @@ namespace NetworkExample.UnityDemo.Rendering
             var projectileIds = new HashSet<uint>();
             NetworkPrefabCatalog.ProjectilePrefabBinding[] projectileBindings =
                 resolvedCatalog.ProjectilePrefabs;
-            if (projectileBindings == null)
+            if (projectileBindings != null)
             {
-                return;
+                for (int index = 0; index < projectileBindings.Length; ++index)
+                {
+                    NetworkPrefabCatalog.ProjectilePrefabBinding binding =
+                        projectileBindings[index];
+                    if (!projectileIds.Add(binding.projectileTemplateId))
+                    {
+                        WarnOnce(
+                            "duplicate-projectile-" + binding.projectileTemplateId,
+                            "Network prefab catalog contains duplicate projectile template id " +
+                            binding.projectileTemplateId +
+                            "; the first non-null prefab wins.");
+                    }
+                    if (binding.prefab == null)
+                    {
+                        WarnOnce(
+                            "null-projectile-" + binding.projectileTemplateId,
+                            "Network prefab catalog projectile template id " +
+                            binding.projectileTemplateId +
+                            " has no prefab.");
+                    }
+                }
             }
 
-            for (int index = 0; index < projectileBindings.Length; ++index)
+            var propIds = new HashSet<uint>();
+            NetworkPrefabCatalog.PropPrefabBinding[] propBindings =
+                resolvedCatalog.PropPrefabs;
+            if (propBindings != null)
             {
-                NetworkPrefabCatalog.ProjectilePrefabBinding binding =
-                    projectileBindings[index];
-                if (!projectileIds.Add(binding.projectileTemplateId))
+                for (int index = 0; index < propBindings.Length; ++index)
                 {
-                    WarnOnce(
-                        "duplicate-projectile-" + binding.projectileTemplateId,
-                        "Network prefab catalog contains duplicate projectile template id " +
-                        binding.projectileTemplateId +
-                        "; the first non-null prefab wins.");
-                }
-                if (binding.prefab == null)
-                {
-                    WarnOnce(
-                        "null-projectile-" + binding.projectileTemplateId,
-                        "Network prefab catalog projectile template id " +
-                        binding.projectileTemplateId +
-                        " has no prefab.");
+                    NetworkPrefabCatalog.PropPrefabBinding binding = propBindings[index];
+                    if (!propIds.Add(binding.itemTemplateId))
+                    {
+                        WarnOnce(
+                            "duplicate-prop-" + binding.itemTemplateId,
+                            "Network prefab catalog contains duplicate prop item template id " +
+                            binding.itemTemplateId +
+                            "; the first non-null prefab wins.");
+                    }
+                    if (binding.prefab == null)
+                    {
+                        WarnOnce(
+                            "null-prop-" + binding.itemTemplateId,
+                            "Network prefab catalog prop item template id " +
+                            binding.itemTemplateId +
+                            " has no prefab.");
+                    }
                 }
             }
+
         }
 
         private void WarnMissingOnce(string kind, uint templateId)

@@ -4,7 +4,8 @@
   "references": [
     "NetworkExample.UnityDemo.Runtime",
     "NetworkExample.Kernel",
-    "Unity.InputSystem"
+    "Unity.InputSystem",
+    "Unity.InputSystem.TestFramework"
   ],
   "includePlatforms": [
     "Editor"
