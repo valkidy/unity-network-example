@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using NetworkExample.Kernel;
 using NetworkExample.Kernel.Host;
 using NetworkExample.Kernel.Presentation;
+using NetworkExample.UnityDemo.CameraSystem;
 using NetworkExample.UnityDemo.Common;
+using NetworkExample.UnityDemo.Input;
 using NetworkExample.UnityDemo.Rendering;
 using UnityEngine;
 
@@ -78,6 +80,14 @@ namespace NetworkExample.UnityDemo.Host
         [SerializeField]
         private float linkThickness = NetworkMonsterSimRigFactory.DefaultLinkThickness;
 
+        [Tooltip(
+            "Drive the local player with WASD and orbit the camera with Q/E or the " +
+            "arrow keys, as in Client.unity. Leave off for the scripted capture " +
+            "run that the automated locomotion checks compare against the native " +
+            "capture.")]
+        [SerializeField]
+        private bool manualControl;
+
         [Header("Capture subject")]
         [SerializeField]
         private uint entityTemplateId = 20u;
@@ -110,6 +120,8 @@ namespace NetworkExample.UnityDemo.Host
         private readonly HashSet<int> seededApplicators = new HashSet<int>();
         private NetworkLocomotionPathScript path;
         private Material rigMaterial;
+        private NetworkInputSampler inputSampler;
+        private ThirdPersonFollowCamera followCamera;
 
         private bool started;
         private uint subjectNetId;
@@ -222,6 +234,10 @@ namespace NetworkExample.UnityDemo.Host
             Debug.Log("LocomotionTest path: " + path.Description);
 
             presentationWorld.FallbackFactory = CreatePresentationInstance;
+            if (manualControl)
+            {
+                EnableManualControl();
+            }
             if (createReferenceGround)
             {
                 CreateReferenceGround();
@@ -257,6 +273,11 @@ namespace NetworkExample.UnityDemo.Host
             if (!started || host == null)
             {
                 return;
+            }
+
+            if (manualControl && host.IsLocalClientReady && inputSampler != null)
+            {
+                host.TrySubmitLocalInput(inputSampler.Sample());
             }
 
             float fixedDelta = 1f / tickRate;
@@ -358,6 +379,8 @@ namespace NetworkExample.UnityDemo.Host
                     subjectState.position.z);
             }
 
+            KeepSubjectRelevant();
+
             Vector2 move = path.MoveInput(subjectPosition);
             host.Kernel.ServerSubmitEntityInput(
                 subjectNetId,
@@ -370,6 +393,39 @@ namespace NetworkExample.UnityDemo.Host
             renderStateCount = host.GetRenderStates(renderStates);
             host.GetSkeletonRenderStates(skeletonStates);
             RecordSample();
+        }
+
+        /// <summary>
+        /// Pins the local player to the capture subject so the subject stays inside
+        /// the kernel's relevance radius.
+        ///
+        /// The kernel culls entities more than
+        /// kDefaultEntityRelevanceDistanceMeters (40 m, a hard-coded constant in
+        /// engine/src/kernel/src/kernel.cc with no public config knob) from the
+        /// local player, and the listen-server's own client runs the same filter as
+        /// a remote peer. On the scripted "+X" path the subject crosses 40 m at
+        /// about x=39.7, the kernel sends KernelDespawnReason_OutOfRange, the entity
+        /// leaves Kernel_GetRenderStates and KernelEntityPresentationWorld destroys
+        /// the instance -- the subject vanishes roughly 10 m before the terrain
+        /// edge at x=49.45, while still alive and walking on the server.
+        ///
+        /// Under manual control the player is driven by input instead, so following
+        /// the subject is the operator's job.
+        /// </summary>
+        private void KeepSubjectRelevant()
+        {
+            if (manualControl || host.LocalPlayerNetId == 0)
+            {
+                return;
+            }
+
+            host.Kernel.ServerSetEntityTransform(
+                host.LocalPlayerNetId,
+                new KernelVec3(
+                    subjectPosition.x,
+                    subjectPosition.y,
+                    subjectPosition.z),
+                new KernelQuat(0f, 0f, 0f, 1f));
         }
 
         private bool TrySpawnSubject()
@@ -505,6 +561,16 @@ namespace NetworkExample.UnityDemo.Host
                     EnsureRigMaterial());
             }
 
+            // In scripted mode the local player is only a relevance anchor pinned
+            // to the subject (see KeepSubjectRelevant), so drawing it would put a
+            // capsule inside the monster.
+            if (!manualControl &&
+                state.net_id != 0 &&
+                state.net_id == host.LocalPlayerNetId)
+            {
+                return null;
+            }
+
             GameObject proxy = GameObject.CreatePrimitive(PrimitiveType.Capsule);
             Collider collider = proxy.GetComponent<Collider>();
             if (collider != null)
@@ -564,8 +630,39 @@ namespace NetworkExample.UnityDemo.Host
             }
         }
 
+        /// <summary>
+        /// Manual control mirrors Client.unity: WASD drives the local player,
+        /// Q/E and the arrow keys orbit a ThirdPersonFollowCamera, and movement is
+        /// camera-relative. The default tuning suits the human-sized player
+        /// template, which also gives a sense of scale next to the ~30 m monster.
+        /// </summary>
+        private void EnableManualControl()
+        {
+            followCamera = NetworkDemoScene.EnsureDefaultView();
+
+            inputSampler = GetComponent<NetworkInputSampler>();
+            if (inputSampler == null)
+            {
+                inputSampler = gameObject.AddComponent<NetworkInputSampler>();
+            }
+            inputSampler.SetViewTransform(followCamera.transform);
+
+            // The fixed observer camera would fight the follow camera for the
+            // same transform.
+            if (observerCamera != null &&
+                observerCamera.transform == followCamera.transform)
+            {
+                observerCamera = null;
+            }
+        }
+
         private void UpdateObserverCamera()
         {
+            if (manualControl)
+            {
+                UpdateFollowCameraTarget();
+                return;
+            }
             if (observerCamera == null || subjectNetId == 0)
             {
                 return;
@@ -579,6 +676,39 @@ namespace NetworkExample.UnityDemo.Host
 
             observerCamera.transform.position = target.position + cameraOffset;
             observerCamera.transform.LookAt(target.position);
+        }
+
+        private void UpdateFollowCameraTarget()
+        {
+            if (followCamera == null)
+            {
+                return;
+            }
+            uint playerNetId = host.LocalPlayerNetId;
+            if (playerNetId == 0)
+            {
+                return;
+            }
+
+            // KernelEntityPresentationWorld can only be queried by template id, so
+            // resolve the local player's template from the render states first.
+            int count = renderStateCount > (uint)renderStates.Length
+                ? renderStates.Length
+                : (int)renderStateCount;
+            for (int index = 0; index < count; ++index)
+            {
+                if (renderStates[index].net_id != playerNetId)
+                {
+                    continue;
+                }
+                if (presentationWorld.TryGetPresentationTransform(
+                        renderStates[index].template_id,
+                        out Transform player))
+                {
+                    followCamera.SetTarget(player);
+                }
+                return;
+            }
         }
 
         private void OnDisable()
