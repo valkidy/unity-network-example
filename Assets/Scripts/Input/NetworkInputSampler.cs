@@ -2,7 +2,6 @@ using System.Collections.Generic;
 using NetworkExample.Kernel;
 using UnityEngine;
 using UnityEngine.InputSystem;
-using KernelPlayerInput = NetworkExample.Kernel.PlayerInput;
 
 namespace NetworkExample.UnityDemo.Input
 {
@@ -36,7 +35,7 @@ namespace NetworkExample.UnityDemo.Input
         private int weaponSlotCount;
         private int activeWeaponSlot;
         private int selectedWeaponSlot;
-        // PlayerInput.selected_weapon carries a catalog weapon ID, while number
+        // KernelPlayerInput.selected_weapon carries a catalog weapon ID, while number
         // keys select positions in the player's weapon_slots loadout.
         private byte selectedWeapon;
         private bool wasFirePressed;
@@ -177,8 +176,8 @@ namespace NetworkExample.UnityDemo.Input
             bool reloadTriggered = isReloadPressed && !wasReloadPressed;
             wasReloadPressed = isReloadPressed;
 
-            ActionIntent actionIntent = default;
-            ActionInput actionInput = default;
+            KernelActionIntent actionIntent = default;
+            KernelActionInput actionInput = default;
             if (fireTriggered)
             {
                 heldFireActionInstanceId = AllocateActionInstanceId();
@@ -188,7 +187,7 @@ namespace NetworkExample.UnityDemo.Input
             }
             else if (heldFireActionInstanceId != 0)
             {
-                actionInput = new ActionInput
+                actionInput = new KernelActionInput
                 {
                     action_instance_id = heldFireActionInstanceId,
                     held = isFirePressed ? (byte)1 : (byte)0,
@@ -310,11 +309,11 @@ namespace NetworkExample.UnityDemo.Input
             return actionInstanceId;
         }
 
-        private static ActionIntent CreateActionIntent(
+        private static KernelActionIntent CreateActionIntent(
             uint actionInstanceId,
             KernelActionBinding binding)
         {
-            return new ActionIntent
+            return new KernelActionIntent
             {
                 action_instance_id = actionInstanceId,
                 binding_id = binding,

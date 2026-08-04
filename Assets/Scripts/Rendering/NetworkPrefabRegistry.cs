@@ -63,13 +63,13 @@ namespace NetworkExample.UnityDemo.Rendering
             {
                 if (resolvedCatalog != null &&
                     resolvedCatalog.TryGetProjectilePrefab(
-                        state.projectile_template_id,
+                        state.template_id,
                         out GameObject projectilePrefab))
                 {
                     return projectilePrefab;
                 }
 
-                WarnMissingOnce("projectile", state.projectile_template_id);
+                WarnMissingOnce("projectile", state.template_id);
                 return resolvedCatalog != null
                     ? resolvedCatalog.ProjectileFallback
                     : null;
@@ -79,13 +79,13 @@ namespace NetworkExample.UnityDemo.Rendering
             {
                 if (resolvedCatalog != null &&
                     resolvedCatalog.TryGetActorPrefab(
-                        state.actor_template_id,
+                        state.template_id,
                         out GameObject actorPrefab))
                 {
                     return actorPrefab;
                 }
 
-                WarnMissingOnce("actor", state.actor_template_id);
+                WarnMissingOnce("actor", state.template_id);
                 if (resolvedCatalog == null)
                 {
                     return null;

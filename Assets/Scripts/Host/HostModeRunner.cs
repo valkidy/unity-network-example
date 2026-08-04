@@ -106,10 +106,10 @@ namespace NetworkExample.UnityDemo.Host
                 return;
             }
 
-            ActionIntent predictedIntent = default;
+            KernelActionIntent predictedIntent = default;
             if (host.IsLocalClientReady && inputSampler.HasWeaponLoadout)
             {
-                PlayerInput input = inputSampler.Sample();
+                KernelPlayerInput input = inputSampler.Sample();
                 if (host.TrySubmitLocalInput(input))
                 {
                     predictedIntent = input.action_intent;

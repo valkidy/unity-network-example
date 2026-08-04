@@ -4,7 +4,6 @@ using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.LowLevel;
-using KernelPlayerInput = NetworkExample.Kernel.PlayerInput;
 
 namespace NetworkExample.UnityDemo.Tests.EditMode
 {

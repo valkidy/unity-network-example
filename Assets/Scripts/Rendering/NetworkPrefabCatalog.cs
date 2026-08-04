@@ -14,7 +14,7 @@ namespace NetworkExample.UnityDemo.Rendering
             [InspectorName("Actor Entity Template ID")]
             [Tooltip(
                 "The current render ABI exposes an actor entity-template selection through " +
-                "RenderEntityState.actor_template_id.")]
+                "RenderEntityState.template_id.")]
             public uint actorTemplateId;
 
             public GameObject prefab;

@@ -103,13 +103,13 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
                     KernelEntityType.Actor,
                     new KernelVec3(),
                     KernelActorType.Player);
-                exactState.actor_template_id = 99;
+                exactState.template_id = 99;
                 RenderEntityState fallbackState = State(
                     11,
                     KernelEntityType.Actor,
                     new KernelVec3(),
                     KernelActorType.Player);
-                fallbackState.actor_template_id = 100;
+                fallbackState.template_id = 100;
 
                 GameObject exact = prefabRegistry.InstantiateVisual(
                     exactState,
@@ -161,7 +161,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
                     KernelEntityType.Actor,
                     new KernelVec3(),
                     KernelActorType.Player);
-                state.actor_template_id = 77;
+                state.template_id = 77;
                 GameObject first = prefabRegistry.InstantiateVisual(
                     state,
                     rootObject.transform);
@@ -347,7 +347,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
                 KernelEntityType.Actor,
                 new KernelVec3(),
                 KernelActorType.Player);
-            state.actor_template_id = 1;
+            state.template_id = 1;
             state.velocity = new KernelVec3(3f, 99f, 4f);
             state.aim_direction = new KernelVec3(0f, 0f, 2f);
             state.visual_flags = KernelConstants.VisualFlagGrounded |
@@ -379,7 +379,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
                 KernelEntityType.Actor,
                 new KernelVec3(1f, 0f, 2f),
                 KernelActorType.Player);
-            active.actor_template_id = 1;
+            active.template_id = 1;
             active.visual_flags = KernelConstants.VisualFlagMoving;
             applier.Apply(new[] { active }, 1);
 
@@ -480,7 +480,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         public void AcceptedLocalActionResult_ConfirmsWithoutReplayingPrediction()
         {
             GameObject visual = RegisterActorVisual(8, 102);
-            var intent = new ActionIntent
+            var intent = new KernelActionIntent
             {
                 action_instance_id = 91,
                 binding_id = KernelActionBinding.PrimaryFire,
@@ -506,7 +506,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         public void BeginPredictedLocalAction_DeduplicatesActionInstanceId()
         {
             GameObject visual = RegisterActorVisual(8, 102);
-            var intent = new ActionIntent
+            var intent = new KernelActionIntent
             {
                 action_instance_id = 91,
                 binding_id = KernelActionBinding.PrimaryFire,
@@ -547,7 +547,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
                 KernelEntityType.Actor,
                 new KernelVec3(),
                 KernelActorType.Player);
-            actor.actor_template_id = 1;
+            actor.template_id = 1;
             applier.Apply(new[] { actor }, 1);
 
             applier.Apply(System.Array.Empty<RenderEntityState>(), 0);
@@ -574,7 +574,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             var predicted = new RenderEntityState
             {
                 entity_type = KernelEntityType.Projectile,
-                projectile_template_id = 2,
+                template_id = 2,
                 action_instance_id = 42,
                 rotation = new KernelQuat(0f, 0f, 0f, 1f),
                 status = RenderEntityStatus.Predicted,

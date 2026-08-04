@@ -334,7 +334,7 @@ namespace NetworkExample.UnityDemo.Rendering
             if (templateId == 0 &&
                 state.entity_type == KernelEntityType.Projectile &&
                 projectileTemplates.TryGetValue(
-                    state.projectile_template_id,
+                    state.template_id,
                     out KernelProjectileTemplateDefinition projectileTemplate))
             {
                 templateId = projectileTemplate.mechanics.collider_template_id;
@@ -886,7 +886,7 @@ namespace NetworkExample.UnityDemo.Rendering
         {
             if (state.entity_type == KernelEntityType.Projectile &&
                 projectileTemplates.TryGetValue(
-                    state.projectile_template_id,
+                    state.template_id,
                     out KernelProjectileTemplateDefinition projectileTemplate))
             {
                 return (KernelProjectileType)projectileTemplate.mechanics.projectile_type;
