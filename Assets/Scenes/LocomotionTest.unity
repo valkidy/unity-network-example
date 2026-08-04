@@ -375,8 +375,9 @@ MonoBehaviour:
   contentNamespace: monster_observer
   presentationWorld: {fileID: 1806109249}
   observerCamera: {fileID: 266241824}
-  cameraOffset: {x: 18, y: 14, z: -24}
+  cameraOffset: {x: 42, y: 26, z: -58}
   createReferenceGround: 0
+  fallbackMaterial: {fileID: 2100000, guid: 2492ffe4c46bd4f928d4e8a7ba0ec79a, type: 2}
   markerDiameter: 1.2
   linkThickness: 0.7
   entityTemplateId: 20
@@ -399,7 +400,7 @@ MonoBehaviour:
   catalog:
     entries:
     - ActorTemplateId: 20
-      Prefab: {fileID: 0}
+      Prefab: {fileID: 5527427090754095325, guid: 8919db2d272914d298443dd55e63e14d, type: 3}
   presentationRoot: {fileID: 1762080503}
   createFallbackProxies: 0
 --- !u!4 &1806109250

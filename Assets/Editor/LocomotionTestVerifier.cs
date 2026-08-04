@@ -77,6 +77,20 @@ namespace NetworkExample.UnityDemo.EditorTools
                 }
             }
 
+            report.AppendLine("Actor rig prefabs");
+            CheckRigPrefab(
+                NetworkActorRigPrefabBuilder.MonsterPrefabPath,
+                KernelSkeletonBinding.DefaultSkeletonAssetId,
+                KernelSkeletonBinding.DefaultSkeletonContentHash,
+                KernelSkeletonBinding.DefaultBoneCount,
+                Check);
+            CheckRigPrefab(
+                NetworkActorRigPrefabBuilder.RockRobotPrefabPath,
+                NetworkActorRigPrefabBuilder.RockRobotSkeletonAssetId,
+                NetworkActorRigPrefabBuilder.RockRobotSkeletonContentHash,
+                18,
+                Check);
+
             report.AppendLine("LocomotionTest scene wiring");
             Scene scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
             Check(scene.IsValid(), "scene opened: " + ScenePath);
@@ -132,6 +146,70 @@ namespace NetworkExample.UnityDemo.EditorTools
             return failures;
         }
 
+        private static void CheckRigPrefab(
+            string prefabPath,
+            uint skeletonAssetId,
+            ulong skeletonContentHash,
+            int expectedBoneCount,
+            System.Action<bool, string> check)
+        {
+            string label = System.IO.Path.GetFileNameWithoutExtension(prefabPath);
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+            if (prefab == null)
+            {
+                check(false, label + ": prefab not found at " + prefabPath);
+                return;
+            }
+
+            var binding = prefab.GetComponentInChildren<KernelSkeletonBinding>(true);
+            if (binding == null)
+            {
+                check(false, label + ": KernelSkeletonBinding is missing");
+                return;
+            }
+            if (prefab.GetComponentInChildren<KernelSkeletonPoseApplicator>(true) == null)
+            {
+                check(false, label + ": KernelSkeletonPoseApplicator is missing");
+                return;
+            }
+
+            bool valid = binding.TryValidate(out string bindingError);
+            check(
+                valid &&
+                binding.SkeletonAssetId == skeletonAssetId &&
+                binding.SkeletonContentHash == skeletonContentHash &&
+                binding.Bones.Length == expectedBoneCount,
+                label + ": binds " + expectedBoneCount + " bones to skeleton asset " +
+                skeletonAssetId + (valid ? string.Empty : " -- " + bindingError));
+
+            // The skeleton glTF sources declare no materials, so an unpatched import
+            // yields a rig that is present in the hierarchy but never drawn.
+            int renderers = 0;
+            int unlitSlots = 0;
+            foreach (Renderer renderer in
+                     prefab.GetComponentsInChildren<Renderer>(true))
+            {
+                ++renderers;
+                Material[] materials = renderer.sharedMaterials;
+                if (materials == null || materials.Length == 0)
+                {
+                    ++unlitSlots;
+                    continue;
+                }
+                for (int index = 0; index < materials.Length; ++index)
+                {
+                    if (materials[index] == null)
+                    {
+                        ++unlitSlots;
+                    }
+                }
+            }
+            check(
+                renderers > 0 && unlitSlots == 0,
+                label + ": " + renderers + " renderer(s), " + unlitSlots +
+                " with no material");
+        }
+
         private static int Verify(
             int samples,
             int tickRate,
@@ -177,6 +255,8 @@ namespace NetworkExample.UnityDemo.EditorTools
 
             var host = new NetworkHost();
             GameObject rig = null;
+            GameObject catalogRig = null;
+            string catalogRigError = null;
             try
             {
                 bool started = host.Start(
@@ -199,6 +279,12 @@ namespace NetworkExample.UnityDemo.EditorTools
                 }
 
                 rig = NetworkMonsterSimRigFactory.Create("MonsterSimRig");
+                // The generated rig writes the native local transforms verbatim, so
+                // its FK is the native pose by construction. The catalog prefab is
+                // held against it bone for bone: an FBX whose hierarchy carries an
+                // extra node above SIM_Root, or whose bind pose disagrees with the
+                // ozz skeleton, shows up here as world-space drift.
+                catalogRig = LoadCatalogRig(out catalogRigError);
                 var binding = rig.GetComponent<KernelSkeletonBinding>();
                 var applicator = rig.GetComponent<KernelSkeletonPoseApplicator>();
                 string bindingError = "KernelSkeletonBinding is missing";
@@ -225,6 +311,7 @@ namespace NetworkExample.UnityDemo.EditorTools
                 uint boneCount = 0;
                 int poseApplied = 0;
                 int nonFinite = 0;
+                float worstCatalogDelta = 0f;
                 string firstApplyError = null;
                 int maxTicks = samples + 20 * tickRate;
 
@@ -311,6 +398,26 @@ namespace NetworkExample.UnityDemo.EditorTools
                         {
                             ++poseApplied;
                             posed = true;
+                            if (catalogRig != null)
+                            {
+                                rig.transform.SetPositionAndRotation(
+                                    new Vector3(
+                                        subject.position.x,
+                                        subject.position.y,
+                                        subject.position.z),
+                                    Quaternion.identity);
+                                catalogRig.transform.SetPositionAndRotation(
+                                    rig.transform.position,
+                                    rig.transform.rotation);
+                                if (catalogRig
+                                        .GetComponent<KernelSkeletonPoseApplicator>()
+                                        .TryApply(state, skeletonStates, out string _))
+                                {
+                                    worstCatalogDelta = Mathf.Max(
+                                        worstCatalogDelta,
+                                        WorstBoneDelta(rig, catalogRig));
+                                }
+                            }
                         }
                         else if (firstApplyError == null)
                         {
@@ -375,6 +482,17 @@ namespace NetworkExample.UnityDemo.EditorTools
                     Mathf.Abs(displacement.z) < 1f,
                     "stayed on the +X lane: |dZ| " + Mathf.Abs(displacement.z).ToString("F3"));
                 Check(RigIsPosed(rig), "generated rig has a non-identity pose");
+                Check(
+                    catalogRig != null,
+                    "catalog rig prefab loaded" +
+                    (catalogRig != null ? string.Empty : ": " + catalogRigError));
+                if (catalogRig != null)
+                {
+                    Check(
+                        worstCatalogDelta < 0.001f,
+                        "catalog prefab matches the native pose: worst bone delta " +
+                        worstCatalogDelta.ToString("F4") + " m");
+                }
             }
             finally
             {
@@ -383,10 +501,51 @@ namespace NetworkExample.UnityDemo.EditorTools
                 {
                     UnityEngine.Object.DestroyImmediate(rig);
                 }
+                if (catalogRig != null)
+                {
+                    UnityEngine.Object.DestroyImmediate(catalogRig);
+                }
             }
 
             Debug.Log(report.ToString());
             return failures;
+        }
+
+        private static GameObject LoadCatalogRig(out string error)
+        {
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(
+                NetworkActorRigPrefabBuilder.MonsterPrefabPath);
+            if (prefab == null)
+            {
+                error = "prefab not found: " +
+                    NetworkActorRigPrefabBuilder.MonsterPrefabPath;
+                return null;
+            }
+
+            GameObject instance = UnityEngine.Object.Instantiate(prefab);
+            if (instance.GetComponent<KernelSkeletonPoseApplicator>() == null)
+            {
+                error = "prefab has no KernelSkeletonPoseApplicator";
+                UnityEngine.Object.DestroyImmediate(instance);
+                return null;
+            }
+
+            error = null;
+            return instance;
+        }
+
+        private static float WorstBoneDelta(GameObject a, GameObject b)
+        {
+            Transform[] left = a.GetComponent<KernelSkeletonBinding>().Bones;
+            Transform[] right = b.GetComponent<KernelSkeletonBinding>().Bones;
+            float worst = 0f;
+            for (int index = 0; index < left.Length && index < right.Length; ++index)
+            {
+                worst = Mathf.Max(
+                    worst,
+                    Vector3.Distance(left[index].position, right[index].position));
+            }
+            return worst;
         }
 
         private static bool RigIsPosed(GameObject rig)

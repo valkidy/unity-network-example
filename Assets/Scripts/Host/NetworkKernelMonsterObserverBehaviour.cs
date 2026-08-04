@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using NetworkExample.Kernel;
 using NetworkExample.Kernel.Host;
 using NetworkExample.Kernel.Presentation;
@@ -65,6 +66,12 @@ namespace NetworkExample.UnityDemo.Host
         [SerializeField]
         private bool createReferenceGround;
 
+        [Tooltip(
+            "Material for runtime-generated proxies. Leave empty to fall back to " +
+            "Shader.Find, which is not build-safe.")]
+        [SerializeField]
+        private Material fallbackMaterial;
+
         [SerializeField]
         private float markerDiameter = NetworkMonsterSimRigFactory.DefaultMarkerDiameter;
 
@@ -98,6 +105,9 @@ namespace NetworkExample.UnityDemo.Host
         private KernelEvent[] events;
         private RenderEntityState[] renderStates;
         private SkeletonRenderStateBuffer skeletonStates;
+        private readonly List<KernelSkeletonPoseApplicator> presentationApplicators =
+            new List<KernelSkeletonPoseApplicator>();
+        private readonly HashSet<int> seededApplicators = new HashSet<int>();
         private NetworkLocomotionPathScript path;
         private Material rigMaterial;
 
@@ -261,11 +271,71 @@ namespace NetworkExample.UnityDemo.Host
                 TickKernel(fixedDelta);
             }
 
+            // Present in two passes against the raw, tick-aligned states the capture
+            // driver also uses.
+            //
+            // A prefab rig with PreservePrefabBindPose enabled needs the native bind
+            // pose to turn the kernel pose into a delta on top of the FBX bind pose,
+            // and KernelEntityPresentationWorld only supplies a Kernel to the
+            // applicator on its GetRenderStatesAtTime overload -- which renders on an
+            // interpolation clock instead. So the first pass spawns and moves the
+            // instances with no skeleton buffer, the bind pose is seeded into any new
+            // applicator, and the second pass stages the pose.
+            presentationWorld.Present(renderStates, renderStateCount, null);
+            SeedNativeBindPoses();
             presentationWorld.Present(
                 renderStates,
                 renderStateCount,
                 skeletonStates);
             UpdateObserverCamera();
+        }
+
+        /// <summary>
+        /// Copies Kernel_GetSkeletonBindPose into every newly spawned rig whose
+        /// binding applies the kernel pose as a delta on the prefab bind pose.
+        /// Rigs built with PreservePrefabBindPose disabled need nothing here.
+        /// </summary>
+        private void SeedNativeBindPoses()
+        {
+            presentationWorld.GetComponentsInChildren(true, presentationApplicators);
+            for (int index = 0; index < presentationApplicators.Count; ++index)
+            {
+                KernelSkeletonPoseApplicator applicator = presentationApplicators[index];
+                if (!seededApplicators.Add(applicator.GetInstanceID()))
+                {
+                    continue;
+                }
+
+                var binding = applicator.GetComponent<KernelSkeletonBinding>();
+                if (binding == null ||
+                    !binding.PreservePrefabBindPose ||
+                    binding.Bones == null ||
+                    binding.Bones.Length == 0)
+                {
+                    continue;
+                }
+
+                var bindPose = new KernelBoneLocalTransform[binding.Bones.Length];
+                uint returned = host.Kernel.GetSkeletonBindPose(
+                    binding.SkeletonAssetId,
+                    binding.SkeletonContentHash,
+                    bindPose);
+                if (returned != (uint)bindPose.Length)
+                {
+                    Debug.LogError(
+                        "LocomotionTest: skeleton asset " + binding.SkeletonAssetId +
+                        " returned " + returned + " bind-pose bones, expected " +
+                        bindPose.Length + ".",
+                        applicator);
+                    continue;
+                }
+                if (!applicator.TrySetNativeBindPose(bindPose, out string bindError))
+                {
+                    Debug.LogError(
+                        "LocomotionTest: native bind pose rejected: " + bindError,
+                        applicator);
+                }
+            }
         }
 
         private void TickKernel(float fixedDelta)
@@ -441,11 +511,22 @@ namespace NetworkExample.UnityDemo.Host
             {
                 Destroy(collider);
             }
+            // CreatePrimitive hands out the built-in Default-Material, which runs the
+            // Standard shader and draws magenta under URP.
+            Material material = EnsureRigMaterial();
+            if (material != null)
+            {
+                proxy.GetComponent<MeshRenderer>().sharedMaterial = material;
+            }
             return proxy;
         }
 
         private Material EnsureRigMaterial()
         {
+            if (fallbackMaterial != null)
+            {
+                return fallbackMaterial;
+            }
             if (rigMaterial != null)
             {
                 return rigMaterial;
@@ -514,6 +595,7 @@ namespace NetworkExample.UnityDemo.Host
             inputSeq = ScriptedInputSeqBase;
             tickAccumulator = 0.0;
             renderStateCount = 0;
+            seededApplicators.Clear();
             recordedSamples = 0;
             hasFirstSample = false;
             pathLength = 0.0;
