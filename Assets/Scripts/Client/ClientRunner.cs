@@ -44,9 +44,18 @@ namespace NetworkExample.UnityDemo.Client
             "server simulation rate so high render rates do not oversimulate prediction.")]
         private float inputSubmissionRateHz = 30f;
 
+        [SerializeField]
+        [Tooltip(
+            "Logs where each rendered skeleton's pose came from, once a second. " +
+            "PROC means a solve produced it; BIND means the kernel had no locomotion " +
+            "state for that entity and fell back to the rig's rest pose.")]
+        private bool logSkeletonPoseProvenance = true;
+
         private NetworkClient client;
         private KernelEvent[] events;
         private RenderEntityState[] renderStates;
+        private SkeletonRenderStateBuffer skeletonPoseStates;
+        private float nextSkeletonPoseLogTime;
         private KernelEntityLifecycleEvent[] lifecycleEvents;
         private KernelLocalActionResult[] localActionResults;
         private KernelRemoteActionPresentationEvent[] remoteActionEvents;
@@ -181,6 +190,17 @@ namespace NetworkExample.UnityDemo.Client
             ulong clientRenderTimeUs = presentationClock.Advance(
                 Time.unscaledDeltaTime);
             uint renderCount = client.GetRenderStatesAtTime(clientRenderTimeUs, renderStates);
+            // Sampled at the SAME instant as the roots above. The bone locals
+            // describe the rig relative to the root of the moment they were
+            // solved for, so composing them onto a root from another instant
+            // translates every leg by the difference.
+            if (skeletonPoseStates == null)
+            {
+                skeletonPoseStates = new SkeletonRenderStateBuffer(8, 512);
+            }
+            client.Kernel.GetSkeletonRenderStatesAtTime(
+                clientRenderTimeUs,
+                skeletonPoseStates);
             WarnIfBufferFilled(renderCount, renderStates.Length, "render state");
             int safeRenderCount = renderCount > (uint)renderStates.Length
                 ? renderStates.Length
@@ -188,6 +208,7 @@ namespace NetworkExample.UnityDemo.Client
             LogDiagnosticRenderSummary(renderCount, safeRenderCount);
             WarnIfReadyWithoutRenderStates(safeRenderCount);
             renderStateApplier.Apply(renderStates, safeRenderCount);
+            renderStateApplier.ApplySkeletonPoses(client.Kernel, skeletonPoseStates);
             UpdateCameraTarget(client.LocalPlayerNetId);
             renderStateApplier.ApplyKernelEvents(
                 events,
@@ -207,6 +228,8 @@ namespace NetworkExample.UnityDemo.Client
             {
                 debugView.Capture(client.Kernel, renderStates, safeRenderCount);
             }
+
+            LogSkeletonPoseProvenance();
 
             if (!readinessLogged && client.IsReady)
             {
@@ -495,6 +518,69 @@ namespace NetworkExample.UnityDemo.Client
             }
 
             return message;
+        }
+
+        /// <summary>
+        /// Reports where each rendered skeleton's pose came from. A client does not
+        /// simulate replicated actors, so their legs can only come from the follower path
+        /// replaying steps the server sent; when that produces nothing the kernel falls
+        /// back to the rig's bind pose, and the difference is invisible on screen unless
+        /// you know the rig's rest shape. This makes it readable instead.
+        ///
+        /// Logged once a second rather than deduplicated: poseTick advancing in step with
+        /// the server is itself the evidence that the pose history is being sampled at
+        /// render time, and a summary that never changes would hide exactly that.
+        /// </summary>
+        private void LogSkeletonPoseProvenance()
+        {
+            if (!logSkeletonPoseProvenance || client == null ||
+                Time.realtimeSinceStartup < nextSkeletonPoseLogTime)
+            {
+                return;
+            }
+            nextSkeletonPoseLogTime = Time.realtimeSinceStartup + 1f;
+
+            if (skeletonPoseStates == null)
+            {
+                return;
+            }
+
+            int count = skeletonPoseStates.StateCount >
+                    (uint)skeletonPoseStates.States.Length
+                ? skeletonPoseStates.States.Length
+                : (int)skeletonPoseStates.StateCount;
+
+            var summary = new System.Text.StringBuilder(128);
+            summary.Append("skeletons=").Append(count)
+                .Append(" status=").Append(skeletonPoseStates.Result.status);
+            if (skeletonPoseStates.Result.status !=
+                KernelConstants.SkeletonRenderStatusSuccess)
+            {
+                // The kernel drops the whole result when the buffer is short, which
+                // freezes every rig at its last applied pose.
+                summary.Append(" (needs states=")
+                    .Append(skeletonPoseStates.Result.required_state_count)
+                    .Append(" bones=")
+                    .Append(skeletonPoseStates.Result.required_bone_transform_count)
+                    .Append(')');
+            }
+            for (int index = 0; index < count; ++index)
+            {
+                KernelSkeletonRenderState pose = skeletonPoseStates.States[index];
+                string kind =
+                    (pose.pose_flags & KernelConstants.SkeletonPoseFlagProcedural) != 0
+                        ? "PROC"
+                        : (pose.pose_flags & KernelConstants.SkeletonPoseFlagBindPose) != 0
+                            ? "BIND"
+                            : "none";
+                summary.Append("\n  net_id=").Append(pose.entity_net_id)
+                    .Append(' ').Append(kind)
+                    .Append(" bones=").Append(pose.bone_count)
+                    .Append(" poseTick=").Append(pose.pose_tick)
+                    .Append(" poseTimeUs=").Append(pose.pose_time_us);
+            }
+
+            Debug.Log("[SkeletonPose] " + summary);
         }
 
         private void LogDiagnosticRenderSummary(uint renderCount, int safeRenderCount)

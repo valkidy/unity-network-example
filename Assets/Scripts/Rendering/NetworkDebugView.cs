@@ -86,6 +86,20 @@ namespace NetworkExample.UnityDemo.Rendering
         private KernelNetworkStats networkStats;
         private bool hasNetworkStats;
 
+        // Skeleton pose read-back. This is the one signal that says whether a pose came
+        // from a solve at all: an entity this kernel does not simulate has no locomotion
+        // state of its own, so unless the follower path reconstructed one from replicated
+        // steps the kernel falls back to the rig's bind pose and the flag reads BIND.
+        //
+        // Sized well above 41 bones x the entities in view. The kernel drops the WHOLE
+        // result when the buffer is short (status reports INSUFFICIENT_CAPACITY), and a
+        // dropped result leaves every rig frozen at its last applied pose -- which is easy
+        // to mistake for a locomotion bug.
+        private readonly SkeletonRenderStateBuffer skeletonStates =
+            new SkeletonRenderStateBuffer(8, 512);
+        private int skeletonStateCount;
+        private bool hasSkeletonStates;
+
         // Kernel catalog read-back (Request 4): collider templates by id and entity-type
         // bindings. The catalog is static after load, so these are built once and reused.
         private readonly Dictionary<uint, KernelColliderTemplateDefinition> colliderTemplates =
@@ -199,6 +213,13 @@ namespace NetworkExample.UnityDemo.Rendering
             }
 
             hasNetworkStats = kernel.TryGetNetworkStats(out networkStats);
+
+            kernel.GetSkeletonRenderStates(skeletonStates);
+            hasSkeletonStates = true;
+            skeletonStateCount =
+                skeletonStates.StateCount > (uint)skeletonStates.States.Length
+                    ? skeletonStates.States.Length
+                    : (int)skeletonStates.StateCount;
         }
 
         private void EnsureBuffers()
@@ -534,9 +555,61 @@ namespace NetworkExample.UnityDemo.Rendering
                     .Append(visionStateCount);
             }
 
-            const float width = 340f;
-            const float height = 132f;
+            // Per-skeleton pose provenance. PROC means a solve produced this pose; BIND
+            // means the kernel had no locomotion state for the entity and fell back to the
+            // rig's rest pose. poseTick separates the two solve paths further: a tick that
+            // tracks the server's came from the pose history sampled at render time, while
+            // this kernel's own free-running tick means the history was not sampled.
+            if (hasSkeletonStates)
+            {
+                statsBuilder
+                    .Append("\nSkel ")
+                    .Append(skeletonStateCount)
+                    .Append(" status:")
+                    .Append(skeletonStates.Result.status);
+                if (skeletonStates.Result.status !=
+                    KernelConstants.SkeletonRenderStatusSuccess)
+                {
+                    statsBuilder
+                        .Append(" NEED st:")
+                        .Append(skeletonStates.Result.required_state_count)
+                        .Append(" b:")
+                        .Append(skeletonStates.Result.required_bone_transform_count);
+                }
+                for (int index = 0; index < skeletonStateCount; ++index)
+                {
+                    KernelSkeletonRenderState pose = skeletonStates.States[index];
+                    string kind =
+                        (pose.pose_flags & KernelConstants.SkeletonPoseFlagProcedural) != 0
+                            ? "PROC"
+                            : (pose.pose_flags & KernelConstants.SkeletonPoseFlagBindPose) != 0
+                                ? "BIND"
+                                : "none";
+                    statsBuilder
+                        .Append("\n  #")
+                        .Append(pose.entity_net_id)
+                        .Append(' ')
+                        .Append(kind)
+                        .Append(" bones:")
+                        .Append(pose.bone_count)
+                        .Append(" poseTick:")
+                        .Append(pose.pose_tick);
+                }
+            }
+
+            // Sized from the text rather than fixed, so a line added here cannot silently
+            // clip the way the old 340x132 panel clipped the collider line.
+            int lineCount = 1;
+            for (int index = 0; index < statsBuilder.Length; ++index)
+            {
+                if (statsBuilder[index] == '\n')
+                {
+                    ++lineCount;
+                }
+            }
+            const float width = 460f;
             const float margin = 10f;
+            float height = 14f + lineCount * 15f;
             Rect rect = new Rect(Screen.width - width - margin, margin, width, height);
             GUI.Label(rect, statsBuilder.ToString(), statsStyle);
         }

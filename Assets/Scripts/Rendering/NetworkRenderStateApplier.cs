@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using NetworkExample.Kernel;
+using NetworkExample.Kernel.Presentation;
 using UnityEngine;
 
 namespace NetworkExample.UnityDemo.Rendering
@@ -22,6 +23,11 @@ namespace NetworkExample.UnityDemo.Rendering
         private readonly Dictionary<ulong, KnownEntity> knownEntities =
             new Dictionary<ulong, KnownEntity>();
         private readonly List<ulong> entityKeysToRemove = new List<ulong>();
+        // Cached per entity so the rig is not searched for its applicator every
+        // frame, and so a rejected pose is reported once instead of per frame.
+        private readonly Dictionary<uint, KernelSkeletonPoseApplicator> skeletonApplicators =
+            new Dictionary<uint, KernelSkeletonPoseApplicator>();
+        private readonly HashSet<uint> skeletonApplyErrors = new HashSet<uint>();
         private readonly HashSet<RemoteCommitKey> remoteCommitDedup =
             new HashSet<RemoteCommitKey>();
         private readonly Queue<RemoteCommitKey> remoteCommitOrder =
@@ -111,8 +117,71 @@ namespace NetworkExample.UnityDemo.Rendering
             entityKeysToRemove.Clear();
         }
 
+        /// <summary>
+        /// Drives the bone poses of entities that carry a skeleton. Without this
+        /// a replicated rig keeps whatever pose its prefab was instantiated
+        /// with -- feet neither moving nor touching the ground -- no matter what
+        /// the kernel solves, and nothing reports it: the render state still
+        /// says PROCEDURAL because that flag describes where the pose came from,
+        /// not whether anything consumed it.
+        ///
+        /// <paramref name="buffer"/> MUST have been filled at the same render
+        /// time as the root states passed to <see cref="Apply"/>. Sampling the
+        /// two at different instants puts the pose of one moment onto the root
+        /// of another, and every planted foot slides by the difference.
+        /// </summary>
+        public void ApplySkeletonPoses(
+            NetworkExample.Kernel.Kernel kernel,
+            SkeletonRenderStateBuffer buffer)
+        {
+            if (buffer == null || buffer.States == null || entityRegistry == null)
+            {
+                return;
+            }
+
+            int count = buffer.StateCount > (uint)buffer.States.Length
+                ? buffer.States.Length
+                : (int)buffer.StateCount;
+            for (int index = 0; index < count; ++index)
+            {
+                KernelSkeletonRenderState state = buffer.States[index];
+                if (!entityRegistry.TryGetByNetId(state.entity_net_id, out GameObject visual) ||
+                    visual == null)
+                {
+                    continue;
+                }
+
+                if (!skeletonApplicators.TryGetValue(
+                        state.entity_net_id,
+                        out KernelSkeletonPoseApplicator applicator) ||
+                    applicator == null)
+                {
+                    applicator = visual.GetComponentInChildren<KernelSkeletonPoseApplicator>(true);
+                    if (applicator == null)
+                    {
+                        continue;
+                    }
+
+                    skeletonApplicators[state.entity_net_id] = applicator;
+                }
+
+                if (!applicator.TryApply(kernel, state, buffer, out string error) &&
+                    skeletonApplyErrors.Add(state.entity_net_id))
+                {
+                    // Once per entity: a rejected pose leaves the rig at its
+                    // last applied transforms, which looks like a locomotion
+                    // fault rather than a rejection.
+                    Debug.LogWarning(
+                        "Skeleton pose rejected for net_id=" + state.entity_net_id +
+                        ": " + error);
+                }
+            }
+        }
+
         public void Clear()
         {
+            skeletonApplicators.Clear();
+            skeletonApplyErrors.Clear();
             knownEntities.Clear();
             visibleThisFrame.Clear();
             remoteCommitDedup.Clear();
