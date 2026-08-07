@@ -17,6 +17,8 @@ MonoBehaviour:
     prefab: {fileID: 8954853435508123706, guid: 7864c95d8ab694e728ca579190efa821, type: 3}
   - actorTemplateId: 2
     prefab: {fileID: 1856945008544614001, guid: fc47cec2e61ab4c74ba57d58878ce6ac, type: 3}
+  - actorTemplateId: 20
+    prefab: {fileID: 5527427090754095325, guid: 8919db2d272914d298443dd55e63e14d, type: 3}
   projectilePrefabs:
   - projectileTemplateId: 2
     prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}

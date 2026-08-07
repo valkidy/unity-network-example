@@ -264,6 +264,11 @@ namespace NetworkExample.UnityDemo.CameraSystem
                 .With("Down", "<Keyboard>/downArrow")
                 .With("Left", "<Keyboard>/leftArrow")
                 .With("Right", "<Keyboard>/rightArrow");
+            // Q/E yaw the camera without leaving WASD. Yaw only, so there is no
+            // pitch binding on this composite.
+            orbitAction.AddCompositeBinding("2DVector")
+                .With("Left", "<Keyboard>/q")
+                .With("Right", "<Keyboard>/e");
             orbitAction.AddBinding("<Gamepad>/rightStick");
         }
     }

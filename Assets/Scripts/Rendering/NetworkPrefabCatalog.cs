@@ -13,8 +13,8 @@ namespace NetworkExample.UnityDemo.Rendering
         {
             [InspectorName("Actor Entity Template ID")]
             [Tooltip(
-                "For actor render states, RenderEntityState.template_id contains " +
-                "the actor template ID.")]
+                "The current render ABI exposes an actor entity-template selection through " +
+                "RenderEntityState.template_id.")]
             public uint actorTemplateId;
 
             public GameObject prefab;
