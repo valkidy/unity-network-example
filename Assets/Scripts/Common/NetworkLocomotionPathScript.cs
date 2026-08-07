@@ -36,6 +36,7 @@ namespace NetworkExample.UnityDemo.Common
         private float tickRateHz = 30f;
         private string description = string.Empty;
         private Vector2 heading = new Vector2(1f, 0f);
+        private Vector2 initialHeading = new Vector2(1f, 0f);
         private Vector3 stepAnchor;
         private int stepIndex;
         private int waitTicksLeft;
@@ -44,6 +45,27 @@ namespace NetworkExample.UnityDemo.Common
         public bool Finished => stepIndex >= steps.Count;
         public string Description => description;
         public IReadOnlyList<Step> Steps => steps;
+
+        /// <summary>
+        /// True when the path can never finish, because a step walks forever --
+        /// which is what a bare axis alias such as "+X" expands to. A driver that
+        /// replays the path on <see cref="Finished"/> never gets its turn.
+        /// </summary>
+        public bool IsUnbounded
+        {
+            get
+            {
+                for (int index = 0; index < steps.Count; ++index)
+                {
+                    if (steps[index].Kind == StepKind.Forward &&
+                        float.IsInfinity(steps[index].Value))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }
 
         public static bool TryParse(
             string text,
@@ -82,6 +104,7 @@ namespace NetworkExample.UnityDemo.Common
                     Value = float.PositiveInfinity,
                 });
                 parsed.heading = axisHeading;
+                parsed.initialHeading = axisHeading;
                 parsed.description = trimmed;
                 script = parsed;
                 return true;
@@ -171,6 +194,27 @@ namespace NetworkExample.UnityDemo.Common
             parsed.description = Describe(parsed.steps);
             script = parsed;
             return true;
+        }
+
+        /// <summary>
+        /// Rewinds to the first step, so a finite path can be walked over and
+        /// over as a patrol circuit.
+        ///
+        /// The native harness runs a path once and stops, so this is deliberately
+        /// a driver-side control rather than a new keyword: the <c>--path</c> text
+        /// stays byte-for-byte comparable with a
+        /// <c>//engine/src/tests/kernel_tests:locomotion_capture</c> run.
+        ///
+        /// Forward steps re-anchor on the position they are entered at, so a
+        /// replayed circuit is walked relative to wherever the subject ended up,
+        /// not to the original spawn.
+        /// </summary>
+        public void Restart()
+        {
+            stepIndex = 0;
+            stepEntered = false;
+            waitTicksLeft = 0;
+            heading = initialHeading;
         }
 
         /// <summary>

@@ -14,7 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: NetworkExample.UnityDemo.Runtime::NetworkExample.UnityDemo.Rendering.NetworkPrefabCatalog
   actorPrefabs:
   - actorTemplateId: 1
-    prefab: {fileID: 4385249257082475097, guid: 2869f6d5674cd4027aafbcdd722dd7dd, type: 3}
+    prefab: {fileID: 8954853435508123706, guid: 7864c95d8ab694e728ca579190efa821, type: 3}
   - actorTemplateId: 2
     prefab: {fileID: 1856945008544614001, guid: fc47cec2e61ab4c74ba57d58878ce6ac, type: 3}
   - actorTemplateId: 20

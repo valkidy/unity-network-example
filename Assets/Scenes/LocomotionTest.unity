@@ -383,7 +383,9 @@ MonoBehaviour:
   manualControl: 0
   entityTemplateId: 20
   spawnPosition: {x: 0, y: 10, z: 0}
-  pathScript: +X
+  pathScript: '+X; forward 30m; -X; forward 60m; +X; forward 30m'
+  loopPath: 1
+  patrolHalfExtents: {x: 35, y: 35}
   tickRate: 30
   summarySampleCount: 300
 --- !u!114 &1806109249

@@ -39,6 +39,25 @@ namespace NetworkExample.UnityDemo.Host
         /// </summary>
         private const uint ScriptedInputSeqBase = 1000000u;
 
+        /// <summary>
+        /// The default scripted run: walk +X to x=30, back to x=-30, then home to
+        /// the spawn, which makes the path a closed circuit that
+        /// <see cref="loopPath"/> can replay indefinitely.
+        ///
+        /// 30 m is chosen against the terrain under the scene,
+        /// Resources/Terrains/undulating_centered, which spans about +/-49 m on
+        /// both axes. The subject walks at 2.5 m/s and yaws at 45 deg/s
+        /// (monster_sim_actor.yaml), so a reversal is a half circle of radius
+        /// 2.5 / (45 deg/s) = 3.2 m: it overshoots each turn point by about that
+        /// much along the travel axis and swaps between two lanes 6.4 m apart in
+        /// Z. Turning at 30 m therefore keeps the whole circuit inside roughly
+        /// +/-34 m, well short of the terrain edge -- and the
+        /// <see cref="patrolHalfExtents"/> guard catches whatever drift the
+        /// turns leave behind over a long run.
+        /// </summary>
+        private const string PatrolPathScript =
+            "+X; forward 30m; -X; forward 60m; +X; forward 30m";
+
         [Header("Host")]
         [SerializeField]
         private ushort port = 7777;
@@ -100,7 +119,23 @@ namespace NetworkExample.UnityDemo.Host
             "(+X, -X, +Z, -Z), 'forward <n>m', 'turn <n>' and 'wait <n>s', " +
             "separated by ';'.")]
         [SerializeField]
-        private string pathScript = "+X";
+        private string pathScript = PatrolPathScript;
+
+        [Tooltip(
+            "Replay the path from its first step once it finishes, so a closed " +
+            "patrol circuit walks forever. Leave off for a one-shot run that " +
+            "matches the native capture harness, which stops at the last step.")]
+        [SerializeField]
+        private bool loopPath = true;
+
+        [Tooltip(
+            "Half-extents of the walkable area in the XZ plane, centred on the " +
+            "world origin like Resources/Terrains/undulating_centered (which is " +
+            "about 49 m x 49 m per side). The scripted move input is mirrored " +
+            "back inward outside this box, so an overshooting path cannot walk " +
+            "the subject off the terrain. Zero disables the guard.")]
+        [SerializeField]
+        private Vector2 patrolHalfExtents = new Vector2(35f, 35f);
 
         [SerializeField]
         private int tickRate = 30;
@@ -129,6 +164,8 @@ namespace NetworkExample.UnityDemo.Host
         private Vector3 subjectPosition;
         private double tickAccumulator;
         private uint renderStateCount;
+
+        private bool patrolBoundsWarned;
 
         private int recordedSamples;
         private bool hasFirstSample;
@@ -231,7 +268,17 @@ namespace NetworkExample.UnityDemo.Host
                 "LocomotionTest catalog loaded: " +
                 NetworkGameplayCatalogBundle.FormatLoadResult(loadResult) +
                 " entry=" + gameplayCatalogEntryPath);
-            Debug.Log("LocomotionTest path: " + path.Description);
+            Debug.Log(
+                "LocomotionTest path: " + path.Description +
+                (loopPath ? " (looping)" : string.Empty));
+            if (loopPath && path.IsUnbounded)
+            {
+                Debug.LogWarning(
+                    "LocomotionTest path '" + pathScript + "' walks forever, so it " +
+                    "never finishes and never loops. The subject will be turned " +
+                    "back at the patrol bounds instead of patrolling.",
+                    this);
+            }
 
             presentationWorld.FallbackFactory = CreatePresentationInstance;
             if (manualControl)
@@ -381,7 +428,12 @@ namespace NetworkExample.UnityDemo.Host
 
             KeepSubjectRelevant();
 
-            Vector2 move = path.MoveInput(subjectPosition);
+            if (loopPath && path.Finished)
+            {
+                path.Restart();
+            }
+
+            Vector2 move = ClampToPatrolArea(path.MoveInput(subjectPosition));
             host.Kernel.ServerSubmitEntityInput(
                 subjectNetId,
                 new KernelPlayerInput
@@ -403,11 +455,13 @@ namespace NetworkExample.UnityDemo.Host
         /// kDefaultEntityRelevanceDistanceMeters (40 m, a hard-coded constant in
         /// engine/src/kernel/src/kernel.cc with no public config knob) from the
         /// local player, and the listen-server's own client runs the same filter as
-        /// a remote peer. On the scripted "+X" path the subject crosses 40 m at
-        /// about x=39.7, the kernel sends KernelDespawnReason_OutOfRange, the entity
-        /// leaves Kernel_GetRenderStates and KernelEntityPresentationWorld destroys
-        /// the instance -- the subject vanishes roughly 10 m before the terrain
-        /// edge at x=49.45, while still alive and walking on the server.
+        /// a remote peer. Left unpinned, the player stays at the origin and the
+        /// subject crosses 40 m from it at about x=39.7: the kernel sends
+        /// KernelDespawnReason_OutOfRange, the entity leaves Kernel_GetRenderStates
+        /// and KernelEntityPresentationWorld destroys the instance -- the subject
+        /// vanishes while still alive and walking on the server. The patrol turns
+        /// around at 30 m, inside that radius, but a longer leg or a re-centred
+        /// patrol box would hit it again, so the pin stays.
         ///
         /// Under manual control the player is driven by input instead, so following
         /// the subject is the operator's job.
@@ -426,6 +480,53 @@ namespace NetworkExample.UnityDemo.Host
                     subjectPosition.y,
                     subjectPosition.z),
                 new KernelQuat(0f, 0f, 0f, 1f));
+        }
+
+        /// <summary>
+        /// Mirrors any move component that points further out of the patrol box,
+        /// so the subject cannot be walked past the terrain edge and dropped into
+        /// the void.
+        ///
+        /// This is a backstop, not the steering: the path script is authored to
+        /// turn around well inside the box (see <see cref="PatrolPathScript"/>).
+        /// It exists because a turn is a yaw-rate-limited arc, so a scripted
+        /// reversal always overshoots its turn point, and because Forward steps
+        /// measure distance from wherever the previous step happened to end --
+        /// both leave a little residue per lap that a looping path accumulates.
+        /// Mirroring rather than zeroing keeps the input at full magnitude, which
+        /// keeps the gait walking instead of stalling at the boundary.
+        /// </summary>
+        private Vector2 ClampToPatrolArea(Vector2 move)
+        {
+            bool clamped = false;
+            if (patrolHalfExtents.x > 0f &&
+                Mathf.Abs(subjectPosition.x) > patrolHalfExtents.x &&
+                move.x * subjectPosition.x > 0f)
+            {
+                move.x = -move.x;
+                clamped = true;
+            }
+            if (patrolHalfExtents.y > 0f &&
+                Mathf.Abs(subjectPosition.z) > patrolHalfExtents.y &&
+                move.y * subjectPosition.z > 0f)
+            {
+                move.y = -move.y;
+                clamped = true;
+            }
+
+            if (clamped && !patrolBoundsWarned)
+            {
+                patrolBoundsWarned = true;
+                Debug.LogWarning(
+                    "LocomotionTest: the subject reached the patrol bounds (+/-" +
+                    patrolHalfExtents.x.ToString("F1") + " m X, +/-" +
+                    patrolHalfExtents.y.ToString("F1") +
+                    " m Z) at " + subjectPosition.ToString("F2") +
+                    " and was turned back inward. The path '" + pathScript +
+                    "' is walking outside the box it was authored for.",
+                    this);
+            }
+            return move;
         }
 
         private bool TrySpawnSubject()
@@ -726,6 +827,7 @@ namespace NetworkExample.UnityDemo.Host
             tickAccumulator = 0.0;
             renderStateCount = 0;
             seededApplicators.Clear();
+            patrolBoundsWarned = false;
             recordedSamples = 0;
             hasFirstSample = false;
             pathLength = 0.0;

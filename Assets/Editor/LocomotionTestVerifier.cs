@@ -142,8 +142,105 @@ namespace NetworkExample.UnityDemo.EditorTools
                 serialized.FindProperty("entityTemplateId").uintValue == 20u,
                 "capture subject uses entity template 20");
 
+            // A scene path that fails to parse only shows up as an error at play
+            // time, and a looping path that never finishes silently degrades into
+            // a one-way walk into the patrol bounds.
+            string authoredPath = serialized.FindProperty("pathScript").stringValue;
+            bool loops = serialized.FindProperty("loopPath").boolValue;
+            bool pathParsed = NetworkLocomotionPathScript.TryParse(
+                authoredPath,
+                Mathf.Max(1, serialized.FindProperty("tickRate").intValue),
+                out NetworkLocomotionPathScript scenePath,
+                out string scenePathError);
+            Check(
+                pathParsed,
+                "scene path parses: '" + authoredPath + "'" +
+                (pathParsed ? string.Empty : " -- " + scenePathError));
+            if (pathParsed)
+            {
+                Check(
+                    !loops || !scenePath.IsUnbounded,
+                    "looping scene path finishes: " + scenePath.Description);
+            }
+            // An unbounded path is a one-way capture run by construction -- it
+            // leaves any box eventually and leans on the runtime guard -- so only
+            // a path that turns around on its own is held to the bounds.
+            if (pathParsed && !scenePath.IsUnbounded)
+            {
+                Check(
+                    StaysInsidePatrolBounds(
+                        scenePath,
+                        serialized.FindProperty("spawnPosition").vector3Value,
+                        serialized.FindProperty("patrolHalfExtents").vector2Value,
+                        loops,
+                        out float worstOvershoot),
+                    "scene path stays inside the patrol bounds: worst excursion " +
+                    worstOvershoot.ToString("F2") + " m past the box");
+            }
+
             Debug.Log(report.ToString());
             return failures;
+        }
+
+        /// <summary>
+        /// Walks the authored path on paper -- instant turns, monster_sim_actor's
+        /// 2.5 m/s -- and reports how far outside the patrol box it asks the
+        /// subject to go. A looping path is replayed so the per-lap residue from
+        /// Forward steps re-anchoring shows up.
+        ///
+        /// The real body yaws at 45 deg/s, so it swings about 3.2 m wider than
+        /// this at every reversal; the box is authored with that much slack, and
+        /// the runtime guard turns the subject back if it is not enough.
+        /// </summary>
+        private static bool StaysInsidePatrolBounds(
+            NetworkLocomotionPathScript path,
+            Vector3 spawn,
+            Vector2 halfExtents,
+            bool loops,
+            out float worstOvershoot)
+        {
+            const float MoveSpeedMetersPerSecond = 2.5f;
+            const int TickRateHz = 30;
+            const int Laps = 5;
+
+            worstOvershoot = 0f;
+            if (halfExtents.x <= 0f && halfExtents.y <= 0f)
+            {
+                return true;
+            }
+
+            float step = MoveSpeedMetersPerSecond / TickRateHz;
+            var position = new Vector3(spawn.x, 0f, spawn.z);
+            int maxTicks = 60 * TickRateHz * (loops ? Laps : 1);
+            for (int tick = 0; tick < maxTicks; ++tick)
+            {
+                if (path.Finished)
+                {
+                    if (!loops)
+                    {
+                        break;
+                    }
+                    path.Restart();
+                }
+
+                Vector2 move = path.MoveInput(position);
+                position += new Vector3(move.x, 0f, move.y) * step;
+                if (halfExtents.x > 0f)
+                {
+                    worstOvershoot = Mathf.Max(
+                        worstOvershoot,
+                        Mathf.Abs(position.x) - halfExtents.x);
+                }
+                if (halfExtents.y > 0f)
+                {
+                    worstOvershoot = Mathf.Max(
+                        worstOvershoot,
+                        Mathf.Abs(position.z) - halfExtents.y);
+                }
+            }
+
+            path.Restart();
+            return worstOvershoot <= 0f;
         }
 
         private static void CheckRigPrefab(

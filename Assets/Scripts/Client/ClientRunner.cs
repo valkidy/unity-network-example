@@ -46,9 +46,16 @@ namespace NetworkExample.UnityDemo.Client
 
         [SerializeField]
         [Tooltip(
-            "Logs where each rendered skeleton's pose came from, once a second. " +
-            "PROC means a solve produced it; BIND means the kernel had no locomotion " +
-            "state for that entity and fell back to the rig's rest pose.")]
+            "Logs how much of each leg's bone length the hip-to-foot span uses, " +
+            "once a second. A two-bone chain at 100% is straight: it has no bend " +
+            "plane left, so the pole vector alone decides where the limb points " +
+            "and the foot can no longer reach its target.")]
+        private bool logLegReach = true;
+
+        [SerializeField]
+        [Tooltip(
+            "Logs where each rendered skeleton's pose came from. Its call site is " +
+            "commented out; re-enable it there if pose provenance is in question again.")]
         private bool logSkeletonPoseProvenance = true;
 
         private NetworkClient client;
@@ -56,6 +63,7 @@ namespace NetworkExample.UnityDemo.Client
         private RenderEntityState[] renderStates;
         private SkeletonRenderStateBuffer skeletonPoseStates;
         private float nextSkeletonPoseLogTime;
+        private float nextLegReachLogTime;
         private KernelEntityLifecycleEvent[] lifecycleEvents;
         private KernelLocalActionResult[] localActionResults;
         private KernelRemoteActionPresentationEvent[] remoteActionEvents;
@@ -229,7 +237,12 @@ namespace NetworkExample.UnityDemo.Client
                 debugView.Capture(client.Kernel, renderStates, safeRenderCount);
             }
 
-            LogSkeletonPoseProvenance();
+            // Pose provenance is settled -- every rendered skeleton reports
+            // PROCEDURAL with a server-tracked poseTick -- so its once-a-second
+            // line is commented out rather than deleted, in case a later change
+            // needs it again.
+            // LogSkeletonPoseProvenance();
+            LogLegReach();
 
             if (!readinessLogged && client.IsReady)
             {
@@ -531,6 +544,117 @@ namespace NetworkExample.UnityDemo.Client
         /// the server is itself the evidence that the pose history is being sampled at
         /// render time, and a summary that never changes would hide exactly that.
         /// </summary>
+        /// <summary>
+        /// Reports each leg's extension: the hip-to-foot span as a fraction of
+        /// the leg's own bone length. The denominator is the bone lengths, which
+        /// only rotations change, so this is exact rather than an estimate.
+        ///
+        /// It matters because this rig rests at about 98% extension with only
+        /// 18-25 degrees of knee bend, leaving a foot roughly 0.24-0.52 m of
+        /// vertical travel before the leg locks straight. At 100% a two-bone
+        /// chain has no bend plane left: the IK target is clamped to the reach
+        /// limit so the foot stops tracking the ground, and the limb swings
+        /// about the hip-foot axis instead of bending.
+        /// </summary>
+        private void LogLegReach()
+        {
+            if (!logLegReach || client == null ||
+                Time.realtimeSinceStartup < nextLegReachLogTime)
+            {
+                return;
+            }
+            nextLegReachLogTime = Time.realtimeSinceStartup + 1f;
+
+            if (skeletonPoseStates == null || entityRegistry == null)
+            {
+                return;
+            }
+
+            int count = skeletonPoseStates.StateCount >
+                    (uint)skeletonPoseStates.States.Length
+                ? skeletonPoseStates.States.Length
+                : (int)skeletonPoseStates.StateCount;
+            for (int index = 0; index < count; ++index)
+            {
+                uint netId = skeletonPoseStates.States[index].entity_net_id;
+                if (!entityRegistry.TryGetByNetId(netId, out GameObject visual) ||
+                    visual == null)
+                {
+                    continue;
+                }
+
+                var binding = visual.GetComponentInChildren<KernelSkeletonBinding>(true);
+                if (binding == null || binding.Bones == null)
+                {
+                    continue;
+                }
+
+                float rootY = visual.transform.position.y;
+                var summary = new System.Text.StringBuilder(160);
+                summary.Append("net_id=").Append(netId)
+                    .Append(" rootY=").Append(rootY.ToString("F2"));
+
+                int clamped = 0;
+                for (int bone = 0; bone < binding.Bones.Length; ++bone)
+                {
+                    Transform foot = binding.Bones[bone];
+                    if (foot == null || !foot.name.EndsWith("_Foot"))
+                    {
+                        continue;
+                    }
+
+                    string prefix = foot.name.Substring(0, foot.name.Length - 5);
+                    Transform hip = null;
+                    Transform knee = null;
+                    for (int probe = 0; probe < binding.Bones.Length; ++probe)
+                    {
+                        Transform other = binding.Bones[probe];
+                        if (other == null)
+                        {
+                            continue;
+                        }
+                        if (other.name == prefix + "_Hip")
+                        {
+                            hip = other;
+                        }
+                        else if (other.name == prefix + "_Knee")
+                        {
+                            knee = other;
+                        }
+                    }
+                    if (hip == null || knee == null)
+                    {
+                        continue;
+                    }
+
+                    float bones = Vector3.Distance(hip.position, knee.position) +
+                        Vector3.Distance(knee.position, foot.position);
+                    if (bones <= 0.0001f)
+                    {
+                        continue;
+                    }
+
+                    float extension =
+                        Vector3.Distance(hip.position, foot.position) / bones;
+                    bool locked = extension >= 0.995f;
+                    if (locked)
+                    {
+                        ++clamped;
+                    }
+
+                    summary.Append("\n  ")
+                        .Append(prefix.Replace("JNT_Leg", ""))
+                        .Append(" dy=").Append((foot.position.y - rootY).ToString("F2"))
+                        .Append(" ext=").Append((extension * 100f).ToString("F1"))
+                        .Append('%')
+                        .Append(locked ? "  LOCKED" : string.Empty);
+                }
+
+                Debug.Log(
+                    "[LegReach] " + summary + "\n  locked=" + clamped);
+            }
+        }
+
         private void LogSkeletonPoseProvenance()
         {
             if (!logSkeletonPoseProvenance || client == null ||
@@ -578,9 +702,98 @@ namespace NetworkExample.UnityDemo.Client
                     .Append(" bones=").Append(pose.bone_count)
                     .Append(" poseTick=").Append(pose.pose_tick)
                     .Append(" poseTimeUs=").Append(pose.pose_time_us);
+                AppendFootHeights(summary, pose.entity_net_id);
             }
 
             Debug.Log("[SkeletonPose] " + summary);
+        }
+
+        /// <summary>
+        /// Reports each foot bone's height RELATIVE TO THE ENTITY ROOT, which is
+        /// the one measurement that separates the ways this can be wrong:
+        ///
+        ///   dy ~ 0 and changing   legs are stepping and seated on the ground
+        ///   dy ~ 0 but constant   seated, but no step ever reached this client
+        ///   dy ~ +2.7 constant    the rig is at its bind pose: the kernel seats
+        ///                         the pose by dropping the root bone so the
+        ///                         lowest bind foot sits AT the root, so an
+        ///                         unseated rig floats by exactly that offset
+        ///
+        /// Root-relative rather than absolute so it does not need to know the
+        /// terrain height under the actor.
+        /// </summary>
+        private void AppendFootHeights(System.Text.StringBuilder summary, uint netId)
+        {
+            if (entityRegistry == null ||
+                !entityRegistry.TryGetByNetId(netId, out GameObject visual) ||
+                visual == null)
+            {
+                summary.Append(" [no visual]");
+                return;
+            }
+
+            var binding = visual.GetComponentInChildren<KernelSkeletonBinding>(true);
+            if (binding == null || binding.Bones == null)
+            {
+                summary.Append(" [no binding]");
+                return;
+            }
+
+            float rootY = visual.transform.position.y;
+            summary.Append("\n    rootY=").Append(rootY.ToString("F2"))
+                .Append(" leg dy/extension=");
+            for (int index = 0; index < binding.Bones.Length; ++index)
+            {
+                Transform foot = binding.Bones[index];
+                if (foot == null || !foot.name.EndsWith("_Foot"))
+                {
+                    continue;
+                }
+
+                summary.Append("  ")
+                    .Append((foot.position.y - rootY).ToString("F2"));
+
+                string prefix = foot.name.Substring(0, foot.name.Length - 5);
+                Transform hip = null;
+                Transform knee = null;
+                for (int probe = 0; probe < binding.Bones.Length; ++probe)
+                {
+                    Transform bone = binding.Bones[probe];
+                    if (bone == null)
+                    {
+                        continue;
+                    }
+                    if (bone.name == prefix + "_Hip")
+                    {
+                        hip = bone;
+                    }
+                    else if (bone.name == prefix + "_Knee")
+                    {
+                        knee = bone;
+                    }
+                }
+                if (hip == null || knee == null)
+                {
+                    continue;
+                }
+
+                // Fraction of the leg's bone length the hip-to-foot span uses.
+                // At 100% the two-bone chain is straight and has no bend plane
+                // left, so the limb swings about the hip-foot axis instead of
+                // bending. This rig rests near 98%.
+                float bones = Vector3.Distance(hip.position, knee.position) +
+                    Vector3.Distance(knee.position, foot.position);
+                if (bones <= 0.0001f)
+                {
+                    continue;
+                }
+
+                float extension =
+                    Vector3.Distance(hip.position, foot.position) / bones;
+                summary.Append('/')
+                    .Append((extension * 100f).ToString("F1"))
+                    .Append(extension >= 0.995f ? "%!" : "%");
+            }
         }
 
         private void LogDiagnosticRenderSummary(uint renderCount, int safeRenderCount)
