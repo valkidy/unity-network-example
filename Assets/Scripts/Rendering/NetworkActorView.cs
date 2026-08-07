@@ -49,6 +49,7 @@ namespace NetworkExample.UnityDemo.Rendering
         private static readonly int ActorLandedParameter = Animator.StringToHash("ActorLanded");
 
         private Animator animator;
+        private KernelSkeletonBinding skeletonBinding;
         private readonly HashSet<uint> predictedActionInstanceIds = new HashSet<uint>();
         private Quaternion lastMovementRotation;
         private bool hasMovementRotation;
@@ -160,6 +161,24 @@ namespace NetworkExample.UnityDemo.Rendering
 
         private void ApplyMovementFacing(RenderEntityState state)
         {
+            if (HasKernelPosedRig())
+            {
+                // NetworkRenderStateApplier writes the replicated rotation just
+                // before this runs, and everything below would overwrite it. For a
+                // rig the kernel poses, that rotation is not decoration: the leg
+                // solve places every foot in world space using it, and the pose
+                // arrives as bone-local transforms under this root. Turning the
+                // root away from it carries the whole leg rig off the footholds it
+                // was solved for -- feet swing and slide while the body keeps
+                // walking straight.
+                //
+                // Deriving facing from velocity is also strictly worse here. The
+                // kernel already slews the heading at the actor's authored
+                // max_yaw_degrees_per_second; velocity direction has no such limit
+                // and snaps the instant the controller slides on terrain.
+                return;
+            }
+
             Vector3 movement = new Vector3(
                 state.velocity.x,
                 0f,
@@ -243,6 +262,19 @@ namespace NetworkExample.UnityDemo.Rendering
         private bool HasFlag(uint flag)
         {
             return (VisualFlags & flag) != 0;
+        }
+
+        // Whether this actor's skeleton is posed by the kernel rather than by an
+        // Animator. Resolved lazily and never cached negatively, for the same
+        // reason GetAnimator does it this way: the rig is a child of the catalog
+        // prefab and a view can be added before that child exists.
+        private bool HasKernelPosedRig()
+        {
+            if (skeletonBinding == null)
+            {
+                skeletonBinding = GetComponentInChildren<KernelSkeletonBinding>(true);
+            }
+            return skeletonBinding != null;
         }
 
         private Animator GetAnimator()
