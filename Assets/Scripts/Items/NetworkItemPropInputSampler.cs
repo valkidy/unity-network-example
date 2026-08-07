@@ -38,9 +38,9 @@ namespace NetworkExample.UnityDemo.Items
                 return;
             }
 
-            throwAction = CreateButtonAction("ThrowItem", "<Keyboard>/q");
-            pickupAction = CreateButtonAction("PickupItem", "<Keyboard>/e");
-            useAction = CreateButtonAction("UseItem", "<Keyboard>/f");
+            throwAction = CreateButtonAction("ThrowItem", "<Keyboard>/r");
+            pickupAction = CreateButtonAction("PickupItem", "<Keyboard>/t");
+            useAction = CreateButtonAction("UseItem", "<Keyboard>/y");
             selectNextItemAction = CreateButtonAction(
                 "SelectNextItem",
                 "<Keyboard>/tab");
