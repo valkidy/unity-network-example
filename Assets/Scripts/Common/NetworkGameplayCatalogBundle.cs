@@ -129,6 +129,133 @@ namespace NetworkExample.UnityDemo.Common
             }
         }
 
+        /// <summary>
+        /// Reads which skeleton each entity template is rigged to, as the name of
+        /// the skeleton manifest the template points at.
+        /// </summary>
+        /// <remarks>
+        /// The client has no other way to learn this: the render ABI carries a
+        /// template id but no skeleton id, and the pairing is authored on the
+        /// server. Reading it out of the bundle keeps a new rig a server-side
+        /// change -- add the template and the manifest, and the client picks up
+        /// both from the bytes it is sent.
+        ///
+        /// Templates without a <c>skeleton:</c> block are skipped rather than
+        /// reported: most entity templates are not rigged at all.
+        /// </remarks>
+        public static bool TryReadTemplateSkeletonNames(
+            byte[] bundleBytes,
+            string entryPath,
+            out Dictionary<uint, string> manifestNameByTemplateId,
+            out string diagnostic)
+        {
+            manifestNameByTemplateId = null;
+            diagnostic = null;
+            if (bundleBytes == null || bundleBytes.Length == 0)
+            {
+                diagnostic = "Gameplay catalog bundle is empty.";
+                return false;
+            }
+
+            try
+            {
+                using (var stream = new MemoryStream(bundleBytes, false))
+                using (var archive = new ZipArchive(stream, ZipArchiveMode.Read, false))
+                {
+                    if (!TryReadTextEntry(
+                            archive,
+                            entryPath,
+                            out string catalogYaml,
+                            out diagnostic))
+                    {
+                        return false;
+                    }
+                    if (!TryReadTopLevelScalar(
+                            catalogYaml,
+                            "entity_template_dir",
+                            out string entityTemplateDirectory))
+                    {
+                        diagnostic =
+                            "Gameplay catalog does not declare entity_template_dir.";
+                        return false;
+                    }
+
+                    string directory =
+                        NormalizeArchivePath(Unquote(entityTemplateDirectory)).TrimEnd('/') + "/";
+                    var found = new Dictionary<uint, string>();
+                    foreach (ZipArchiveEntry entry in archive.Entries)
+                    {
+                        string path = entry.FullName.Replace('\\', '/');
+                        if (!path.StartsWith(directory, StringComparison.Ordinal) ||
+                            !path.EndsWith(".yaml", StringComparison.Ordinal))
+                        {
+                            continue;
+                        }
+
+                        string templateYaml;
+                        using (var reader = new StreamReader(entry.Open(), Encoding.UTF8))
+                        {
+                            templateYaml = reader.ReadToEnd();
+                        }
+                        if (!TryReadNestedScalar(
+                                templateYaml,
+                                "skeleton",
+                                "source_manifest",
+                                out string manifestPath))
+                        {
+                            continue;
+                        }
+                        if (!TryReadTopLevelScalar(templateYaml, "id", out string idText) ||
+                            !uint.TryParse(
+                                idText,
+                                NumberStyles.None,
+                                CultureInfo.InvariantCulture,
+                                out uint templateId) ||
+                            templateId == 0)
+                        {
+                            diagnostic = path + " declares a skeleton but no valid id.";
+                            return false;
+                        }
+
+                        string manifestName = ManifestNameFromPath(manifestPath);
+                        if (string.IsNullOrEmpty(manifestName))
+                        {
+                            diagnostic =
+                                path + " has an unreadable skeleton source_manifest '" +
+                                manifestPath + "'.";
+                            return false;
+                        }
+                        found[templateId] = manifestName;
+                    }
+
+                    manifestNameByTemplateId = found;
+                    return true;
+                }
+            }
+            catch (Exception exception)
+            {
+                diagnostic =
+                    "Gameplay catalog entity template read failed: " + exception.Message;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// "skeleton_assets/generated/simplified_biped.skeleton_manifest.json"
+        /// names the manifest "simplified_biped".
+        /// </summary>
+        private static string ManifestNameFromPath(string manifestPath)
+        {
+            const string ManifestSuffix = ".skeleton_manifest.json";
+            string normalized = NormalizeArchivePath(Unquote(manifestPath));
+            if (!normalized.EndsWith(ManifestSuffix, StringComparison.Ordinal))
+            {
+                return string.Empty;
+            }
+            string fileName = normalized.Substring(normalized.LastIndexOf('/') + 1);
+            return fileName.Substring(0, fileName.Length - ManifestSuffix.Length);
+        }
+
         public static bool TryLoadSynchronizedBundle(
             string cacheDirectory,
             string serverAddress,

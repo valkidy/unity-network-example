@@ -467,7 +467,7 @@ namespace NetworkExample.UnityDemo.Client
             if (connectionState == NetworkClientConnectionState.Ready)
             {
                 GameplayCatalogSyncResult syncResult = client.CatalogSyncResult;
-                if (!ConfigureInputWeaponLoadout(syncResult))
+                if (!ConfigureSynchronizedCatalog(syncResult))
                 {
                     return;
                 }
@@ -498,7 +498,21 @@ namespace NetworkExample.UnityDemo.Client
             Debug.Log("Client connection state=" + connectionState);
         }
 
-        private bool ConfigureInputWeaponLoadout(GameplayCatalogSyncResult syncResult)
+        /// <summary>
+        /// Reads what the client needs out of the catalog the server sent: the
+        /// player's weapon loadout, and the skeleton manifests every rigged actor
+        /// is drawn from.
+        /// </summary>
+        /// <remarks>
+        /// The manifests are not optional. KernelSkeletonBinding resolves its
+        /// bone layout through KernelSkeletonManifestCatalog, so with none loaded
+        /// it cannot validate, KernelSkeletonPoseApplicator rejects every pose,
+        /// and a rigged actor spawns correctly and then never moves a bone.
+        /// Reading them from the synchronized bytes rather than from the packaged
+        /// copy is what keeps the rig the client draws and the skeleton the server
+        /// simulates the same version.
+        /// </remarks>
+        private bool ConfigureSynchronizedCatalog(GameplayCatalogSyncResult syncResult)
         {
             string diagnostic = null;
             if (gameplayCatalogSyncOptions == null ||
@@ -507,8 +521,28 @@ namespace NetworkExample.UnityDemo.Client
                     serverAddress,
                     syncResult.Manifest,
                     out byte[] bundleBytes,
-                    out diagnostic) ||
-                !NetworkGameplayCatalogBundle.TryReadPlayerWeaponLoadout(
+                    out diagnostic))
+            {
+                Debug.LogError(
+                    "Client could not read the synchronized gameplay catalog bundle: " +
+                    (string.IsNullOrEmpty(diagnostic)
+                        ? "no bundle bytes"
+                        : diagnostic));
+                return false;
+            }
+
+            if (!NetworkSkeletonManifests.TryLoad(
+                    bundleBytes,
+                    syncResult.Manifest.entry_path,
+                    out string manifestError))
+            {
+                Debug.LogError(
+                    "Client could not read skeleton manifests, so kernel poses will " +
+                    "be rejected: " + manifestError);
+                return false;
+            }
+
+            if (!NetworkGameplayCatalogBundle.TryReadPlayerWeaponLoadout(
                     bundleBytes,
                     syncResult.Manifest.entry_path,
                     out byte[] weaponIds,

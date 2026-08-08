@@ -94,10 +94,10 @@ namespace NetworkExample.UnityDemo.Host
         private Material fallbackMaterial;
 
         [SerializeField]
-        private float markerDiameter = NetworkMonsterSimRigFactory.DefaultMarkerDiameter;
+        private float markerDiameter = NetworkSkeletonRigFactory.DefaultMarkerDiameter;
 
         [SerializeField]
-        private float linkThickness = NetworkMonsterSimRigFactory.DefaultLinkThickness;
+        private float linkThickness = NetworkSkeletonRigFactory.DefaultLinkThickness;
 
         [Tooltip(
             "Drive the local player with WASD and orbit the camera with Q/E or the " +
@@ -240,7 +240,10 @@ namespace NetworkExample.UnityDemo.Host
             // Read the bone layouts out of the same bytes the host is about to
             // load, so the rig this scene draws and the skeleton the kernel poses
             // are always the same version.
-            if (!NetworkSkeletonManifests.TryLoad(bundleBytes, out string manifestError))
+            if (!NetworkSkeletonManifests.TryLoad(
+                    bundleBytes,
+                    gameplayCatalogEntryPath,
+                    out string manifestError))
             {
                 Debug.LogError(
                     "LocomotionTest could not read skeleton manifests: " + manifestError,
@@ -663,11 +666,14 @@ namespace NetworkExample.UnityDemo.Host
 
         private GameObject CreatePresentationInstance(RenderEntityState state)
         {
+            // Any rigged template gets a rig built from its own manifest, so
+            // pointing entityTemplateId at another actor is enough to capture a
+            // different skeleton -- there is no rig table here to keep in step.
             if (state.entity_type == KernelEntityType.Actor &&
                 state.template_id == entityTemplateId)
             {
-                return NetworkMonsterSimRigFactory.Create(
-                    "MonsterSimRig",
+                return NetworkSkeletonRigFactory.CreateForTemplate(
+                    state.template_id,
                     markerDiameter,
                     linkThickness,
                     EnsureRigMaterial());

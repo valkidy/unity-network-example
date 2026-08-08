@@ -55,7 +55,7 @@ namespace NetworkExample.UnityDemo.Rendering
             {
                 GameObject link = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 link.name = "Link_" + childBones[index].name;
-                NetworkMonsterSimRigFactory.DestroyComponent(link.GetComponent<Collider>());
+                NetworkSkeletonRigFactory.DestroyComponent(link.GetComponent<Collider>());
                 if (material != null)
                 {
                     link.GetComponent<MeshRenderer>().sharedMaterial = material;

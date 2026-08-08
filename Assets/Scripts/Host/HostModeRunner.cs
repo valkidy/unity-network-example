@@ -69,6 +69,22 @@ namespace NetworkExample.UnityDemo.Host
                 {
                     return;
                 }
+                // Bone layouts and the template-to-skeleton pairing come out of
+                // the same bytes the host is about to simulate. Without them a
+                // rigged actor's KernelSkeletonBinding cannot validate, and every
+                // pose the kernel produces is rejected -- the rig spawns and then
+                // stands still in its bind pose.
+                if (!NetworkSkeletonManifests.TryLoad(
+                        bundleBytes,
+                        entryPath,
+                        out string manifestError))
+                {
+                    Debug.LogError(
+                        "HostMode could not read skeleton manifests, so kernel poses " +
+                        "will be rejected: " + manifestError,
+                        this);
+                    return;
+                }
 
                 host = new NetworkHost();
                 started = host.Start(

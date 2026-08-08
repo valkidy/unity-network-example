@@ -25,6 +25,9 @@ namespace NetworkExample.UnityDemo.EditorTools
 
         private const string ScenePath = "Assets/Scenes/LocomotionTest.unity";
 
+        private const string MonsterObserverEntryPath =
+            "monster_observer_gameplay_catalog.yaml";
+
         [MenuItem("Tools/Network Example/Verify Locomotion")]
         public static void Run()
         {
@@ -77,28 +80,29 @@ namespace NetworkExample.UnityDemo.EditorTools
                 }
             }
 
+            // Every baked rig is held against the manifest it was baked from, so
+            // a prefab left behind by a rebuilt skeleton shows up here rather
+            // than as a silently mis-posed actor at play time.
             report.AppendLine("Actor rig prefabs");
-            if (NetworkSkeletonManifests.TryGetMonsterSim(
-                    out KernelSkeletonManifest monsterManifest,
-                    out string monsterManifestError))
+            foreach (NetworkActorRigPrefabBuilder.RigSource rig in
+                     NetworkActorRigPrefabBuilder.Rigs)
             {
+                if (!NetworkSkeletonManifests.TryGet(
+                        rig.SkeletonAssetId,
+                        rig.SkeletonName,
+                        out KernelSkeletonManifest rigManifest,
+                        out string rigManifestError))
+                {
+                    Check(false, rig.SkeletonName + " manifest: " + rigManifestError);
+                    continue;
+                }
                 CheckRigPrefab(
-                    NetworkActorRigPrefabBuilder.MonsterPrefabPath,
-                    monsterManifest.AssetId,
-                    monsterManifest.ContentHash,
-                    monsterManifest.BoneCount,
+                    rig.PrefabPath,
+                    rigManifest.AssetId,
+                    rigManifest.ContentHash,
+                    rigManifest.BoneCount,
                     Check);
             }
-            else
-            {
-                Check(false, "monster skeleton manifest: " + monsterManifestError);
-            }
-            CheckRigPrefab(
-                NetworkActorRigPrefabBuilder.RockRobotPrefabPath,
-                NetworkActorRigPrefabBuilder.RockRobotSkeletonAssetId,
-                NetworkActorRigPrefabBuilder.RockRobotSkeletonContentHash,
-                18,
-                Check);
 
             report.AppendLine("LocomotionTest scene wiring");
             Scene scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
@@ -355,8 +359,12 @@ namespace NetworkExample.UnityDemo.EditorTools
             }
             report.AppendLine("  bundle bytes: " + bundle.Length);
 
-            // The generated rig is built from the bone layout in these same bytes.
-            if (!NetworkSkeletonManifests.TryLoad(bundle, out string manifestError))
+            // The generated rig is built from the bone layout in these same bytes,
+            // and from the skeleton this catalog pairs the template with.
+            if (!NetworkSkeletonManifests.TryLoad(
+                    bundle,
+                    MonsterObserverEntryPath,
+                    out string manifestError))
             {
                 Debug.LogError("skeleton manifests not readable: " + manifestError);
                 return 1;
@@ -378,7 +386,7 @@ namespace NetworkExample.UnityDemo.EditorTools
                     catalog: new GameplayCatalogServerOptions
                     {
                         BundleBytes = bundle,
-                        EntryPath = "monster_observer_gameplay_catalog.yaml",
+                        EntryPath = MonsterObserverEntryPath,
                         ContentNamespace = "monster_observer",
                     },
                     loadResult: out KernelGameplayCatalogLoadResult loadResult);
@@ -391,13 +399,16 @@ namespace NetworkExample.UnityDemo.EditorTools
                     return failures;
                 }
 
-                rig = NetworkMonsterSimRigFactory.TryCreate(
-                    "MonsterSimRig",
-                    NetworkMonsterSimRigFactory.DefaultMarkerDiameter,
-                    NetworkMonsterSimRigFactory.DefaultLinkThickness,
+                rig = NetworkSkeletonRigFactory.TryCreateForTemplate(
+                    entityTemplateId,
+                    NetworkSkeletonRigFactory.DefaultMarkerDiameter,
+                    NetworkSkeletonRigFactory.DefaultLinkThickness,
                     null,
                     out string rigError);
-                Check(rig != null, "generated rig built" + (rig != null ? string.Empty : ": " + rigError));
+                Check(
+                    rig != null,
+                    "generated rig built for template " + entityTemplateId +
+                    (rig != null ? string.Empty : ": " + rigError));
                 if (rig == null)
                 {
                     Debug.Log(report.ToString());

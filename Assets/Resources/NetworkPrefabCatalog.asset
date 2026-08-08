@@ -19,6 +19,12 @@ MonoBehaviour:
     prefab: {fileID: 1856945008544614001, guid: fc47cec2e61ab4c74ba57d58878ce6ac, type: 3}
   - actorTemplateId: 20
     prefab: {fileID: 5527427090754095325, guid: 8919db2d272914d298443dd55e63e14d, type: 3}
+  - actorTemplateId: 21
+    prefab: {fileID: 5760271200612233509, guid: 56689bbe7139547509bc9216c1432bb1, type: 3}
+  - actorTemplateId: 22
+    prefab: {fileID: 2351338028419751684, guid: 6af92969f53c849048c467fd16892bc7, type: 3}
+  - actorTemplateId: 23
+    prefab: {fileID: 5793342295124904691, guid: 7d1f014db2ff44b3fbc36cc68c645543, type: 3}
   projectilePrefabs:
   - projectileTemplateId: 2
     prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}

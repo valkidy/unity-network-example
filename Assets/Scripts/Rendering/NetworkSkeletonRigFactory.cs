@@ -7,17 +7,17 @@ using UnityEngine;
 namespace NetworkExample.UnityDemo.Rendering
 {
     /// <summary>
-    /// Builds a presentation rig for the native <c>simplified_monster_sim_v4</c>
-    /// skeleton straight from its manifest's bone name and parent tables, so
-    /// LocomotionTest can verify the kernel pose without an imported FBX. The
-    /// kernel repository only ships the rig as
-    /// <c>game_server/skeleton_assets/raw/simplified_monster_sim_v4.glb</c>, which
-    /// Unity cannot import without a glTF package.
+    /// Builds a presentation rig for a native skeleton straight from its
+    /// manifest's bone name and parent tables, so a scene can verify the kernel
+    /// pose without an imported model. The kernel repository ships the rigs as
+    /// glTF under <c>game_server/skeleton_assets/raw/</c>, and the manifest is
+    /// the only place the bone layout is stated in a form the client can read.
     ///
-    /// The manifest comes out of the gameplay catalog bundle
+    /// The manifest comes out of the gameplay catalog bundle the server sent
     /// (see <see cref="NetworkSkeletonManifests"/>), so the bundle has to be read
     /// before a rig is built -- which is also what makes the hierarchy match the
-    /// skeleton the kernel actually loaded.
+    /// skeleton the kernel actually loaded, for any rig in the catalog rather
+    /// than one the Unity side knows by name.
     ///
     /// The generated hierarchy carries the bone names and parent relationships
     /// <see cref="KernelSkeletonBinding.TryAutoMap"/> validates. Local transforms
@@ -25,56 +25,70 @@ namespace NetworkExample.UnityDemo.Rendering
     /// applicator overwrites position, rotation and scale from the native pose
     /// every frame, so no bind pose is needed on the Unity side.
     /// </summary>
-    public static class NetworkMonsterSimRigFactory
+    public static class NetworkSkeletonRigFactory
     {
         public const float DefaultMarkerDiameter = 1.2f;
         public const float DefaultLinkThickness = 0.7f;
 
         /// <summary>
-        /// Returns null and logs when no manifest is loaded for the skeleton.
+        /// Builds the rig for whichever skeleton <paramref name="templateId"/> is
+        /// rigged to in the loaded catalog. Returns null and logs when the
+        /// template carries no skeleton or its manifest is missing.
         /// </summary>
-        public static GameObject Create(string name)
-        {
-            return Create(name, DefaultMarkerDiameter, DefaultLinkThickness, null);
-        }
-
-        /// <summary>
-        /// Returns null and logs when no manifest is loaded for the skeleton.
-        /// </summary>
-        public static GameObject Create(
-            string name,
+        public static GameObject CreateForTemplate(
+            uint templateId,
             float markerDiameter,
             float linkThickness,
             Material material)
         {
-            GameObject rig = TryCreate(
-                name,
+            GameObject rig = TryCreateForTemplate(
+                templateId,
                 markerDiameter,
                 linkThickness,
                 material,
                 out string error);
             if (rig == null)
             {
-                Debug.LogError("MonsterSimRig could not be built: " + error);
+                Debug.LogError(
+                    "No rig could be built for entity template " + templateId + ": " +
+                    error);
             }
             return rig;
         }
 
+        public static GameObject TryCreateForTemplate(
+            uint templateId,
+            float markerDiameter,
+            float linkThickness,
+            Material material,
+            out string error)
+        {
+            if (!NetworkSkeletonManifests.TryGetForTemplate(
+                    templateId,
+                    out KernelSkeletonManifest manifest,
+                    out error))
+            {
+                return null;
+            }
+            return TryCreate(manifest, null, markerDiameter, linkThickness, material, out error);
+        }
+
         public static GameObject TryCreate(
+            KernelSkeletonManifest manifest,
             string name,
             float markerDiameter,
             float linkThickness,
             Material material,
             out string error)
         {
-            if (!NetworkSkeletonManifests.TryGetMonsterSim(
-                    out KernelSkeletonManifest manifest,
-                    out error))
+            if (manifest == null || manifest.BoneCount == 0)
             {
+                error = "Skeleton manifest is empty.";
                 return null;
             }
 
-            var rig = new GameObject(string.IsNullOrEmpty(name) ? "MonsterSimRig" : name);
+            var rig = new GameObject(
+                string.IsNullOrEmpty(name) ? manifest.Name + "_rig" : name);
             int boneCount = manifest.BoneCount;
             var bones = new Transform[boneCount];
 
