@@ -738,10 +738,13 @@ namespace NetworkExample.UnityDemo.Common
                 identityDigest = sha256.ComputeHash(Encoding.UTF8.GetBytes(identitySource));
             }
 
+            // Keyed by the bundle digest so it matches the client cache layout in
+            // com.network-example.kernel. catalog_hash only covers the parsed gameplay
+            // config, so archives with different bytes can share one catalog_hash.
             return Path.Combine(
                 Path.GetFullPath(cacheDirectory),
                 ToHex(identityDigest),
-                manifest.catalog_hash.ToString("x16"),
+                ToHex(manifest.bundle_sha256),
                 "bundle.zip");
         }
 
