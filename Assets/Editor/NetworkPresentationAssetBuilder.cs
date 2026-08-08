@@ -5,6 +5,19 @@ using UnityEngine;
 
 namespace NetworkExample.UnityDemo.Editor
 {
+    /// <summary>
+    /// Builds the primitive stand-in assets for item and prop tests, and upserts
+    /// their catalog bindings.
+    /// </summary>
+    /// <remarks>
+    /// Actor bindings are not written here. They belong to the rigs baked by
+    /// NetworkActorRigPrefabBuilder, which pairs each entity template with the
+    /// prefab built from the skeleton the gameplay catalog says that template
+    /// uses. This builder therefore only ever upserts the projectile and prop
+    /// bindings it owns and passes the rest of the catalog through untouched --
+    /// anything here that rewrote the whole actor table would silently unbind
+    /// every rigged actor.
+    /// </remarks>
     public static class NetworkPresentationAssetBuilder
     {
         private const string PresentationRoot = "Assets/Presentation";
@@ -16,76 +29,6 @@ namespace NetworkExample.UnityDemo.Editor
         private const uint FireFloorProjectileTemplateId = 4;
         private const uint StatefulPotionItemTemplateId = 3003;
         private const uint StatefulMagicBottleItemTemplateId = 3004;
-
-        [MenuItem("Network Example/Presentation/Rebuild Default Prefabs")]
-        public static void BuildDefaults()
-        {
-            EnsureFolder("Assets", "Presentation");
-            EnsureFolder(PresentationRoot, "Materials");
-            EnsureFolder(PresentationRoot, "Prefabs");
-            EnsureFolder("Assets", "Resources");
-
-            Material playerMaterial = CreateOrUpdateMaterial(
-                MaterialRoot + "/PlayerPlaceholder.mat",
-                new Color(0.18f, 0.55f, 1f));
-            Material agentMaterial = CreateOrUpdateMaterial(
-                MaterialRoot + "/AgentPlaceholder.mat",
-                new Color(1f, 0.32f, 0.24f));
-            Material projectileMaterial = CreateOrUpdateMaterial(
-                MaterialRoot + "/ProjectilePlaceholder.mat",
-                new Color(1f, 0.86f, 0.2f));
-
-            GameObject playerPrefab = CreateActorPrefab(
-                PrefabRoot + "/Actor_Player_Placeholder.prefab",
-                "ActorRoot_PlayerPlaceholder",
-                0.55f,
-                0.35f,
-                playerMaterial);
-            GameObject agentPrefab = CreateActorPrefab(
-                PrefabRoot + "/Actor_Agent_Placeholder.prefab",
-                "ActorRoot_AgentPlaceholder",
-                0.4f,
-                0.4f,
-                agentMaterial);
-            GameObject projectilePrefab = CreateProjectilePrefab(
-                PrefabRoot + "/Projectile_Placeholder.prefab",
-                projectileMaterial);
-
-            NetworkPrefabCatalog catalog =
-                AssetDatabase.LoadAssetAtPath<NetworkPrefabCatalog>(CatalogPath);
-            if (catalog == null)
-            {
-                catalog = ScriptableObject.CreateInstance<NetworkPrefabCatalog>();
-                AssetDatabase.CreateAsset(catalog, CatalogPath);
-            }
-
-            catalog.Configure(
-                new[]
-                {
-                    new NetworkPrefabCatalog.ActorPrefabBinding(1, playerPrefab),
-                    new NetworkPrefabCatalog.ActorPrefabBinding(2, agentPrefab),
-                },
-                new[]
-                {
-                    new NetworkPrefabCatalog.ProjectilePrefabBinding(2, projectilePrefab),
-                    new NetworkPrefabCatalog.ProjectilePrefabBinding(3, projectilePrefab),
-                    new NetworkPrefabCatalog.ProjectilePrefabBinding(4, projectilePrefab),
-                    new NetworkPrefabCatalog.ProjectilePrefabBinding(5, projectilePrefab),
-                    new NetworkPrefabCatalog.ProjectilePrefabBinding(6, projectilePrefab),
-                    new NetworkPrefabCatalog.ProjectilePrefabBinding(7, projectilePrefab),
-                    new NetworkPrefabCatalog.ProjectilePrefabBinding(8, projectilePrefab),
-                },
-                playerPrefab,
-                agentPrefab,
-                projectilePrefab);
-            EditorUtility.SetDirty(catalog);
-
-            AssetDatabase.SaveAssets();
-            AssetDatabase.Refresh();
-            Debug.Log(
-                "Rebuilt default network presentation prefabs and catalog at " +
-                CatalogPath);
-        }
 
         [MenuItem("Network Example/Presentation/Build Item Prop Test Prefabs")]
         public static void BuildItemPropTestPrefabs()
@@ -176,51 +119,6 @@ namespace NetworkExample.UnityDemo.Editor
             Debug.Log(
                 "Built item/prop test prefabs and upserted catalog bindings " +
                 "without replacing actor presentation overrides.");
-        }
-
-        private static GameObject CreateActorPrefab(
-            string path,
-            string rootName,
-            float capsuleHalfHeight,
-            float capsuleRadius,
-            Material material)
-        {
-            var root = new GameObject(rootName);
-            root.AddComponent<NetworkActorView>();
-
-            // USER ASSET HOOK: replace this Visual capsule with the authored model and
-            // place its Animator here. Keep NetworkActorView on the root and keep the
-            // root transform reserved for kernel position/rotation.
-            var visual = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-            visual.name = "Visual";
-            Object.DestroyImmediate(visual.GetComponent<Collider>());
-            visual.transform.SetParent(root.transform, false);
-
-            float centerHeight = capsuleHalfHeight + capsuleRadius;
-            visual.transform.localPosition = Vector3.up * centerHeight;
-            visual.transform.localScale = new Vector3(
-                capsuleRadius * 2f,
-                centerHeight,
-                capsuleRadius * 2f);
-            visual.GetComponent<Renderer>().sharedMaterial = material;
-
-            GameObject prefab = PrefabUtility.SaveAsPrefabAsset(root, path);
-            Object.DestroyImmediate(root);
-            return prefab;
-        }
-
-        private static GameObject CreateProjectilePrefab(string path, Material material)
-        {
-            GameObject projectile = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            projectile.name = "ProjectilePlaceholder";
-            Object.DestroyImmediate(projectile.GetComponent<Collider>());
-            projectile.transform.localScale = Vector3.one * 0.1f;
-            projectile.GetComponent<Renderer>().sharedMaterial = material;
-            projectile.AddComponent<NetworkProjectileView>();
-
-            GameObject prefab = PrefabUtility.SaveAsPrefabAsset(projectile, path);
-            Object.DestroyImmediate(projectile);
-            return prefab;
         }
 
         private static GameObject CreatePropPrefab(
