@@ -3,6 +3,7 @@ using System.IO;
 using System.Text;
 using NetworkExample.Kernel;
 using NetworkExample.Kernel.Presentation;
+using NetworkExample.UnityDemo.Common;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -108,6 +109,12 @@ namespace NetworkExample.UnityDemo.EditorTools
 
         private static string BuildMonsterPrefab()
         {
+            if (!NetworkSkeletonManifests.TryGetMonsterSim(
+                    out KernelSkeletonManifest manifest,
+                    out string manifestError))
+            {
+                return "  [FAIL] " + MonsterPrefabPath + ": " + manifestError;
+            }
             if (!TryInstantiate(MonsterModelPath, out GameObject instance, out string error))
             {
                 return "  [FAIL] " + error;
@@ -137,22 +144,19 @@ namespace NetworkExample.UnityDemo.EditorTools
                 }
 
                 // Guard: recreate any locator bone the source model dropped.
-                // KernelSkeletonBinding requires all 41 transforms.
+                // KernelSkeletonBinding requires every bone the manifest lists.
                 int recreated = 0;
-                for (int index = 0;
-                     index < KernelSkeletonBinding.DefaultBoneCount;
-                     ++index)
+                for (int index = 0; index < manifest.BoneCount; ++index)
                 {
-                    string boneName = KernelSkeletonBinding.GetDefaultBoneName(index);
+                    string boneName = manifest.Bones[index].Name;
                     if (byName.ContainsKey(boneName))
                     {
                         continue;
                     }
 
-                    int parentIndex =
-                        KernelSkeletonBinding.GetDefaultParentBoneIndex(index);
+                    int parentIndex = manifest.Bones[index].ParentIndex;
                     string parentName = parentIndex >= 0
-                        ? KernelSkeletonBinding.GetDefaultBoneName(parentIndex)
+                        ? manifest.Bones[parentIndex].Name
                         : null;
                     if (parentName == null ||
                         !byName.TryGetValue(parentName, out Transform parent))
@@ -167,18 +171,16 @@ namespace NetworkExample.UnityDemo.EditorTools
                     ++recreated;
                 }
 
-                var bones = new Transform[KernelSkeletonBinding.DefaultBoneCount];
+                var bones = new Transform[manifest.BoneCount];
                 for (int index = 0; index < bones.Length; ++index)
                 {
-                    bones[index] = byName[
-                        KernelSkeletonBinding.GetDefaultBoneName(index)];
+                    bones[index] = byName[manifest.Bones[index].Name];
                 }
 
                 KernelSkeletonBinding binding =
                     instance.AddComponent<KernelSkeletonBinding>();
-                binding.SkeletonAssetId = KernelSkeletonBinding.DefaultSkeletonAssetId;
-                binding.SkeletonContentHash =
-                    KernelSkeletonBinding.DefaultSkeletonContentHash;
+                binding.SkeletonAssetId = manifest.AssetId;
+                binding.SkeletonContentHash = manifest.ContentHash;
                 binding.SkeletonRoot = instance.transform;
                 binding.AutoMapKnownSkeleton = true;
                 // Overwrite, do not delta. The FBX bind pose does not agree with the

@@ -237,6 +237,17 @@ namespace NetworkExample.UnityDemo.Host
                 return false;
             }
 
+            // Read the bone layouts out of the same bytes the host is about to
+            // load, so the rig this scene draws and the skeleton the kernel poses
+            // are always the same version.
+            if (!NetworkSkeletonManifests.TryLoad(bundleBytes, out string manifestError))
+            {
+                Debug.LogError(
+                    "LocomotionTest could not read skeleton manifests: " + manifestError,
+                    this);
+                return false;
+            }
+
             KernelConfig config = KernelConfig.CreateDefault(KernelMode.ListenServer);
             config.tick.server_tick_rate = (uint)tickRate;
             config.tick.snapshot_rate = (uint)Mathf.Max(1, tickRate / 2);

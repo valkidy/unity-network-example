@@ -78,12 +78,21 @@ namespace NetworkExample.UnityDemo.EditorTools
             }
 
             report.AppendLine("Actor rig prefabs");
-            CheckRigPrefab(
-                NetworkActorRigPrefabBuilder.MonsterPrefabPath,
-                KernelSkeletonBinding.DefaultSkeletonAssetId,
-                KernelSkeletonBinding.DefaultSkeletonContentHash,
-                KernelSkeletonBinding.DefaultBoneCount,
-                Check);
+            if (NetworkSkeletonManifests.TryGetMonsterSim(
+                    out KernelSkeletonManifest monsterManifest,
+                    out string monsterManifestError))
+            {
+                CheckRigPrefab(
+                    NetworkActorRigPrefabBuilder.MonsterPrefabPath,
+                    monsterManifest.AssetId,
+                    monsterManifest.ContentHash,
+                    monsterManifest.BoneCount,
+                    Check);
+            }
+            else
+            {
+                Check(false, "monster skeleton manifest: " + monsterManifestError);
+            }
             CheckRigPrefab(
                 NetworkActorRigPrefabBuilder.RockRobotPrefabPath,
                 NetworkActorRigPrefabBuilder.RockRobotSkeletonAssetId,
@@ -346,6 +355,13 @@ namespace NetworkExample.UnityDemo.EditorTools
             }
             report.AppendLine("  bundle bytes: " + bundle.Length);
 
+            // The generated rig is built from the bone layout in these same bytes.
+            if (!NetworkSkeletonManifests.TryLoad(bundle, out string manifestError))
+            {
+                Debug.LogError("skeleton manifests not readable: " + manifestError);
+                return 1;
+            }
+
             KernelConfig config = KernelConfig.CreateDefault(KernelMode.ListenServer);
             config.tick.server_tick_rate = (uint)tickRate;
             config.tick.snapshot_rate = (uint)(tickRate / 2);
@@ -375,7 +391,19 @@ namespace NetworkExample.UnityDemo.EditorTools
                     return failures;
                 }
 
-                rig = NetworkMonsterSimRigFactory.Create("MonsterSimRig");
+                rig = NetworkMonsterSimRigFactory.TryCreate(
+                    "MonsterSimRig",
+                    NetworkMonsterSimRigFactory.DefaultMarkerDiameter,
+                    NetworkMonsterSimRigFactory.DefaultLinkThickness,
+                    null,
+                    out string rigError);
+                Check(rig != null, "generated rig built" + (rig != null ? string.Empty : ": " + rigError));
+                if (rig == null)
+                {
+                    Debug.Log(report.ToString());
+                    return failures;
+                }
+
                 // The generated rig writes the native local transforms verbatim, so
                 // its FK is the native pose by construction. The catalog prefab is
                 // held against it bone for bone: an FBX whose hierarchy carries an
@@ -388,7 +416,7 @@ namespace NetworkExample.UnityDemo.EditorTools
                 bool bindingValid = binding != null && binding.TryValidate(out bindingError);
                 Check(
                     bindingValid,
-                    "generated rig binds " + KernelSkeletonBinding.DefaultBoneCount +
+                    "generated rig binds " + (binding != null ? binding.Bones.Length : 0) +
                     " bones" + (bindingValid ? string.Empty : ": " + bindingError));
 
                 var events = new KernelEvent[256];
@@ -570,7 +598,7 @@ namespace NetworkExample.UnityDemo.EditorTools
 
                 Check(recorded == samples, "sample count: " + recorded + " recorded");
                 Check(
-                    boneCount == KernelSkeletonBinding.DefaultBoneCount,
+                    binding != null && boneCount == binding.Bones.Length,
                     "bone count per sample: " + boneCount);
                 Check(poseApplied == recorded, "skeleton pose applied on every sample");
                 Check(nonFinite == 0, "root values finite: " + nonFinite + " bad sample(s)");

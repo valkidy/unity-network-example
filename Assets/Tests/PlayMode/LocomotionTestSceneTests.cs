@@ -1,5 +1,6 @@
 using System.Collections;
 using NetworkExample.Kernel;
+using NetworkExample.UnityDemo.Common;
 using NetworkExample.UnityDemo.Host;
 using NUnit.Framework;
 using UnityEngine;
@@ -59,13 +60,18 @@ namespace NetworkExample.UnityDemo.Tests.PlayMode
                 Is.True,
                 bindingError);
             Assert.That(
-                binding.Bones.Length,
-                Is.EqualTo(KernelSkeletonBinding.DefaultBoneCount));
+                NetworkSkeletonManifests.TryGetMonsterSim(
+                    out KernelSkeletonManifest manifest,
+                    out string manifestError),
+                Is.True,
+                manifestError);
+            Assert.That(binding.Bones.Length, Is.EqualTo(manifest.BoneCount));
 
             Assert.That(
                 binding.SkeletonAssetId,
-                Is.EqualTo(KernelSkeletonBinding.DefaultSkeletonAssetId),
-                "presented rig is not bound to simplified_monster_sim_v4");
+                Is.EqualTo(manifest.AssetId),
+                "presented rig is not bound to " +
+                NetworkSkeletonManifests.MonsterSimSkeletonName);
 
             Transform rigRoot = binding.transform;
             Assert.That(
