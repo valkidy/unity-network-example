@@ -175,6 +175,10 @@ PrefabInstance:
       propertyPath: 'm_Materials.Array.data[0]'
       value: 
       objectReference: {fileID: 2100000, guid: d84aab9d8f32243b0bbdf0eac1b1057b, type: 2}
+    - target: {fileID: -6400281290468069383, guid: 6b77253c46d1e48619a9fcab65f571d4, type: 3}
+      propertyPath: m_Mesh
+      value: 
+      objectReference: {fileID: -2432090755550338912, guid: b0c9ae535127c475380a6c8f9b86244f, type: 3}
     - target: {fileID: 919132149155446097, guid: 6b77253c46d1e48619a9fcab65f571d4, type: 3}
       propertyPath: m_Name
       value: Terrain
@@ -432,10 +436,10 @@ MonoBehaviour:
   enableDiagnostics: 0
   diagnosticLogIntervalSeconds: 1
   readyWithoutRenderWarningSeconds: 1
-  enableVisualDebug: 0
+  enableVisualDebug: 1
   inputSubmissionRateHz: 30
-  logLegReach: 1
-  logSkeletonPoseProvenance: 1
+  logLegReach: 0
+  logSkeletonPoseProvenance: 0
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
