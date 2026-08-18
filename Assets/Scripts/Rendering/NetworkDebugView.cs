@@ -647,12 +647,15 @@ namespace NetworkExample.UnityDemo.Rendering
                         ToQuaternion(shape.world_rotation));
                     break;
                 case KernelColliderShapeType.Segment:
-                    // Endpoints are supplied directly; shape_params.x = radius (capsule).
+                    // Endpoints are supplied directly, so the length in
+                    // shape_params.x is redundant here; the radius is .y. Reading
+                    // .x as the radius drew every hit-scan tracer as a capsule as
+                    // fat as the weapon's range, and would do the same to a beam.
                     Vector3 start = ToVector3(shape.segment_start);
                     Vector3 end = ToVector3(shape.segment_end);
-                    if (shape.shape_params.x > 0f)
+                    if (shape.shape_params.y > 0f)
                     {
-                        DrawWireCapsule(start, end, shape.shape_params.x);
+                        DrawWireCapsule(start, end, shape.shape_params.y);
                     }
                     else
                     {
