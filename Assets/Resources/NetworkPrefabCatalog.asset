@@ -33,13 +33,15 @@ MonoBehaviour:
   - projectileTemplateId: 4
     prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
   - projectileTemplateId: 5
-    prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
+    prefab: {fileID: 8097695316699210201, guid: 4c1e7b902fa8d4f1a9d3e6b58c7419ad, type: 3}
   - projectileTemplateId: 6
     prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
   - projectileTemplateId: 7
     prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
   - projectileTemplateId: 8
     prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
+  - projectileTemplateId: 9
+    prefab: {fileID: 8097695316699210315, guid: 2f1331d3b73b24471be7bb14bba74b1a, type: 3}
   propPrefabs:
   - itemTemplateId: 3003
     prefab: {fileID: 1918210473873687710, guid: 3ab47a83ed0404599baaf5509417beba, type: 3}
