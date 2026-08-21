@@ -102,31 +102,28 @@ array in manifest order with `AutoMapKnownSkeleton = false`.
 
 ## Acceptance gate
 
-`Tools ▸ Network Example ▸ Verify Locomotion`
-([LocomotionTestVerifier.cs](../Assets/Editor/LocomotionTestVerifier.cs)), or in
-batch mode:
+The Editor-side gate used to live in `LocomotionTestVerifier` and the
+`LocomotionTest` scene, both removed along with the scripted listen-host
+locomotion rig: it presented the authority's own pose, which is not what a
+client renders, so passing it said nothing about the dedicated-server path.
+Verify an import against the native capture instead, in the kernel repository:
 
 ```bash
-/Applications/Unity/Hub/Editor/6000.4.3f1/Unity.app/Contents/MacOS/Unity -batchmode -nographics -quit --burst-disable-compilation -projectPath . -executeMethod NetworkExample.UnityDemo.EditorTools.LocomotionTestVerifier.RunBatch
+bazel run --config=macos -c opt //engine/src/tests/kernel_tests:locomotion_capture -- --sampling=300 --path="+X"
 ```
 
 The check that matters is **worst bone delta**: every presented bone is compared
 against a procedurally generated rig that writes the native locals verbatim, so
 its FK is the native pose by construction. Threshold 1 mm; the correct import
-scores `0.0000 m`.
+scores `0.0000 m`. Bone count, binding validity and **no renderer with a null
+material** are worth eyeballing on the built prefab.
 
-Also gated: bone count, binding validity, **no renderer with a null material**,
-and scene wiring. `Assets/Tests/PlayMode/LocomotionTestSceneTests.cs` runs the
-real scene and asserts the rig travels `+X` and that the leg bones actually swing.
-
-Bone *positions* alone are not sufficient evidence — they were exact while the
+Bone *positions* alone are not sufficient evidence -- they were exact while the
 meshes were still mirrored. Look at a render before calling it correct, and
 compare against `capture/locomotion_tests/native_locomotion.mp4`.
 
 ## Gotchas
 
-- The Editor holds UDP 7777 while the scene is open; a second instance cannot
-  bind it. Change the port or close the Editor before running batch mode.
 - `cameraOffset` must suit the subject's scale. The monster is ~30 m across and
   the original `(18, 14, -24)` framed it from point-blank underneath, which reads
   as a broken pose.
