@@ -16,7 +16,7 @@ MonoBehaviour:
   - actorTemplateId: 1
     prefab: {fileID: 8954853435508123706, guid: 7864c95d8ab694e728ca579190efa821, type: 3}
   - actorTemplateId: 2
-    prefab: {fileID: 1856945008544614001, guid: fc47cec2e61ab4c74ba57d58878ce6ac, type: 3}
+    prefab: {fileID: 8168318100894074229, guid: cf0e677ae8f014a0ea0ee3557601ef3f, type: 3}
   - actorTemplateId: 20
     prefab: {fileID: 5527427090754095325, guid: 8919db2d272914d298443dd55e63e14d, type: 3}
   - actorTemplateId: 21
@@ -50,7 +50,7 @@ MonoBehaviour:
   - itemTemplateId: 204
     prefab: {fileID: 6643457848503167595, guid: 74e02f329fcb740c596bdd8e10952b65, type: 3}
   playerActorFallback: {fileID: 8954853435508123706, guid: 7864c95d8ab694e728ca579190efa821, type: 3}
-  agentActorFallback: {fileID: 1856945008544614001, guid: fc47cec2e61ab4c74ba57d58878ce6ac, type: 3}
+  agentActorFallback: {fileID: 8168318100894074229, guid: cf0e677ae8f014a0ea0ee3557601ef3f, type: 3}
   projectileFallback: {fileID: 8097695316699210315, guid: 43f4cfe264b7d4e8cb77473b86649519, type: 3}
   propFallback: {fileID: 7923727376853824161, guid: 4b778f70892c1408b9f70dd911655c5a, type: 3}
   entityFallback: {fileID: 0}

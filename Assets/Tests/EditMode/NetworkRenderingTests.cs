@@ -62,7 +62,18 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             Assert.That(player, Is.Not.SameAs(agent));
             Assert.That(player.GetComponent<NetworkActorView>(), Is.Not.Null);
             Assert.That(agent.GetComponent<NetworkActorView>(), Is.Not.Null);
-            Assert.That(agent.transform.Find("Visual"), Is.Not.Null);
+            // Both bindings must reach an Animator: NetworkActorView resolves one
+            // with GetComponentInChildren and silently no-ops without it, so a
+            // catalog pointing at a model with no Animator loses every animation
+            // parameter the kernel already replicates -- and reports nothing.
+            Assert.That(
+                player.GetComponentInChildren<Animator>(true),
+                Is.Not.Null,
+                "Player actor prefab has no Animator");
+            Assert.That(
+                agent.GetComponentInChildren<Animator>(true),
+                Is.Not.Null,
+                "Agent actor prefab has no Animator");
 
             GameObject sharedProjectile = null;
             GameObject fireFloor = null;

@@ -53,6 +53,13 @@ namespace NetworkExample.UnityDemo.Rendering
         private readonly HashSet<uint> predictedActionInstanceIds = new HashSet<uint>();
         private Quaternion lastMovementRotation;
         private bool hasMovementRotation;
+        // -2 unresolved, -1 resolved-absent. Resolved once against the Animator
+        // rather than every frame, and never re-resolved: GetLayerIndex walks the
+        // controller's layer names on every call.
+        private int upperBodyLayerIndex = UnresolvedLayer;
+        private float upperBodyLayerWeight;
+
+        private const int UnresolvedLayer = -2;
 
         [Header("Animation")]
         [SerializeField]
@@ -61,6 +68,23 @@ namespace NetworkExample.UnityDemo.Rendering
             "Horizontal kernel speed is divided by this value before writing Animator.Speed. " +
             "Set it to the prefab's authored maximum locomotion speed for a normalized 0..1 value.")]
         private float speedNormalization = 1f;
+
+        [SerializeField]
+        [Tooltip(
+            "Animator layer that plays the firing action on top of locomotion, or " +
+            "empty to leave layer weights alone. Its weight is driven from the " +
+            "replicated action state, so the layer must be authored with a default " +
+            "weight of 0: an override layer parked at weight 1 writes its masked " +
+            "bones every frame, and its empty state writes the bind pose -- the " +
+            "upper body sits in its rest pose whenever the actor is not firing.")]
+        private string upperBodyLayerName = "Upper Body";
+
+        [SerializeField]
+        [Min(0f)]
+        [Tooltip(
+            "Layer weight units per second when blending the firing layer in and " +
+            "out. 0 snaps it.")]
+        private float upperBodyBlendSpeed = 12f;
 
         [SerializeField]
         private LocalActionTriggerBinding[] localActionTriggers;
@@ -157,6 +181,51 @@ namespace NetworkExample.UnityDemo.Rendering
             SetBoolIfPresent(target, RecoveryParameter, IsRecovery);
             SetBoolIfPresent(target, IdleParameter, IsIdle);
             SetIntegerIfPresent(target, ActionPhaseParameter, (int)ActionPhase);
+            ApplyUpperBodyLayerWeight(target);
+        }
+
+        /// <summary>
+        /// Blends the firing layer in while an action is running and out once it
+        /// ends. The layer is masked to the upper body, so locomotion on the base
+        /// layer keeps driving the legs throughout -- which is what the kernel
+        /// replicates: an agent can be moving and firing on the same tick.
+        /// </summary>
+        private void ApplyUpperBodyLayerWeight(Animator target)
+        {
+            int layer = ResolveUpperBodyLayer(target);
+            if (layer < 0)
+            {
+                return;
+            }
+
+            // ActionPhase covers windup and recovery as well; VisualFlagFiring is
+            // the same signal from the other side. Either one alone would leave a
+            // gap in weapons that spend most of an action outside Active.
+            float goal = IsFiring || ActionPhase != KernelActionPhase.None ? 1f : 0f;
+            upperBodyLayerWeight = upperBodyBlendSpeed > 0f
+                ? Mathf.MoveTowards(
+                    upperBodyLayerWeight,
+                    goal,
+                    upperBodyBlendSpeed * Time.unscaledDeltaTime)
+                : goal;
+            target.SetLayerWeight(layer, upperBodyLayerWeight);
+        }
+
+        private int ResolveUpperBodyLayer(Animator target)
+        {
+            if (target == null || target.runtimeAnimatorController == null)
+            {
+                return -1;
+            }
+
+            if (upperBodyLayerIndex == UnresolvedLayer)
+            {
+                upperBodyLayerIndex = string.IsNullOrEmpty(upperBodyLayerName)
+                    ? -1
+                    : target.GetLayerIndex(upperBodyLayerName);
+            }
+
+            return upperBodyLayerIndex;
         }
 
         private void ApplyMovementFacing(RenderEntityState state)
