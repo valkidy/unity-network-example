@@ -11,7 +11,4 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/HostMode.unity
     guid: df2fd012487748afb90c783a6169f11d
-  - enabled: 1
-    path: Assets/Scenes/LocomotionTest.unity
-    guid: 68d5bd2f029d44880bc4145c5f0dcc65
   m_configObjects: {}
