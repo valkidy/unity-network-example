@@ -1,5 +1,5 @@
 fileFormatVersion: 2
-guid: 07e7e927e98844d7a951c408661cca54
+guid: 1096913ccc68642709ef7ec9ddf297a3
 ModelImporter:
   serializedVersion: 24200
   internalIDToNameTable: []
@@ -31,7 +31,7 @@ ModelImporter:
     extraUserProperties: []
     clipAnimations:
     - serializedVersion: 16
-      name: skin
+      name: drunk-run-forward
       takeName: mixamo.com
       internalID: -203655887218126122
       firstFrame: 0
