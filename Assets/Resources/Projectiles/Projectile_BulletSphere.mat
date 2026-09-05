@@ -98,7 +98,7 @@ Material:
     - _GlossMapScale: 1
     - _Glossiness: 0.5
     - _GlossyReflections: 1
-    - _Glow: 0.91
+    - _Glow: 2.49
     - _InnerSharpness: 0.54
     - _Metallic: 0
     - _Mode: 0
@@ -108,7 +108,7 @@ Material:
     - _NoiseSpeed: 5
     - _NoiseStrength: 1.31
     - _OcclusionStrength: 1
-    - _OuterThickness: 0.4
+    - _OuterThickness: 0.684
     - _Parallax: 0.02
     - _PulseSpeed: 2
     - _PulseStrength: 0.15
@@ -116,7 +116,7 @@ Material:
     - _RimPower: 2.5
     - _RimStrength: 1.5
     - _SmoothnessTextureChannel: 0
-    - _Softness: 0.1
+    - _Softness: 0.5
     - _SpecularHighlights: 1
     - _SrcBlend: 1
     - _TailCurve: 0.53
@@ -140,9 +140,9 @@ Material:
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
     - _FireColor: {r: 1, g: 0.25, b: 0.02, a: 1}
     - _FireDirection: {r: 0, g: 1, b: 0, a: 0}
-    - _InnerColor: {r: 1, g: 0, b: 0, a: 1}
+    - _InnerColor: {r: 1, g: 0.627451, b: 0.78431374, a: 1}
     - _MidColor: {r: 1, g: 0.65, b: 0.35, a: 1}
-    - _OuterColor: {r: 1, g: 1, b: 1, a: 1}
+    - _OuterColor: {r: 1, g: 0, b: 0, a: 1}
     - _TailDirection: {r: -1, g: 0, b: 0, a: 0}
     - _TravelDirection: {r: 1, g: 0, b: 0, a: 0}
   m_BuildTextureStacks: []
