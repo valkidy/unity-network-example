@@ -172,6 +172,10 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: -7635826562936255635, guid: 6b77253c46d1e48619a9fcab65f571d4, type: 3}
+      propertyPath: m_CastShadows
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -7635826562936255635, guid: 6b77253c46d1e48619a9fcab65f571d4, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
       value: 
       objectReference: {fileID: 2100000, guid: d84aab9d8f32243b0bbdf0eac1b1057b, type: 2}
@@ -436,7 +440,7 @@ MonoBehaviour:
   enableDiagnostics: 0
   diagnosticLogIntervalSeconds: 1
   readyWithoutRenderWarningSeconds: 1
-  enableVisualDebug: 1
+  enableVisualDebug: 0
   inputSubmissionRateHz: 30
   logLegReach: 0
   logSkeletonPoseProvenance: 0
