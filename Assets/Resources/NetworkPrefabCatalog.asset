@@ -14,9 +14,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: NetworkExample.UnityDemo.Runtime::NetworkExample.UnityDemo.Rendering.NetworkPrefabCatalog
   actorPrefabs:
   - actorTemplateId: 1
-    prefab: {fileID: 8954853435508123706, guid: 7864c95d8ab694e728ca579190efa821, type: 3}
+    prefab: {fileID: 5418530430038130503, guid: de79842971be048fa964e98474aabcc0, type: 3}
   - actorTemplateId: 2
-    prefab: {fileID: 8168318100894074229, guid: cf0e677ae8f014a0ea0ee3557601ef3f, type: 3}
+    prefab: {fileID: 4504865450583175258, guid: 0a4d6988b1c564e2192e01fd0a50a6a5, type: 3}
   - actorTemplateId: 20
     prefab: {fileID: 5527427090754095325, guid: 8919db2d272914d298443dd55e63e14d, type: 3}
   - actorTemplateId: 21
@@ -25,6 +25,14 @@ MonoBehaviour:
     prefab: {fileID: 2351338028419751684, guid: 6af92969f53c849048c467fd16892bc7, type: 3}
   - actorTemplateId: 23
     prefab: {fileID: 5793342295124904691, guid: 7d1f014db2ff44b3fbc36cc68c645543, type: 3}
+  - actorTemplateId: 28
+    prefab: {fileID: 4504865450583175258, guid: 0a4d6988b1c564e2192e01fd0a50a6a5, type: 3}
+  - actorTemplateId: 29
+    prefab: {fileID: 1233655091269612524, guid: a2298cf6bc4244beb97e4c09ecd9fbf8, type: 3}
+  - actorTemplateId: 30
+    prefab: {fileID: 4220997861145376553, guid: bbfe2aa30227744888e6ee4f532c09a4, type: 3}
+  - actorTemplateId: 31
+    prefab: {fileID: 4749441780750396083, guid: e171c87fe9230413285d56154b77ae99, type: 3}
   projectilePrefabs:
   - projectileTemplateId: 2
     prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
@@ -49,8 +57,8 @@ MonoBehaviour:
     prefab: {fileID: 2639555752078317490, guid: 0fe89d0f04d9d4ab4a36142c2033fcad, type: 3}
   - itemTemplateId: 204
     prefab: {fileID: 6643457848503167595, guid: 74e02f329fcb740c596bdd8e10952b65, type: 3}
-  playerActorFallback: {fileID: 8954853435508123706, guid: 7864c95d8ab694e728ca579190efa821, type: 3}
-  agentActorFallback: {fileID: 8168318100894074229, guid: cf0e677ae8f014a0ea0ee3557601ef3f, type: 3}
-  projectileFallback: {fileID: 8097695316699210315, guid: 43f4cfe264b7d4e8cb77473b86649519, type: 3}
+  playerActorFallback: {fileID: 5418530430038130503, guid: de79842971be048fa964e98474aabcc0, type: 3}
+  agentActorFallback: {fileID: 4504865450583175258, guid: 0a4d6988b1c564e2192e01fd0a50a6a5, type: 3}
+  projectileFallback: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
   propFallback: {fileID: 7923727376853824161, guid: 4b778f70892c1408b9f70dd911655c5a, type: 3}
-  entityFallback: {fileID: 0}
+  entityFallback: {fileID: 1856945008544614001, guid: fc47cec2e61ab4c74ba57d58878ce6ac, type: 3}
