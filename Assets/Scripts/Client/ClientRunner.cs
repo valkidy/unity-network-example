@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using NetworkExample.Kernel;
 using NetworkExample.Kernel.Client;
@@ -74,6 +75,7 @@ namespace NetworkExample.UnityDemo.Client
         private NetworkEntityRegistry entityRegistry;
         private NetworkRenderStateApplier renderStateApplier;
         private NetworkDebugView debugView;
+        private NetworkHitscanTracers hitscanTracers;
         private ThirdPersonFollowCamera followCamera;
         private readonly NetworkPresentationClock presentationClock = new NetworkPresentationClock();
         private NetworkInputSubmissionClock inputSubmissionClock;
@@ -330,8 +332,16 @@ namespace NetworkExample.UnityDemo.Client
             debugView.SetEnabled(enableVisualDebug);
 
             Debug.Log("ClientRunner configured with input sampler " + inputSampler.GetType().Name);
+            hitscanTracers = GetComponent<NetworkHitscanTracers>();
+            if (hitscanTracers == null)
+            {
+                hitscanTracers = gameObject.AddComponent<NetworkHitscanTracers>();
+            }
+
             Transform entityRoot = NetworkDemoScene.EnsureEntityRoot("Network Entities");
             renderStateApplier.Configure(entityRegistry, prefabRegistry, entityRoot);
+            hitscanTracers.Configure(prefabRegistry, entityRoot);
+            renderStateApplier.ConfigureTracers(hitscanTracers);
         }
 
         private void UpdateCameraTarget(uint localPlayerNetId)
@@ -558,7 +568,41 @@ namespace NetworkExample.UnityDemo.Client
                 return false;
             }
 
+            ConfigureInstantWeaponTracers(bundleBytes, syncResult.Manifest.entry_path);
             return true;
+        }
+
+        /// <summary>
+        /// Hands the tracer component the instant weapons this session's catalog
+        /// declares, so a hitscan or shotgun shot has a reach and a piece of art
+        /// to be drawn with.
+        /// </summary>
+        /// <remarks>
+        /// A warning rather than a failure: this is presentation only. Without it
+        /// those two weapon types fire invisibly and everything else -- including
+        /// all of their damage -- is unaffected.
+        /// </remarks>
+        private void ConfigureInstantWeaponTracers(byte[] bundleBytes, string entryPath)
+        {
+            if (hitscanTracers == null)
+            {
+                return;
+            }
+
+            if (!NetworkGameplayCatalogBundle.TryReadInstantWeaponPresentations(
+                    bundleBytes,
+                    entryPath,
+                    out Dictionary<uint, NetworkInstantWeaponPresentation> weapons,
+                    out string diagnostic))
+            {
+                Debug.LogWarning(
+                    "Client could not read the catalog's instant weapons, so hitscan " +
+                    "and shotgun fire will not be drawn: " + diagnostic,
+                    this);
+                return;
+            }
+
+            hitscanTracers.ConfigureWeapons(weapons);
         }
 
         private static string FormatCatalogSyncResult(GameplayCatalogSyncResult result)

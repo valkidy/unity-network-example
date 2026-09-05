@@ -50,6 +50,10 @@ MonoBehaviour:
     prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
   - projectileTemplateId: 9
     prefab: {fileID: 8097695316699210315, guid: 2f1331d3b73b24471be7bb14bba74b1a, type: 3}
+  - projectileTemplateId: 10
+    prefab: {fileID: 7301948210556230011, guid: 3c58e1d94f2a4b0c8e7d61a52b09f374, type: 3}
+  - projectileTemplateId: 11
+    prefab: {fileID: 7301948210556231011, guid: 9a4f27b6c1de40358bfa2e7d5c84013b, type: 3}
   propPrefabs:
   - itemTemplateId: 3003
     prefab: {fileID: 1918210473873687710, guid: 3ab47a83ed0404599baaf5509417beba, type: 3}

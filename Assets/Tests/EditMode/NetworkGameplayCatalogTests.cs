@@ -1,6 +1,8 @@
+using System.Collections.Generic;
 using System.Security.Cryptography;
 using NetworkExample.UnityDemo.Common;
 using NUnit.Framework;
+using UnityEngine;
 
 namespace NetworkExample.UnityDemo.Tests.EditMode
 {
@@ -46,8 +48,71 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
                 out string diagnostic);
 
             Assert.That(loaded, Is.True, diagnostic);
-            Assert.That(weaponIds, Is.EqualTo(new byte[] { 3, 1, 7 }));
+            // Rocket, shotgun, grenade launcher, rifle -- number keys 1 to 4.
+            Assert.That(weaponIds, Is.EqualTo(new byte[] { 3, 1, 7, 0 }));
             Assert.That(activeWeaponSlot, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void TryReadInstantWeaponPresentations_ReadsTheWeaponsThatSpawnNothing()
+        {
+            Assert.That(
+                NetworkGameplayCatalogBundle.TryLoadDefault(
+                    out byte[] bundleBytes,
+                    out string entryPath),
+                Is.True);
+
+            bool loaded = NetworkGameplayCatalogBundle.TryReadInstantWeaponPresentations(
+                bundleBytes,
+                entryPath,
+                out Dictionary<uint, NetworkInstantWeaponPresentation> weapons,
+                out string diagnostic);
+
+            Assert.That(loaded, Is.True, diagnostic);
+
+            // rifle_fire. The rifle resolves by raycast, so nothing about its shot
+            // reaches a client except this commit.
+            Assert.That(weapons.ContainsKey(4096u), Is.True);
+            NetworkInstantWeaponPresentation rifle = weapons[4096u];
+            Assert.That(rifle.WeaponId, Is.EqualTo(0));
+            Assert.That(rifle.ProjectileTemplateId, Is.EqualTo(10u));
+            Assert.That(rifle.MaxRange, Is.EqualTo(100f));
+            Assert.That(rifle.PelletCount, Is.EqualTo(1));
+
+            // shotgun_fire, whose one commit is five rays.
+            NetworkInstantWeaponPresentation shotgun = weapons[4097u];
+            Assert.That(shotgun.WeaponId, Is.EqualTo(1));
+            Assert.That(shotgun.ProjectileTemplateId, Is.EqualTo(11u));
+            Assert.That(shotgun.MaxRange, Is.EqualTo(40f));
+            Assert.That(shotgun.PelletCount, Is.EqualTo(5));
+            Assert.That(shotgun.PelletSpread, Is.EqualTo(0.035f).Within(1e-6f));
+
+            // rocket_fire. A projectile weapon spawns an entity the client draws
+            // from its render state, and must not be drawn a second time.
+            Assert.That(weapons.ContainsKey(4099u), Is.False);
+        }
+
+        [Test]
+        public void PelletDirection_ReproducesTheFanTheKernelFires()
+        {
+            var shotgun = new NetworkInstantWeaponPresentation(1, 4097, 11, 40f, 5, 0.035f);
+            Vector3 aim = Vector3.right;
+
+            // The middle pellet of five takes no side offset, and an even pellet
+            // is nudged up by half the spread -- weapon_system.cc builds the fan
+            // against world axes, not against the aim's own frame.
+            Vector3 expected = (aim + Vector3.up * 0.5f * 0.035f).normalized;
+
+            Assert.That(
+                Vector3.Angle(shotgun.PelletDirection(aim, 2), expected),
+                Is.LessThan(0.01f));
+            // And the outermost pellet leans a full two spreads to the side.
+            Assert.That(
+                Vector3.Angle(
+                    shotgun.PelletDirection(aim, 4),
+                    (aim + Vector3.forward * 2f * 0.035f + Vector3.up * 0.5f * 0.035f)
+                        .normalized),
+                Is.LessThan(0.01f));
         }
 
         [Test]

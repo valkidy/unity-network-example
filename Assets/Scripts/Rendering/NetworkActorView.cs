@@ -50,7 +50,14 @@ namespace NetworkExample.UnityDemo.Rendering
 
         private Animator animator;
         private KernelSkeletonBinding skeletonBinding;
-        private readonly HashSet<uint> predictedActionInstanceIds = new HashSet<uint>();
+        // How far each predicted local action has been confirmed. A held trigger
+        // is one action that commits over and over -- the rifle commits every 3
+        // ticks for as long as it is held -- and every result for it carries the
+        // running total, not the increment, so the last total seen is what turns
+        // the next result into "n more shots happened".
+        private readonly Dictionary<uint, PredictedAction> predictedActions =
+            new Dictionary<uint, PredictedAction>();
+        private readonly Queue<uint> predictedActionOrder = new Queue<uint>();
         private Quaternion lastMovementRotation;
         private bool hasMovementRotation;
         // -2 unresolved, -1 resolved-absent. Resolved once against the Animator
@@ -60,6 +67,12 @@ namespace NetworkExample.UnityDemo.Rendering
         private float upperBodyLayerWeight;
 
         private const int UnresolvedLayer = -2;
+
+        // An accepted action is never told it has ended -- the ABI reports
+        // Accepted for a commit and for a completion alike -- so the ledger is
+        // bounded instead of cleared. Well past the handful of actions that can
+        // overlap in flight.
+        private const int MaxTrackedPredictedActions = 32;
 
         [Header("Animation")]
         [SerializeField]
@@ -97,7 +110,15 @@ namespace NetworkExample.UnityDemo.Rendering
         public KernelActionPhase ActionPhase { get; private set; }
         public uint ActionInstanceId { get; private set; }
         public float Speed { get; private set; }
+        public uint ActionTemplateId { get; private set; }
         public Vector3 AimDirection { get; private set; }
+
+        /// <summary>
+        /// The replicated aim in world space. <see cref="AimDirection"/> is the
+        /// same vector in this actor's local frame, which is what an Animator
+        /// blend tree wants and what a shot fired along it does not.
+        /// </summary>
+        public Vector3 WorldAimDirection { get; private set; }
         public bool IsMoving { get; private set; }
         public bool IsGrounded { get; private set; }
         public bool IsFalling { get; private set; }
@@ -110,6 +131,13 @@ namespace NetworkExample.UnityDemo.Rendering
         public bool IsIdle { get; private set; }
         public bool IsStale { get; private set; }
         public int PredictedCommitCount { get; private set; }
+
+        /// <summary>
+        /// Commits the server has confirmed for this actor's own predicted
+        /// actions, counting every repeat of a held trigger rather than one per
+        /// press.
+        /// </summary>
+        public int LocalCommitCount { get; private set; }
         public int RemoteCommitCount { get; private set; }
         public int LandedCount { get; private set; }
 
@@ -132,6 +160,7 @@ namespace NetworkExample.UnityDemo.Rendering
             VisualFlags = state.visual_flags;
             ActionPhase = state.action.phase;
             ActionInstanceId = state.action.action_instance_id;
+            ActionTemplateId = state.action.action_template_id;
 
             IsDead = HasFlag(KernelConstants.VisualFlagDead);
             IsReloading = !IsDead && HasFlag(KernelConstants.VisualFlagReloading);
@@ -161,8 +190,11 @@ namespace NetworkExample.UnityDemo.Rendering
                 state.aim_direction.x,
                 state.aim_direction.y,
                 state.aim_direction.z);
-            AimDirection = worldAim.sqrMagnitude > 0.000001f
-                ? transform.InverseTransformDirection(worldAim.normalized)
+            WorldAimDirection = worldAim.sqrMagnitude > 0.000001f
+                ? worldAim.normalized
+                : Vector3.zero;
+            AimDirection = WorldAimDirection != Vector3.zero
+                ? transform.InverseTransformDirection(WorldAimDirection)
                 : Vector3.zero;
 
             Animator target = GetAnimator();
@@ -270,37 +302,90 @@ namespace NetworkExample.UnityDemo.Rendering
         {
             if (IsStale ||
                 intent.action_instance_id == 0 ||
-                !predictedActionInstanceIds.Add(intent.action_instance_id))
+                predictedActions.ContainsKey(intent.action_instance_id))
             {
                 return;
             }
 
+            RememberPredictedAction(
+                intent.action_instance_id,
+                new PredictedAction(intent.binding_id, 0));
             PredictedCommitCount++;
             int trigger = TriggerFor(intent.binding_id);
             SetTriggerIfPresent(GetAnimator(), trigger);
         }
 
-        public void ApplyLocalActionResult(KernelLocalActionResult result)
+        /// <summary>
+        /// Folds one authoritative result into the local player's predicted
+        /// action, and reports how many commits it confirmed that had not been
+        /// seen before.
+        /// </summary>
+        /// <remarks>
+        /// The press is not the shot. A hold-fire weapon presses once and then
+        /// commits on its own cadence for as long as the trigger is down, and
+        /// every one of those commits is a shot that has to be drawn. The result
+        /// carries the running total, so the difference against the total last
+        /// seen is the number of shots this result just announced.
+        /// </remarks>
+        public int ApplyLocalActionResult(KernelLocalActionResult result)
         {
             if (result.action_instance_id == 0 ||
-                !predictedActionInstanceIds.Remove(result.action_instance_id))
+                !predictedActions.TryGetValue(
+                    result.action_instance_id,
+                    out PredictedAction predicted))
             {
-                return;
+                return 0;
+            }
+
+            // Accepted confirms the prediction without replaying its one-shot.
+            // Corrected/rejected end the action and clear only presentation state;
+            // gameplay rollback remains owned by the kernel and authoritative
+            // snapshots.
+            bool ended = result.result == KernelLocalActionResultType.Corrected ||
+                result.result == KernelLocalActionResultType.Rejected;
+            int newCommits = 0;
+            if (!ended && result.confirmed_commit_count > predicted.confirmedCommitCount)
+            {
+                newCommits =
+                    result.confirmed_commit_count - predicted.confirmedCommitCount;
+                predictedActions[result.action_instance_id] = new PredictedAction(
+                    predicted.binding,
+                    result.confirmed_commit_count);
+            }
+
+            if (ended)
+            {
+                predictedActions.Remove(result.action_instance_id);
             }
 
             if (IsStale)
             {
-                return;
+                return 0;
             }
 
-            // Accepted confirms the prediction without replaying its one-shot.
-            // Corrected/rejected clear only presentation state; gameplay rollback
-            // remains owned by the kernel and authoritative snapshots.
-            if (result.result == KernelLocalActionResultType.Corrected ||
-                result.result == KernelLocalActionResultType.Rejected)
+            if (ended)
             {
                 SetBoolIfPresent(GetAnimator(), FiringParameter, false);
                 SetBoolIfPresent(GetAnimator(), ReloadingParameter, false);
+                return 0;
+            }
+
+            if (newCommits > 0)
+            {
+                LocalCommitCount += newCommits;
+                SetTriggerIfPresent(GetAnimator(), TriggerFor(predicted.binding));
+            }
+
+            return newCommits;
+        }
+
+        private void RememberPredictedAction(uint actionInstanceId, PredictedAction predicted)
+        {
+            predictedActions[actionInstanceId] = predicted;
+            predictedActionOrder.Enqueue(actionInstanceId);
+            while (predictedActionOrder.Count > MaxTrackedPredictedActions)
+            {
+                predictedActions.Remove(predictedActionOrder.Dequeue());
             }
         }
 
@@ -454,6 +539,20 @@ namespace NetworkExample.UnityDemo.Rendering
             if (HasParameter(target, parameter, AnimatorControllerParameterType.Trigger))
             {
                 target.SetTrigger(parameter);
+            }
+        }
+
+        private readonly struct PredictedAction
+        {
+            public readonly KernelActionBinding binding;
+            public readonly ushort confirmedCommitCount;
+
+            public PredictedAction(
+                KernelActionBinding binding,
+                ushort confirmedCommitCount)
+            {
+                this.binding = binding;
+                this.confirmedCommitCount = confirmedCommitCount;
             }
         }
 

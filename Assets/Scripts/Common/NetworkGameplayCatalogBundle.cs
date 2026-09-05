@@ -13,6 +13,74 @@ using UnityEditor.PackageManager;
 
 namespace NetworkExample.UnityDemo.Common
 {
+    /// <summary>
+    /// One weapon that resolves its shot instantly -- a hitscan or a shotgun --
+    /// carrying only what drawing that shot needs.
+    /// </summary>
+    /// <remarks>
+    /// Keyed by fire action template rather than by weapon id, because the commit
+    /// a client sees names the action, not the weapon: a FireCommit presentation
+    /// event carries <c>action_template_id</c>, and the local player's own action
+    /// is the one the render state reports.
+    /// </remarks>
+    public readonly struct NetworkInstantWeaponPresentation
+    {
+        public NetworkInstantWeaponPresentation(
+            byte weaponId,
+            uint fireActionTemplateId,
+            uint projectileTemplateId,
+            float maxRange,
+            byte pelletCount,
+            float pelletSpread)
+        {
+            WeaponId = weaponId;
+            FireActionTemplateId = fireActionTemplateId;
+            ProjectileTemplateId = projectileTemplateId;
+            MaxRange = maxRange;
+            PelletCount = pelletCount;
+            PelletSpread = pelletSpread;
+        }
+
+        public byte WeaponId { get; }
+        public uint FireActionTemplateId { get; }
+
+        /// <summary>
+        /// The shot's projectile template. Nothing spawns from it -- an instant
+        /// weapon resolves by raycast -- but it is where the shot's art is bound,
+        /// through the same projectile-template mapping every other weapon uses.
+        /// </summary>
+        public uint ProjectileTemplateId { get; }
+
+        public float MaxRange { get; }
+        public byte PelletCount { get; }
+        public float PelletSpread { get; }
+
+        /// <summary>
+        /// The direction of one pellet, reproducing the fan the kernel fires.
+        /// </summary>
+        /// <remarks>
+        /// The pattern is fixed rather than random -- see pellet_directions in
+        /// weapon_system.cc -- so a client can draw the exact rays the server
+        /// resolved instead of an approximation of them. It is built against
+        /// world axes there too, not against the aim's own frame, which is why
+        /// this offsets by world forward and up.
+        /// </remarks>
+        public Vector3 PelletDirection(Vector3 aim, int pellet)
+        {
+            if (PelletCount <= 1 || PelletSpread == 0f)
+            {
+                return aim;
+            }
+
+            int offset = pellet - PelletCount / 2;
+            float sideOffset = offset * PelletSpread;
+            float upOffset = (pellet % 2 == 0 ? 0.5f : -0.5f) * PelletSpread;
+            Vector3 direction =
+                aim + Vector3.forward * sideOffset + Vector3.up * upOffset;
+            return direction.sqrMagnitude <= 1e-8f ? aim : direction.normalized;
+        }
+    }
+
     public static class NetworkGameplayCatalogBundle
     {
         public const string DefaultBundleDisplayPath =
@@ -256,6 +324,165 @@ namespace NetworkExample.UnityDemo.Common
             return fileName.Substring(0, fileName.Length - ManifestSuffix.Length);
         }
 
+        /// <summary>
+        /// Reads every weapon that resolves instantly, keyed by the fire action
+        /// template whose commits a client can see.
+        /// </summary>
+        /// <remarks>
+        /// A client has no other way to draw these. Hitscan and shotgun spawn no
+        /// entity, so no render state ever describes their shot; the segment
+        /// collider the server materializes is not visible either, because the
+        /// kernel rebuilds a client's collider registry from render states every
+        /// tick and never predicts an instant weapon locally. Only the action
+        /// commit arrives -- and it names an action template, which is what this
+        /// resolves into a reach, a pellet pattern, and the projectile template
+        /// the shot's art is bound to.
+        ///
+        /// Weapons that are not instant are skipped rather than reported: they
+        /// already reach the client as entities and draw themselves.
+        /// </remarks>
+        public static bool TryReadInstantWeaponPresentations(
+            byte[] bundleBytes,
+            string entryPath,
+            out Dictionary<uint, NetworkInstantWeaponPresentation> byFireActionTemplateId,
+            out string diagnostic)
+        {
+            byFireActionTemplateId = null;
+            diagnostic = null;
+            if (bundleBytes == null || bundleBytes.Length == 0)
+            {
+                diagnostic = "Gameplay catalog bundle is empty.";
+                return false;
+            }
+
+            try
+            {
+                using (var stream = new MemoryStream(bundleBytes, false))
+                using (var archive = new ZipArchive(stream, ZipArchiveMode.Read, false))
+                {
+                    if (!TryReadTextEntry(
+                            archive,
+                            entryPath,
+                            out string catalogYaml,
+                            out diagnostic))
+                    {
+                        return false;
+                    }
+
+                    if (!TryReadTopLevelScalar(
+                            catalogYaml,
+                            "weapon_template_dir",
+                            out string weaponDirectory) ||
+                        !TryReadTopLevelScalar(
+                            catalogYaml,
+                            "action_template_dir",
+                            out string actionDirectory) ||
+                        !TryReadTopLevelScalar(
+                            catalogYaml,
+                            "projectile_template_dir",
+                            out string projectileDirectory))
+                    {
+                        diagnostic =
+                            "Gameplay catalog does not declare weapon_template_dir, " +
+                            "action_template_dir and projectile_template_dir together, " +
+                            "so an instant weapon cannot be resolved to the action that " +
+                            "commits it or to the template its art is bound to.";
+                        return false;
+                    }
+
+                    if (!TryReadTemplateIdsByName(
+                            archive,
+                            actionDirectory,
+                            out Dictionary<string, uint> actionTemplateIds,
+                            out diagnostic) ||
+                        !TryReadTemplateIdsByName(
+                            archive,
+                            projectileDirectory,
+                            out Dictionary<string, uint> projectileTemplateIds,
+                            out diagnostic))
+                    {
+                        return false;
+                    }
+
+                    var found = new Dictionary<uint, NetworkInstantWeaponPresentation>();
+                    string directory =
+                        NormalizeArchivePath(Unquote(weaponDirectory)).TrimEnd('/') + "/";
+                    foreach (ZipArchiveEntry entry in archive.Entries)
+                    {
+                        string path = entry.FullName.Replace('\\', '/');
+                        if (!path.StartsWith(directory, StringComparison.Ordinal) ||
+                            !path.EndsWith(".yaml", StringComparison.Ordinal))
+                        {
+                            continue;
+                        }
+
+                        string weaponYaml = ReadEntryText(entry);
+                        if (!TryReadTopLevelScalar(
+                                weaponYaml,
+                                "weapon_type",
+                                out string weaponType) ||
+                            (weaponType != "hitscan" && weaponType != "shotgun"))
+                        {
+                            continue;
+                        }
+
+                        if (!TryReadTopLevelScalar(
+                                weaponYaml,
+                                "fire_action_template",
+                                out string fireActionName) ||
+                            !actionTemplateIds.TryGetValue(
+                                Unquote(fireActionName),
+                                out uint fireActionTemplateId))
+                        {
+                            // An instant weapon the catalog cannot tie to an action
+                            // is one this client will never be told about. Skipping
+                            // it leaves the rest drawable.
+                            continue;
+                        }
+
+                        uint projectileTemplateId = 0;
+                        if (TryReadTopLevelScalar(
+                                weaponYaml,
+                                "projectile_template",
+                                out string projectileName))
+                        {
+                            projectileTemplateIds.TryGetValue(
+                                Unquote(projectileName),
+                                out projectileTemplateId);
+                        }
+
+                        if (!TryReadTopLevelScalar(weaponYaml, "id", out string idText) ||
+                            !byte.TryParse(
+                                idText,
+                                NumberStyles.None,
+                                CultureInfo.InvariantCulture,
+                                out byte weaponId))
+                        {
+                            diagnostic = path + " declares no valid weapon id.";
+                            return false;
+                        }
+
+                        found[fireActionTemplateId] = new NetworkInstantWeaponPresentation(
+                            weaponId,
+                            fireActionTemplateId,
+                            projectileTemplateId,
+                            ReadFloat(weaponYaml, "max_range", 0f),
+                            ReadByte(weaponYaml, "pellet_count", 1),
+                            ReadFloat(weaponYaml, "pellet_spread", 0f));
+                    }
+
+                    byFireActionTemplateId = found;
+                    return true;
+                }
+            }
+            catch (Exception exception)
+            {
+                diagnostic =
+                    "Gameplay catalog weapon template read failed: " + exception.Message;
+                return false;
+            }
+        }
+
         public static bool TryLoadSynchronizedBundle(
             string cacheDirectory,
             string serverAddress,
@@ -410,6 +637,88 @@ namespace NetworkExample.UnityDemo.Common
                 text = reader.ReadToEnd();
             }
             return true;
+        }
+
+        /// <summary>
+        /// Maps every template in a directory from its authored name to its id.
+        /// Templates reference each other by name and the ABI carries ids, so
+        /// this is the join between the two.
+        /// </summary>
+        private static bool TryReadTemplateIdsByName(
+            ZipArchive archive,
+            string directoryName,
+            out Dictionary<string, uint> idsByName,
+            out string diagnostic)
+        {
+            idsByName = null;
+            diagnostic = null;
+            string directory =
+                NormalizeArchivePath(Unquote(directoryName)).TrimEnd('/') + "/";
+            if (directory.Length <= 1)
+            {
+                diagnostic = "Gameplay catalog declares an invalid template directory.";
+                return false;
+            }
+
+            var found = new Dictionary<string, uint>(StringComparer.Ordinal);
+            foreach (ZipArchiveEntry entry in archive.Entries)
+            {
+                string path = entry.FullName.Replace('\\', '/');
+                if (!path.StartsWith(directory, StringComparison.Ordinal) ||
+                    !path.EndsWith(".yaml", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                string yaml = ReadEntryText(entry);
+                if (!TryReadTopLevelScalar(yaml, "name", out string name) ||
+                    !TryReadTopLevelScalar(yaml, "id", out string idText) ||
+                    !uint.TryParse(
+                        idText,
+                        NumberStyles.None,
+                        CultureInfo.InvariantCulture,
+                        out uint templateId))
+                {
+                    continue;
+                }
+
+                found[name] = templateId;
+            }
+
+            idsByName = found;
+            return true;
+        }
+
+        private static string ReadEntryText(ZipArchiveEntry entry)
+        {
+            using (var reader = new StreamReader(entry.Open(), Encoding.UTF8))
+            {
+                return reader.ReadToEnd();
+            }
+        }
+
+        private static float ReadFloat(string yaml, string key, float fallback)
+        {
+            return TryReadTopLevelScalar(yaml, key, out string text) &&
+                float.TryParse(
+                    text,
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out float value)
+                ? value
+                : fallback;
+        }
+
+        private static byte ReadByte(string yaml, string key, byte fallback)
+        {
+            return TryReadTopLevelScalar(yaml, key, out string text) &&
+                byte.TryParse(
+                    text,
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out byte value)
+                ? value
+                : fallback;
         }
 
         private static string BuildEntityTemplatePath(string directory, string templateName)

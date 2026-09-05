@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using NetworkExample.Kernel;
 using NetworkExample.Kernel.Host;
 using NetworkExample.UnityDemo.CameraSystem;
@@ -37,6 +38,7 @@ namespace NetworkExample.UnityDemo.Host
         private NetworkEntityRegistry entityRegistry;
         private NetworkRenderStateApplier renderStateApplier;
         private NetworkDebugView debugView;
+        private NetworkHitscanTracers hitscanTracers;
         private ThirdPersonFollowCamera followCamera;
         private readonly NetworkPresentationClock presentationClock = new NetworkPresentationClock();
         private bool started;
@@ -69,6 +71,7 @@ namespace NetworkExample.UnityDemo.Host
                 {
                     return;
                 }
+                ConfigureInstantWeaponTracers(bundleBytes, entryPath);
                 // Bone layouts and the template-to-skeleton pairing come out of
                 // the same bytes the host is about to simulate. Without them a
                 // rigged actor's KernelSkeletonBinding cannot validate, and every
@@ -252,8 +255,16 @@ namespace NetworkExample.UnityDemo.Host
             }
             debugView.SetEnabled(enableVisualDebug);
 
+            hitscanTracers = GetComponent<NetworkHitscanTracers>();
+            if (hitscanTracers == null)
+            {
+                hitscanTracers = gameObject.AddComponent<NetworkHitscanTracers>();
+            }
+
             Transform entityRoot = NetworkDemoScene.EnsureEntityRoot("Network Entities");
             renderStateApplier.Configure(entityRegistry, prefabRegistry, entityRoot);
+            hitscanTracers.Configure(prefabRegistry, entityRoot);
+            renderStateApplier.ConfigureTracers(hitscanTracers);
         }
 
         private void UpdateCameraTarget(uint localPlayerNetId)
@@ -293,6 +304,39 @@ namespace NetworkExample.UnityDemo.Host
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Hands the tracer component the instant weapons this session's catalog
+        /// declares, so a hitscan or shotgun shot has a reach and a piece of art
+        /// to be drawn with.
+        /// </summary>
+        /// <remarks>
+        /// A warning rather than a failure: this is presentation only. Without it
+        /// those two weapon types fire invisibly and everything else -- including
+        /// all of their damage -- is unaffected.
+        /// </remarks>
+        private void ConfigureInstantWeaponTracers(byte[] bundleBytes, string entryPath)
+        {
+            if (hitscanTracers == null)
+            {
+                return;
+            }
+
+            if (!NetworkGameplayCatalogBundle.TryReadInstantWeaponPresentations(
+                    bundleBytes,
+                    entryPath,
+                    out Dictionary<uint, NetworkInstantWeaponPresentation> weapons,
+                    out string diagnostic))
+            {
+                Debug.LogWarning(
+                    "HostMode could not read the catalog's instant weapons, so hitscan " +
+                    "and shotgun fire will not be drawn: " + diagnostic,
+                    this);
+                return;
+            }
+
+            hitscanTracers.ConfigureWeapons(weapons);
         }
 
         private void MarkInitialLocalJoinForwardedFromEvents(uint eventCount)

@@ -19,6 +19,13 @@ namespace NetworkExample.UnityDemo.Rendering
         [SerializeField]
         private Transform entityRoot;
 
+        [SerializeField]
+        [Tooltip(
+            "Draws the shots of weapons that spawn nothing to draw. Optional: " +
+            "without it hitscan and shotgun fire is invisible, and every other " +
+            "weapon is unaffected.")]
+        private NetworkHitscanTracers hitscanTracers;
+
         private readonly HashSet<ulong> visibleThisFrame = new HashSet<ulong>();
         private readonly Dictionary<ulong, KnownEntity> knownEntities =
             new Dictionary<ulong, KnownEntity>();
@@ -48,6 +55,11 @@ namespace NetworkExample.UnityDemo.Rendering
             entityRegistry = registry;
             prefabRegistry = prefabs;
             entityRoot = root;
+        }
+
+        public void ConfigureTracers(NetworkHitscanTracers tracers)
+        {
+            hitscanTracers = tracers;
         }
 
         public void Apply(RenderEntityState[] states, int count)
@@ -220,7 +232,13 @@ namespace NetworkExample.UnityDemo.Rendering
             int safeCount = Mathf.Clamp(count, 0, results.Length);
             for (int index = 0; index < safeCount; ++index)
             {
-                view.ApplyLocalActionResult(results[index]);
+                // A held trigger commits repeatedly under one action instance, so
+                // one result can confirm several shots at once. Each is drawn.
+                int commits = view.ApplyLocalActionResult(results[index]);
+                for (int commit = 0; commit < commits; ++commit)
+                {
+                    TryDrawInstantShot(visual, view, view.ActionTemplateId);
+                }
             }
         }
 
@@ -261,6 +279,14 @@ namespace NetworkExample.UnityDemo.Rendering
                     }
 
                     view.PlayRemoteCommit(remoteEvent, commitIndex);
+                    if (remoteEvent.event_type ==
+                        KernelRemoteActionPresentationEventType.FireCommit)
+                    {
+                        TryDrawInstantShot(
+                            visual,
+                            view,
+                            remoteEvent.action_template_id);
+                    }
                 }
             }
         }
@@ -317,6 +343,34 @@ namespace NetworkExample.UnityDemo.Rendering
                     visibleThisFrame.Remove(entityKey);
                 }
             }
+        }
+
+        /// <summary>
+        /// Draws one commit as an instant weapon's shot, if that is what the
+        /// action is.
+        /// </summary>
+        /// <remarks>
+        /// Every other kind of fire commit already has an entity behind it and is
+        /// drawn from its render state, so the tracer table's own answer -- does
+        /// this action template belong to a hitscan or a shotgun -- is the whole
+        /// filter. The ray comes from where the actor is being drawn right now
+        /// and the aim it last replicated, which is the same pair the server fired
+        /// from, offset to the muzzle by the tracer component.
+        /// </remarks>
+        private void TryDrawInstantShot(
+            GameObject visual,
+            NetworkActorView view,
+            uint actionTemplateId)
+        {
+            if (hitscanTracers == null || visual == null || actionTemplateId == 0)
+            {
+                return;
+            }
+
+            hitscanTracers.TryFire(
+                actionTemplateId,
+                visual.transform.position,
+                view.WorldAimDirection);
         }
 
         private static bool ShouldRender(RenderEntityState state)

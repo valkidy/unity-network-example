@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using NetworkExample.Kernel;
+using NetworkExample.UnityDemo.Common;
 using NetworkExample.UnityDemo.Rendering;
 using NUnit.Framework;
 using UnityEngine;
@@ -603,6 +605,246 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             applier.Apply(System.Array.Empty<RenderEntityState>(), 0);
 
             Assert.That(rootObject.transform.childCount, Is.Zero);
+        }
+
+        [Test]
+        public void DefaultPrefabCatalog_BindsTracerArtForTheWeaponsThatSpawnNothing()
+        {
+            NetworkPrefabCatalog catalog = Resources.Load<NetworkPrefabCatalog>(
+                NetworkPrefabRegistry.DefaultCatalogResourcePath);
+
+            // rifle_shot and shotgun_shot. Nothing spawns from either -- both
+            // weapons resolve by raycast -- but the template is where their art
+            // is bound, and NetworkHitscanTracers looks for exactly this.
+            Assert.That(
+                catalog.TryGetProjectilePrefab(10, out GameObject rifleShot),
+                Is.True,
+                "rifle_shot has no tracer art");
+            Assert.That(
+                catalog.TryGetProjectilePrefab(11, out GameObject shotgunShot),
+                Is.True,
+                "shotgun_shot has no tracer art");
+            Assert.That(rifleShot, Is.Not.SameAs(shotgunShot));
+
+            // The tracer stretches one body mesh along its local +Z, so the art
+            // has to be a root with exactly that child under it.
+            foreach (GameObject art in new[] { rifleShot, shotgunShot })
+            {
+                Assert.That(art.GetComponent<NetworkTracerView>(), Is.Not.Null, art.name);
+                Assert.That(art.transform.childCount, Is.EqualTo(1), art.name);
+                Assert.That(
+                    art.transform.GetChild(0).GetComponent<MeshRenderer>(),
+                    Is.Not.Null,
+                    art.name);
+            }
+        }
+
+        [Test]
+        public void InstantShot_DrawsWithTheArtBoundToItsProjectileTemplate()
+        {
+            NetworkHitscanTracers tracers = ConfigureRifleTracers();
+
+            tracers.TryFire(RifleFireActionTemplateId, Vector3.zero, Vector3.forward);
+
+            NetworkTracerView tracer =
+                rootObject.GetComponentInChildren<NetworkTracerView>(true);
+            Assert.That(tracer, Is.Not.Null);
+            // The catalog's prefab rather than the procedural line, which is only
+            // there for a template nothing is bound to.
+            Material material =
+                tracer.GetComponentInChildren<MeshRenderer>(true).sharedMaterial;
+            Assert.That(material.name, Is.EqualTo("Projectile_RifleTracer"));
+            // A material whose shader reference did not resolve still loads, under
+            // the error shader, and renders magenta rather than reporting itself.
+            Assert.That(
+                material.shader.name,
+                Is.EqualTo("Universal Render Pipeline/Unlit"));
+        }
+
+        [Test]
+        public void HeldTriggerCommits_DrawOneInstantShotEach()
+        {
+            NetworkHitscanTracers tracers = ConfigureRifleTracers();
+            NetworkActorView view = AimedActor(9, 103, RifleFireActionTemplateId);
+
+            applier.BeginPredictedLocalAction(
+                103,
+                new KernelActionIntent
+                {
+                    action_instance_id = 5,
+                    binding_id = KernelActionBinding.PrimaryFire,
+                });
+            applier.ApplyLocalActionResults(103, new[] { Committed(5, 1) }, 1);
+            applier.ApplyLocalActionResults(103, new[] { Committed(5, 3) }, 1);
+
+            // One press, three shots. A hold-fire weapon commits again and again
+            // under the same action instance, and each result carries the running
+            // total rather than the increment.
+            Assert.That(view.PredictedCommitCount, Is.EqualTo(1));
+            Assert.That(view.LocalCommitCount, Is.EqualTo(3));
+            Assert.That(tracers.LiveTracerCount, Is.EqualTo(3));
+        }
+
+        [Test]
+        public void RepeatedLocalActionResult_ConfirmsNoExtraShots()
+        {
+            NetworkHitscanTracers tracers = ConfigureRifleTracers();
+            NetworkActorView view = AimedActor(9, 103, RifleFireActionTemplateId);
+            applier.BeginPredictedLocalAction(
+                103,
+                new KernelActionIntent
+                {
+                    action_instance_id = 5,
+                    binding_id = KernelActionBinding.PrimaryFire,
+                });
+
+            applier.ApplyLocalActionResults(103, new[] { Committed(5, 1) }, 1);
+            applier.ApplyLocalActionResults(103, new[] { Committed(5, 1) }, 1);
+
+            Assert.That(view.LocalCommitCount, Is.EqualTo(1));
+            Assert.That(tracers.LiveTracerCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void RemoteFireCommit_DrawsOneInstantShotPerCommit()
+        {
+            NetworkHitscanTracers tracers = ConfigureRifleTracers();
+            AimedActor(9, 103, RifleFireActionTemplateId);
+            var remoteEvent = new KernelRemoteActionPresentationEvent
+            {
+                actor_net_id = 103,
+                action_template_id = RifleFireActionTemplateId,
+                action_instance_id = 12,
+                first_commit_index = 0,
+                commit_count = 2,
+                event_type = KernelRemoteActionPresentationEventType.FireCommit,
+            };
+
+            applier.ApplyRemoteActionPresentationEvents(new[] { remoteEvent }, 1);
+            applier.ApplyRemoteActionPresentationEvents(new[] { remoteEvent }, 1);
+
+            // The second delivery is the same two commits, and a replayed commit
+            // is not a second shot.
+            Assert.That(tracers.LiveTracerCount, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void RemoteFireCommit_DrawsNothingForAWeaponThatSpawnsItsOwnShot()
+        {
+            NetworkHitscanTracers tracers = ConfigureRifleTracers();
+            AimedActor(9, 103, RocketFireActionTemplateId);
+
+            applier.ApplyRemoteActionPresentationEvents(
+                new[]
+                {
+                    new KernelRemoteActionPresentationEvent
+                    {
+                        actor_net_id = 103,
+                        action_template_id = RocketFireActionTemplateId,
+                        action_instance_id = 12,
+                        commit_count = 1,
+                        event_type = KernelRemoteActionPresentationEventType.FireCommit,
+                    },
+                },
+                1);
+
+            // A rocket reaches the client as a projectile entity and is drawn from
+            // its render state. Drawing a tracer for it too would double the shot.
+            Assert.That(tracers.LiveTracerCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void InstantShot_PointsDownTheReplicatedAimFromTheMuzzle()
+        {
+            NetworkHitscanTracers tracers = ConfigureRifleTracers();
+            AimedActor(9, 103, RifleFireActionTemplateId);
+
+            tracers.TryFire(RifleFireActionTemplateId, Vector3.zero, Vector3.forward);
+
+            NetworkTracerView tracer =
+                rootObject.GetComponentInChildren<NetworkTracerView>(true);
+            Assert.That(tracer, Is.Not.Null);
+            Assert.That(tracer.IsPlaying, Is.True);
+            // The kernel fires from position + (0, 1, 0).
+            Assert.That(tracer.transform.position, Is.EqualTo(Vector3.up));
+            Assert.That(
+                Vector3.Angle(tracer.transform.forward, Vector3.forward),
+                Is.LessThan(0.01f));
+        }
+
+        [Test]
+        public void Tracer_ExpiresOnceItsDurationHasRun()
+        {
+            NetworkHitscanTracers tracers = ConfigureRifleTracers();
+            AimedActor(9, 103, RifleFireActionTemplateId);
+            tracers.TryFire(RifleFireActionTemplateId, Vector3.zero, Vector3.forward);
+
+            tracers.Tick(1f);
+
+            Assert.That(tracers.LiveTracerCount, Is.EqualTo(0));
+        }
+
+        private const uint RifleFireActionTemplateId = 4096;
+        private const uint RocketFireActionTemplateId = 4099;
+
+        private NetworkHitscanTracers ConfigureRifleTracers()
+        {
+            NetworkHitscanTracers tracers =
+                gameObject.AddComponent<NetworkHitscanTracers>();
+            tracers.Configure(prefabRegistry, rootObject.transform);
+            tracers.ConfigureWeapons(
+                new Dictionary<uint, NetworkInstantWeaponPresentation>
+                {
+                    {
+                        RifleFireActionTemplateId,
+                        new NetworkInstantWeaponPresentation(
+                            0,
+                            RifleFireActionTemplateId,
+                            10,
+                            100f,
+                            1,
+                            0f)
+                    },
+                });
+            applier.ConfigureTracers(tracers);
+            return tracers;
+        }
+
+        /// <summary>
+        /// An actor with a replicated aim and a running action, which is what a
+        /// commit needs to become a ray.
+        /// </summary>
+        private NetworkActorView AimedActor(
+            ulong entityId,
+            uint netId,
+            uint actionTemplateId)
+        {
+            GameObject visual = RegisterActorVisual(entityId, netId);
+            NetworkActorView view = visual.GetComponent<NetworkActorView>();
+            RenderEntityState state = State(
+                netId,
+                KernelEntityType.Actor,
+                new KernelVec3(),
+                KernelActorType.Player);
+            state.aim_direction = new KernelVec3(0f, 0f, 1f);
+            state.action = new KernelActionRuntimeView
+            {
+                action_template_id = actionTemplateId,
+            };
+            view.ApplyContinuousState(state);
+            return view;
+        }
+
+        private static KernelLocalActionResult Committed(
+            uint actionInstanceId,
+            ushort confirmedCommitCount)
+        {
+            return new KernelLocalActionResult
+            {
+                action_instance_id = actionInstanceId,
+                confirmed_commit_count = confirmedCommitCount,
+                result = KernelLocalActionResultType.Accepted,
+            };
         }
 
         private GameObject RegisterActorVisual(ulong entityId, ulong netId)
