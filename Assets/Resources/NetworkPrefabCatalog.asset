@@ -33,6 +33,8 @@ MonoBehaviour:
     prefab: {fileID: 4220997861145376553, guid: bbfe2aa30227744888e6ee4f532c09a4, type: 3}
   - actorTemplateId: 31
     prefab: {fileID: 4749441780750396083, guid: e171c87fe9230413285d56154b77ae99, type: 3}
+  - actorTemplateId: 32
+    prefab: {fileID: 6134165472674898906, guid: a910368174d2c4aef844e9c86fa090b4, type: 3}
   projectilePrefabs:
   - projectileTemplateId: 2
     prefab: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
