@@ -468,11 +468,10 @@ namespace NetworkExample.UnityDemo.EditorTools
             }
 
             // Pick the shader the project's *active* pipeline can actually render.
-            // This project ships the URP package and URP global settings but has no
-            // UniversalRenderPipelineAsset assigned in Graphics settings, so it runs
-            // the built-in pipeline -- where a "Universal Render Pipeline/Lit"
-            // material draws magenta. Assign a URP asset and this picks URP/Lit
-            // instead; leave it unassigned and Standard is the correct choice.
+            // This project now assigns Assets/Settings/URP-Pipeline.asset in Graphics
+            // settings, so this takes the URP/Lit branch. The Standard branch stays as
+            // the correct choice if the URP asset is ever unassigned -- picking the
+            // wrong one of the two draws magenta either way.
             bool scriptableRenderPipeline =
                 GraphicsSettings.currentRenderPipeline != null;
             Shader shader = scriptableRenderPipeline
