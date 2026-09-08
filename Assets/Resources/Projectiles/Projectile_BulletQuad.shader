@@ -21,6 +21,7 @@ Shader "Unlit/BulletQuad"
         {
             "Queue"="Transparent"
             "RenderType"="Transparent"
+            "RenderPipeline"="UniversalPipeline"
         }
 
         Blend SrcAlpha OneMinusSrcAlpha
@@ -29,12 +30,15 @@ Shader "Unlit/BulletQuad"
 
         Pass
         {
-            CGPROGRAM
+            Name "ForwardUnlit"
+            Tags { "LightMode"="UniversalForward" }
+
+            HLSLPROGRAM
 
             #pragma vertex vert
             #pragma fragment frag
 
-            #include "UnityCG.cginc"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
             struct appdata
             {
@@ -48,17 +52,23 @@ Shader "Unlit/BulletQuad"
                 float2 uv : TEXCOORD0;
             };
 
-            float4 _InnerColor;
-            float4 _OuterColor;
+            TEXTURE2D(_MaskTex);
+            SAMPLER(sampler_MaskTex);
 
-            sampler2D _MaskTex;
-            float4 _MaskTex_ST;
+            // Every non-texture material property has to live in this buffer, otherwise
+            // the SRP Batcher rejects the shader.
+            CBUFFER_START(UnityPerMaterial)
+                float4 _InnerColor;
+                float4 _OuterColor;
 
-            float _MaskThreshold;
-            float _MaskSoftness;
-            float _InvertMask;
-            float _Glow;
-            float _CenterFocus;
+                float4 _MaskTex_ST;
+
+                float _MaskThreshold;
+                float _MaskSoftness;
+                float _InvertMask;
+                float _Glow;
+                float _CenterFocus;
+            CBUFFER_END
 
             v2f vert(appdata v)
             {
@@ -77,26 +87,26 @@ Shader "Unlit/BulletQuad"
                 float3 worldRight = cross(float3(0, 1, 0), cameraForward);
 
                 // Keep the object's scale, drop only its rotation.
-                float2 scale = float2(length(unity_ObjectToWorld._m00_m10_m20),
-                                      length(unity_ObjectToWorld._m01_m11_m21));
+                float2 scale = float2(length(GetObjectToWorldMatrix()._m00_m10_m20),
+                                      length(GetObjectToWorldMatrix()._m01_m11_m21));
 
                 // Span the quad in object space so the final transform is the
-                // same UnityObjectToClipPos a plain unlit shader uses, and the
-                // pivot comes from unity_ObjectToWorld untouched.
-                float3 objectRight = mul((float3x3) unity_WorldToObject, worldRight);
-                float3 objectUp = mul((float3x3) unity_WorldToObject, float3(0, 1, 0));
+                // same TransformObjectToHClip a plain unlit shader uses, and the
+                // pivot comes from the object-to-world matrix untouched.
+                float3 objectRight = mul((float3x3) GetWorldToObjectMatrix(), worldRight);
+                float3 objectUp = mul((float3x3) GetWorldToObjectMatrix(), float3(0, 1, 0));
 
                 float3 positionOS = objectRight * (v.vertex.x * scale.x)
                     + objectUp * (v.vertex.y * scale.y);
 
-                o.vertex = UnityObjectToClipPos(positionOS);
+                o.vertex = TransformObjectToHClip(positionOS);
                 o.uv = TRANSFORM_TEX(v.uv, _MaskTex);
                 return o;
             }
 
-            fixed4 frag(v2f i) : SV_Target
+            half4 frag(v2f i) : SV_Target
             {
-                float4 maskTexel = tex2D(_MaskTex, i.uv);
+                float4 maskTexel = SAMPLE_TEXTURE2D(_MaskTex, sampler_MaskTex, i.uv);
 
                 float guide = maskTexel.r;
                 guide = lerp(guide, 1.0 - guide, _InvertMask);
@@ -122,7 +132,7 @@ Shader "Unlit/BulletQuad"
                 return col;
             }
 
-            ENDCG
+            ENDHLSL
         }
     }
 }

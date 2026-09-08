@@ -15,6 +15,7 @@ Shader "Unlit/BulletSphere"
         {
             "Queue"="Transparent"
             "RenderType"="Transparent"
+            "RenderPipeline"="UniversalPipeline"
         }
 
         Blend SrcAlpha OneMinusSrcAlpha
@@ -23,12 +24,15 @@ Shader "Unlit/BulletSphere"
 
         Pass
         {
-            CGPROGRAM
+            Name "ForwardUnlit"
+            Tags { "LightMode"="UniversalForward" }
+
+            HLSLPROGRAM
 
             #pragma vertex vert
             #pragma fragment frag
 
-            #include "UnityCG.cginc"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
             struct appdata
             {
@@ -43,27 +47,31 @@ Shader "Unlit/BulletSphere"
                 float3 worldNormal : TEXCOORD1;
             };
 
-            float4 _InnerColor;
-            float4 _OuterColor;
-            float _OuterThickness;
-            float _Softness;
-            float _Glow;
+            // Every non-texture material property has to live in this buffer, otherwise
+            // the SRP Batcher rejects the shader.
+            CBUFFER_START(UnityPerMaterial)
+                float4 _InnerColor;
+                float4 _OuterColor;
+                float _OuterThickness;
+                float _Softness;
+                float _Glow;
+            CBUFFER_END
 
             v2f vert(appdata v)
             {
                 v2f o;
 
-                o.vertex = UnityObjectToClipPos(v.vertex);
-                o.worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
-                o.worldNormal = UnityObjectToWorldNormal(v.normal);
+                o.vertex = TransformObjectToHClip(v.vertex.xyz);
+                o.worldPos = TransformObjectToWorld(v.vertex.xyz);
+                o.worldNormal = TransformObjectToWorldNormal(v.normal);
 
                 return o;
             }
 
-            fixed4 frag(v2f i) : SV_Target
+            half4 frag(v2f i) : SV_Target
             {
                 float3 N = normalize(i.worldNormal);
-                float3 V = normalize(_WorldSpaceCameraPos.xyz - i.worldPos);
+                float3 V = normalize(GetCameraPositionWS() - i.worldPos);
 
                 float ndv = abs(dot(N, V));
 
@@ -88,7 +96,7 @@ Shader "Unlit/BulletSphere"
                 return col;
             }
 
-            ENDCG
+            ENDHLSL
         }
     }
 }

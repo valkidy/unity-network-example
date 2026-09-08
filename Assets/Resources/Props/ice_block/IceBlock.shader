@@ -28,22 +28,50 @@ Shader "Unlit/IceBlock"
         Tags
         {
             "RenderType"="Opaque"
+            "RenderPipeline"="UniversalPipeline"
         }
 
         LOD 100
 
+        HLSLINCLUDE
+        #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+        // Every non-texture material property has to live in this buffer, otherwise
+        // the SRP Batcher rejects the shader.
+        CBUFFER_START(UnityPerMaterial)
+            float4 _MainTex_ST;
+
+            float4 _IceColor;
+
+            float _NoiseScale;
+            float _NoiseStrength;
+            float _NoiseEpslion;
+
+            float _Absorption;
+            float _Thickness;
+
+            float _ReflectionStrength;
+            float _RefractionStrength;
+
+            float4 _BoxHalfExtents;
+            float _RoundRadius;
+            float _RoundCornerStrength;
+        CBUFFER_END
+        ENDHLSL
+
         Pass
         {
+            Name "ForwardUnlit"
+            Tags { "LightMode"="UniversalForward" }
+
             ZWrite On
             Cull Back
 
-            CGPROGRAM
+            HLSLPROGRAM
 
             #pragma vertex vert
             #pragma fragment frag
-            #pragma multi_compile_fog
-
-            #include "UnityCG.cginc"
+            #include_with_pragmas "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Fog.hlsl"
 
             struct appdata
             {
@@ -62,29 +90,14 @@ Shader "Unlit/IceBlock"
                 float3 worldNormal : TEXCOORD2;
                 float3 localPos : TEXCOORD3;
 
-                UNITY_FOG_COORDS(4)
+                float fogFactor : TEXCOORD4;
             };
 
-            sampler2D _MainTex;
-            float4 _MainTex_ST;
+            TEXTURE2D(_MainTex);
+            SAMPLER(sampler_MainTex);
 
-            samplerCUBE _Environment;
-
-            float4 _IceColor;
-
-            float _NoiseScale;
-            float _NoiseStrength;
-            float _NoiseEpslion;
-
-            float _Absorption;
-            float _Thickness;
-
-            float _ReflectionStrength;
-            float _RefractionStrength;
-
-            float4 _BoxHalfExtents;
-            float _RoundRadius;
-            float _RoundCornerStrength;
+            TEXTURECUBE(_Environment);
+            SAMPLER(sampler_Environment);
 
             // ------------------------------------------------------------
             // Hash / Noise
@@ -206,19 +219,19 @@ Shader "Unlit/IceBlock"
             {
                 v2f o;
 
-                o.vertex = UnityObjectToClipPos(v.vertex);
+                o.vertex = TransformObjectToHClip(v.vertex.xyz);
                 o.uv = TRANSFORM_TEX(v.uv, _MainTex);
 
-                o.worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
-                o.worldNormal = UnityObjectToWorldNormal(v.normal);
+                o.worldPos = TransformObjectToWorld(v.vertex.xyz);
+                o.worldNormal = TransformObjectToWorldNormal(v.normal);
                 o.localPos = v.vertex.xyz;
 
-                UNITY_TRANSFER_FOG(o, o.vertex);
+                o.fogFactor = ComputeFogFactor(o.vertex.z);
 
                 return o;
             }
 
-            fixed4 frag(v2f i) : SV_Target
+            half4 frag(v2f i) : SV_Target
             {
                 const float AIR_IOR = 1.0;
                 const float ICE_IOR = 1.31;
@@ -238,14 +251,14 @@ Shader "Unlit/IceBlock"
                     RoundedBoxNormalOS(localP, halfExtents, _RoundRadius);
 
                 float3 roundedN_WS =
-                    normalize(UnityObjectToWorldNormal(roundedN_OS));
+                    normalize(TransformObjectToWorldNormal(roundedN_OS));
 
                 float3 N =
                     normalize(lerp(meshN_WS, roundedN_WS, _RoundCornerStrength));
 
                 // camera -> surface
                 float3 V =
-                    normalize(P - _WorldSpaceCameraPos);
+                    normalize(P - GetCameraPositionWS());
 
                 // --------------------------------------------------------
                 // 2. Small ice surface roughness
@@ -265,7 +278,7 @@ Shader "Unlit/IceBlock"
                     reflect(V, N);
 
                 float3 reflectionColor =
-                    texCUBE(_Environment, reflectionDir).rgb
+                    SAMPLE_TEXTURECUBE(_Environment, sampler_Environment, reflectionDir).rgb
                     * _ReflectionStrength;
 
                 // --------------------------------------------------------
@@ -286,7 +299,7 @@ Shader "Unlit/IceBlock"
 
                 // Convert refracted direction to object space.
                 float3 insideDir_OS =
-                    normalize(mul((float3x3)unity_WorldToObject, insideDir_WS));
+                    TransformWorldToObjectDir(insideDir_WS);
 
                 // Slight offset so the ray starts just inside the cube.
                 float3 localEntry =
@@ -309,7 +322,7 @@ Shader "Unlit/IceBlock"
                 if (hasExit)
                 {
                     localExit = localEntry + insideDir_OS * tExit;
-                    exitP_WS = mul(unity_ObjectToWorld, float4(localExit, 1.0)).xyz;
+                    exitP_WS = TransformObjectToWorld(localExit);
 
                     thicknessWS = distance(P, exitP_WS);
 
@@ -318,7 +331,7 @@ Shader "Unlit/IceBlock"
                         RoundedBoxNormalOS(localExit, halfExtents, _RoundRadius);
 
                     float3 exitRoundedN_WS =
-                        normalize(UnityObjectToWorldNormal(exitRoundedN_OS));
+                        normalize(TransformObjectToWorldNormal(exitRoundedN_OS));
 
                     // Refract from ice -> air
                     float etaOut = ICE_IOR / AIR_IOR;
@@ -339,7 +352,7 @@ Shader "Unlit/IceBlock"
                 // --------------------------------------------------------
 
                 float3 refractionColor =
-                    texCUBE(_Environment, normalize(exitDir_WS)).rgb
+                    SAMPLE_TEXTURECUBE(_Environment, sampler_Environment, normalize(exitDir_WS)).rgb
                     * _RefractionStrength;
 
                 // --------------------------------------------------------
@@ -396,17 +409,55 @@ Shader "Unlit/IceBlock"
                     );
 
                 float3 baseColor =
-                    tex2D(_MainTex, i.uv).rgb;
+                    SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, i.uv).rgb;
 
                 iceColor *= baseColor;
 
-                fixed4 col = fixed4(iceColor, 1.0);
+                half4 col = half4(iceColor, 1.0);
 
-                UNITY_APPLY_FOG(i.fogCoord, col);
+                col.rgb = MixFog(col.rgb, i.fogFactor);
                 return col;
             }
 
-            ENDCG
+            ENDHLSL
+        }
+
+        // Pass needed so this object shows up in _CameraDepthTexture
+        Pass
+        {
+            Name "DepthOnly"
+            Tags { "LightMode"="DepthOnly" }
+
+            ZWrite On
+            ColorMask R
+            Cull Back
+
+            HLSLPROGRAM
+            #pragma vertex depthVert
+            #pragma fragment depthFrag
+
+            struct DepthAttributes
+            {
+                float4 positionOS : POSITION;
+            };
+
+            struct DepthVaryings
+            {
+                float4 positionCS : SV_POSITION;
+            };
+
+            DepthVaryings depthVert (DepthAttributes input)
+            {
+                DepthVaryings output;
+                output.positionCS = TransformObjectToHClip(input.positionOS.xyz);
+                return output;
+            }
+
+            half4 depthFrag (DepthVaryings input) : SV_Target
+            {
+                return 0;
+            }
+            ENDHLSL
         }
     }
 }
