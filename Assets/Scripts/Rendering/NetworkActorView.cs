@@ -17,13 +17,56 @@ namespace NetworkExample.UnityDemo.Rendering
             public string animatorTrigger;
         }
 
+        /// <summary>
+        /// Sends one kind of replicated action event to one Animator trigger.
+        /// </summary>
+        /// <remarks>
+        /// Both selectors carry a wildcard, and both spell it zero, because
+        /// neither zero is a real value: an actor is never
+        /// <see cref="KernelActorType.Unknown"/>, and the catalog numbers its
+        /// action templates from 4096 up. That matters most for the events where
+        /// the action is beside the point -- an actor dies the same way whatever
+        /// killed it -- which would otherwise need one row per weapon per actor
+        /// type to say one thing.
+        ///
+        /// The most specific row wins rather than the first, so a rifle's own
+        /// fire animation can sit beside a catch-all without either having to be
+        /// ordered around the other.
+        /// </remarks>
         [Serializable]
-        private sealed class RemoteActionTriggerBinding
+        public sealed class RemoteActionTriggerBinding
         {
+            [Tooltip("Actor this row applies to, or Unknown for every actor.")]
             public KernelActorType actorType;
+
+            [Tooltip(
+                "Catalog action template this row applies to, or 0 for every " +
+                "action. Weapon templates are 4096 and up.")]
             public uint actionTemplateId;
+
+            [Tooltip("The replicated event that fires the trigger.")]
             public KernelRemoteActionPresentationEventType eventType;
+
+            [Tooltip(
+                "Animator trigger to set. An empty name disables the row, and a " +
+                "name the Animator does not declare is skipped rather than logged.")]
             public string animatorTrigger;
+
+            public RemoteActionTriggerBinding()
+            {
+            }
+
+            public RemoteActionTriggerBinding(
+                KernelActorType actorType,
+                uint actionTemplateId,
+                KernelRemoteActionPresentationEventType eventType,
+                string animatorTrigger)
+            {
+                this.actorType = actorType;
+                this.actionTemplateId = actionTemplateId;
+                this.eventType = eventType;
+                this.animatorTrigger = animatorTrigger;
+            }
         }
 
         private static readonly int MovingParameter = Animator.StringToHash("Moving");
@@ -99,10 +142,20 @@ namespace NetworkExample.UnityDemo.Rendering
             "out. 0 snaps it.")]
         private float upperBodyBlendSpeed = 12f;
 
+        [Header("Action Triggers")]
         [SerializeField]
+        [Tooltip(
+            "Animator triggers for this client's own actions, by input binding. " +
+            "Rows left empty fall back to FireCommit, or ReloadCommit for a reload.")]
         private LocalActionTriggerBinding[] localActionTriggers;
 
         [SerializeField]
+        [Tooltip(
+            "Animator triggers for actions replicated from the server. Leave " +
+            "Actor Type on Unknown and Action Template Id on 0 to match every " +
+            "actor and every action. Rows left empty fall back to the trigger " +
+            "named after the event: FireCommit, CastingCommit, ReloadCommit, " +
+            "HitReaction, DeathTrigger.")]
         private RemoteActionTriggerBinding[] remoteActionTriggers;
 
         public KernelActorType ActorType { get; private set; }
@@ -399,7 +452,7 @@ namespace NetworkExample.UnityDemo.Rendering
             }
 
             RemoteCommitCount++;
-            SetTriggerIfPresent(GetAnimator(), TriggerFor(remoteEvent));
+            SetTriggerIfPresent(GetAnimator(), ResolveRemoteActionTrigger(remoteEvent));
         }
 
         public void PlayActorLanded()
@@ -471,25 +524,91 @@ namespace NetworkExample.UnityDemo.Rendering
                 : FireCommitParameter;
         }
 
-        private int TriggerFor(KernelRemoteActionPresentationEvent remoteEvent)
+        /// <summary>
+        /// Replaces the authored remote-action triggers. The inspector is the
+        /// usual way in; this is for a caller that builds the table itself.
+        /// </summary>
+        public void ConfigureRemoteActionTriggers(RemoteActionTriggerBinding[] bindings)
         {
+            remoteActionTriggers = bindings;
+        }
+
+        /// <summary>
+        /// The Animator trigger <paramref name="remoteEvent"/> sets on this
+        /// actor: the most specific authored row that describes it, or the
+        /// trigger named after the event when no row does.
+        /// </summary>
+        public int ResolveRemoteActionTrigger(
+            KernelRemoteActionPresentationEvent remoteEvent)
+        {
+            RemoteActionTriggerBinding best = null;
+            int bestSpecificity = -1;
+
             if (remoteActionTriggers != null)
             {
                 for (int index = 0; index < remoteActionTriggers.Length; ++index)
                 {
                     RemoteActionTriggerBinding candidate = remoteActionTriggers[index];
-                    if (candidate != null &&
-                        candidate.actorType == ActorType &&
-                        candidate.actionTemplateId == remoteEvent.action_template_id &&
-                        candidate.eventType == remoteEvent.event_type &&
-                        !string.IsNullOrEmpty(candidate.animatorTrigger))
+                    int specificity = SpecificityOf(candidate, remoteEvent);
+                    // Strictly greater, so equally specific rows resolve to the
+                    // first one authored rather than the last.
+                    if (specificity > bestSpecificity)
                     {
-                        return Animator.StringToHash(candidate.animatorTrigger);
+                        bestSpecificity = specificity;
+                        best = candidate;
                     }
                 }
             }
 
-            return DefaultTriggerFor(remoteEvent.event_type);
+            return best != null
+                ? Animator.StringToHash(best.animatorTrigger)
+                : DefaultTriggerFor(remoteEvent.event_type);
+        }
+
+        /// <summary>
+        /// How well one row describes <paramref name="remoteEvent"/>, or -1 for a
+        /// row that does not describe it at all.
+        /// </summary>
+        /// <remarks>
+        /// The event type is the row's subject and always has to match. The other
+        /// two selectors each either name a value or wave everything through with
+        /// zero, and naming one is worth more than waving -- naming the actor
+        /// more than naming the action, since an actor's rig is what owns the
+        /// trigger being set.
+        /// </remarks>
+        private int SpecificityOf(
+            RemoteActionTriggerBinding candidate,
+            KernelRemoteActionPresentationEvent remoteEvent)
+        {
+            if (candidate == null ||
+                candidate.eventType != remoteEvent.event_type ||
+                string.IsNullOrEmpty(candidate.animatorTrigger))
+            {
+                return -1;
+            }
+
+            int specificity = 0;
+            if (candidate.actorType != KernelActorType.Unknown)
+            {
+                if (candidate.actorType != ActorType)
+                {
+                    return -1;
+                }
+
+                specificity += 2;
+            }
+
+            if (candidate.actionTemplateId != 0)
+            {
+                if (candidate.actionTemplateId != remoteEvent.action_template_id)
+                {
+                    return -1;
+                }
+
+                specificity += 1;
+            }
+
+            return specificity;
         }
 
         private static int DefaultTriggerFor(

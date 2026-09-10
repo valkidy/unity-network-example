@@ -5,6 +5,8 @@ using NetworkExample.UnityDemo.Rendering;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
+using RemoteActionTriggerBinding =
+    NetworkExample.UnityDemo.Rendering.NetworkActorView.RemoteActionTriggerBinding;
 
 namespace NetworkExample.UnityDemo.Tests.EditMode
 {
@@ -784,8 +786,414 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             Assert.That(tracers.LiveTracerCount, Is.EqualTo(0));
         }
 
+        [Test]
+        public void ActorWhoseDeadFlagRises_ThrowsSplattersWhereItFell()
+        {
+            NetworkHitSplatters splatters = ConfigureSplatters();
+
+            applier.Apply(new[] { Actor(105, alive: true) }, 1);
+            Assert.That(splatters.LiveSplatCount, Is.Zero);
+
+            applier.Apply(new[] { Actor(105, alive: false) }, 1);
+
+            Assert.That(splatters.LiveSplatCount, Is.InRange(3, 5));
+        }
+
+        [Test]
+        public void ActorThatStaysDead_ThrowsOneBurst()
+        {
+            NetworkHitSplatters splatters = ConfigureSplatters();
+
+            applier.Apply(new[] { Actor(105, alive: true) }, 1);
+            applier.Apply(new[] { Actor(105, alive: false) }, 1);
+            int afterDeath = splatters.LiveSplatCount;
+
+            // The replicated flag says "is dead", and stays true for as long as
+            // the corpse is rendered. Only the edge is a death; treating the
+            // level as one would repaint the ground every frame.
+            for (int frame = 0; frame < 5; ++frame)
+            {
+                applier.Apply(new[] { Actor(105, alive: false) }, 1);
+            }
+
+            Assert.That(splatters.LiveSplatCount, Is.EqualTo(afterDeath));
+        }
+
+        [Test]
+        public void ActorFirstSeenAlreadyDead_ThrowsNothing()
+        {
+            NetworkHitSplatters splatters = ConfigureSplatters();
+
+            // What a late joiner sees, and what anyone sees when a corpse comes
+            // into range. It died before this client was watching.
+            applier.Apply(new[] { Actor(105, alive: false) }, 1);
+
+            Assert.That(splatters.LiveSplatCount, Is.Zero);
+        }
+
+        [Test]
+        public void DeathWithNoSplattersBound_IsHarmless()
+        {
+            // Splatters are optional wiring: a session without them still runs
+            // every death, it just marks nothing.
+            Assert.DoesNotThrow(() =>
+            {
+                applier.Apply(new[] { Actor(105, alive: true) }, 1);
+                applier.Apply(new[] { Actor(105, alive: false) }, 1);
+            });
+        }
+
+        [Test]
+        public void ActorDestroyedWithoutEverLookingDead_ThrowsSplattersWhereItFell()
+        {
+            NetworkHitSplatters splatters = ConfigureSplatters();
+            applier.Apply(new[] { Actor(105, alive: true) }, 1);
+
+            // What this project actually does: an actor is removed on death and
+            // never replicates a frame with the dead flag up, so the despawn is
+            // the only notice the ground ever gets.
+            applier.ApplyEntityLifecycleEvents(
+                new[] { Despawn(105, KernelEntityType.Actor, KernelDespawnReason.Destroyed) },
+                1);
+
+            Assert.That(splatters.LiveSplatCount, Is.InRange(3, 5));
+        }
+
+        [Test]
+        public void ActorLeavingRange_ThrowsNothing()
+        {
+            NetworkHitSplatters splatters = ConfigureSplatters();
+            applier.Apply(new[] { Actor(105, alive: true) }, 1);
+
+            applier.ApplyEntityLifecycleEvents(
+                new[] { Despawn(105, KernelEntityType.Actor, KernelDespawnReason.OutOfRange) },
+                1);
+
+            Assert.That(splatters.LiveSplatCount, Is.Zero);
+        }
+
+        [Test]
+        public void ProjectileDestroyed_ThrowsNothing()
+        {
+            NetworkHitSplatters splatters = ConfigureSplatters();
+            applier.Apply(
+                new[]
+                {
+                    State(106, KernelEntityType.Projectile, new KernelVec3(1f, 0f, 1f), KernelActorType.Unknown),
+                },
+                1);
+
+            // Destroyed is what every spent projectile reports, and a firefight
+            // is mostly spent projectiles. Without the entity-type filter each
+            // one would mark the ground.
+            applier.ApplyEntityLifecycleEvents(
+                new[] { Despawn(106, KernelEntityType.Projectile, KernelDespawnReason.Destroyed) },
+                1);
+
+            Assert.That(splatters.LiveSplatCount, Is.Zero);
+        }
+
+        [Test]
+        public void ActorAlreadyMarkedByItsDeadFlag_IsNotMarkedAgainOnDespawn()
+        {
+            NetworkHitSplatters splatters = ConfigureSplatters();
+            applier.Apply(new[] { Actor(105, alive: true) }, 1);
+            applier.Apply(new[] { Actor(105, alive: false) }, 1);
+            int afterDeadFlag = splatters.LiveSplatCount;
+            Assert.That(afterDeadFlag, Is.InRange(3, 5));
+
+            applier.ApplyEntityLifecycleEvents(
+                new[] { Despawn(105, KernelEntityType.Actor, KernelDespawnReason.Destroyed) },
+                1);
+
+            // Both signals describe one death. A server that replicates a dead
+            // frame and then despawns must not double the mark.
+            Assert.That(splatters.LiveSplatCount, Is.EqualTo(afterDeadFlag));
+        }
+
+        [Test]
+        public void ActorFirstSeenDeadThenDespawned_IsStillNotMarked()
+        {
+            NetworkHitSplatters splatters = ConfigureSplatters();
+            applier.Apply(new[] { Actor(105, alive: false) }, 1);
+
+            applier.ApplyEntityLifecycleEvents(
+                new[] { Despawn(105, KernelEntityType.Actor, KernelDespawnReason.Destroyed) },
+                1);
+
+            // It died before this client was watching. The despawn must not be
+            // the back door that marks it anyway.
+            Assert.That(splatters.LiveSplatCount, Is.Zero);
+        }
+
+        [Test]
+        public void DeathPresentationEvent_NoLongerMarksTheGround()
+        {
+            NetworkHitSplatters splatters = ConfigureSplatters();
+            RegisterActorVisual(11, 105);
+
+            // The event belongs to an action instance and only fires when a
+            // running action reports the death, so it drives the animator and
+            // nothing else. The ground follows the replicated flag instead.
+            applier.ApplyRemoteActionPresentationEvents(new[] { Death(105, 12) }, 1);
+
+            Assert.That(splatters.LiveSplatCount, Is.Zero);
+        }
+
+        [Test]
+        public void WildcardTriggerBinding_MatchesEveryActorAndEveryAction()
+        {
+            NetworkActorView view = ActorOfType(KernelActorType.Agent);
+            view.ConfigureRemoteActionTriggers(new[]
+            {
+                Binding(
+                    KernelActorType.Unknown,
+                    0,
+                    KernelRemoteActionPresentationEventType.DeathTrigger,
+                    "Die"),
+            });
+
+            // One row for every weapon in the catalog and every actor type, which
+            // is the whole reason the wildcards exist: what killed an actor does
+            // not change how it falls over.
+            Assert.That(
+                view.ResolveRemoteActionTrigger(
+                    Remote(
+                        RifleFireActionTemplateId,
+                        KernelRemoteActionPresentationEventType.DeathTrigger)),
+                Is.EqualTo(Animator.StringToHash("Die")));
+            Assert.That(
+                view.ResolveRemoteActionTrigger(
+                    Remote(
+                        RocketFireActionTemplateId,
+                        KernelRemoteActionPresentationEventType.DeathTrigger)),
+                Is.EqualTo(Animator.StringToHash("Die")));
+        }
+
+        [Test]
+        public void WildcardTriggerBinding_LeavesOtherEventsOnTheirDefaults()
+        {
+            NetworkActorView view = ActorOfType(KernelActorType.Agent);
+            view.ConfigureRemoteActionTriggers(new[]
+            {
+                Binding(
+                    KernelActorType.Unknown,
+                    0,
+                    KernelRemoteActionPresentationEventType.DeathTrigger,
+                    "Die"),
+            });
+
+            // The event type is the row's subject, so a catch-all on one event
+            // says nothing about any other.
+            Assert.That(
+                view.ResolveRemoteActionTrigger(
+                    Remote(
+                        RifleFireActionTemplateId,
+                        KernelRemoteActionPresentationEventType.FireCommit)),
+                Is.EqualTo(Animator.StringToHash("FireCommit")));
+        }
+
+        [Test]
+        public void ExactTriggerBinding_BeatsAWildcardWhicheverIsAuthoredFirst()
+        {
+            RemoteActionTriggerBinding wildcard = Binding(
+                KernelActorType.Unknown,
+                0,
+                KernelRemoteActionPresentationEventType.FireCommit,
+                "GenericFire");
+            RemoteActionTriggerBinding exact = Binding(
+                KernelActorType.Player,
+                RifleFireActionTemplateId,
+                KernelRemoteActionPresentationEventType.FireCommit,
+                "RifleFire");
+
+            // Row order is not the tie-breaker, specificity is -- otherwise a
+            // catch-all added later would silently swallow every weapon above it.
+            foreach (RemoteActionTriggerBinding[] order in
+                new[]
+                {
+                    new[] { wildcard, exact },
+                    new[] { exact, wildcard },
+                })
+            {
+                NetworkActorView view = ActorOfType(KernelActorType.Player);
+                view.ConfigureRemoteActionTriggers(order);
+
+                Assert.That(
+                    view.ResolveRemoteActionTrigger(
+                        Remote(
+                            RifleFireActionTemplateId,
+                            KernelRemoteActionPresentationEventType.FireCommit)),
+                    Is.EqualTo(Animator.StringToHash("RifleFire")));
+                Assert.That(
+                    view.ResolveRemoteActionTrigger(
+                        Remote(
+                            RocketFireActionTemplateId,
+                            KernelRemoteActionPresentationEventType.FireCommit)),
+                    Is.EqualTo(Animator.StringToHash("GenericFire")));
+            }
+        }
+
+        [Test]
+        public void TriggerBindingForAnotherActorType_IsSkipped()
+        {
+            NetworkActorView view = ActorOfType(KernelActorType.Agent);
+            view.ConfigureRemoteActionTriggers(new[]
+            {
+                Binding(
+                    KernelActorType.Player,
+                    0,
+                    KernelRemoteActionPresentationEventType.DeathTrigger,
+                    "PlayerDie"),
+            });
+
+            Assert.That(
+                view.ResolveRemoteActionTrigger(
+                    Remote(
+                        RifleFireActionTemplateId,
+                        KernelRemoteActionPresentationEventType.DeathTrigger)),
+                Is.EqualTo(Animator.StringToHash("DeathTrigger")));
+        }
+
+        [Test]
+        public void TriggerBindingWithNoAnimatorName_FallsBackToTheEventDefault()
+        {
+            NetworkActorView view = ActorOfType(KernelActorType.Player);
+            view.ConfigureRemoteActionTriggers(new[]
+            {
+                Binding(
+                    KernelActorType.Unknown,
+                    0,
+                    KernelRemoteActionPresentationEventType.DeathTrigger,
+                    string.Empty),
+            });
+
+            // A half-authored row is the state an array spends most of its life
+            // in while someone is filling it out in the inspector.
+            Assert.That(
+                view.ResolveRemoteActionTrigger(
+                    Remote(
+                        RifleFireActionTemplateId,
+                        KernelRemoteActionPresentationEventType.DeathTrigger)),
+                Is.EqualTo(Animator.StringToHash("DeathTrigger")));
+        }
+
+        [Test]
+        public void NoTriggerBindings_FallBackToTheEventDefaults()
+        {
+            NetworkActorView view = ActorOfType(KernelActorType.Player);
+
+            Assert.That(
+                view.ResolveRemoteActionTrigger(
+                    Remote(
+                        RifleFireActionTemplateId,
+                        KernelRemoteActionPresentationEventType.HitReaction)),
+                Is.EqualTo(Animator.StringToHash("HitReaction")));
+            Assert.That(
+                view.ResolveRemoteActionTrigger(
+                    Remote(
+                        RifleFireActionTemplateId,
+                        KernelRemoteActionPresentationEventType.DeathTrigger)),
+                Is.EqualTo(Animator.StringToHash("DeathTrigger")));
+        }
+
         private const uint RifleFireActionTemplateId = 4096;
         private const uint RocketFireActionTemplateId = 4099;
+
+        private static RemoteActionTriggerBinding Binding(
+            KernelActorType actorType,
+            uint actionTemplateId,
+            KernelRemoteActionPresentationEventType eventType,
+            string animatorTrigger)
+        {
+            return new RemoteActionTriggerBinding(
+                actorType,
+                actionTemplateId,
+                eventType,
+                animatorTrigger);
+        }
+
+        private static KernelRemoteActionPresentationEvent Remote(
+            uint actionTemplateId,
+            KernelRemoteActionPresentationEventType eventType)
+        {
+            return new KernelRemoteActionPresentationEvent
+            {
+                actor_net_id = 200,
+                action_template_id = actionTemplateId,
+                action_instance_id = 1,
+                first_commit_index = 0,
+                commit_count = 1,
+                event_type = eventType,
+            };
+        }
+
+        private NetworkActorView ActorOfType(KernelActorType actorType)
+        {
+            GameObject visual = RegisterActorVisual(20, 200);
+            NetworkActorView view = visual.GetComponent<NetworkActorView>();
+            view.ApplyContinuousState(
+                State(200, KernelEntityType.Actor, new KernelVec3(), actorType));
+            return view;
+        }
+
+        private static KernelEntityLifecycleEvent Despawn(
+            uint netId,
+            KernelEntityType entityType,
+            KernelDespawnReason reason)
+        {
+            return new KernelEntityLifecycleEvent
+            {
+                net_id = netId,
+                entity_type = entityType,
+                reason = reason,
+            };
+        }
+
+        private static RenderEntityState Actor(uint netId, bool alive)
+        {
+            RenderEntityState state = State(
+                netId,
+                KernelEntityType.Actor,
+                new KernelVec3(2f, 0f, -3f),
+                KernelActorType.Player);
+            state.visual_flags = alive ? 0u : KernelConstants.VisualFlagDead;
+            return state;
+        }
+
+        private static KernelRemoteActionPresentationEvent Death(
+            uint actorNetId,
+            uint actionInstanceId)
+        {
+            return new KernelRemoteActionPresentationEvent
+            {
+                actor_net_id = actorNetId,
+                action_instance_id = actionInstanceId,
+                first_commit_index = 0,
+                commit_count = 1,
+                event_type = KernelRemoteActionPresentationEventType.DeathTrigger,
+            };
+        }
+
+        /// <summary>
+        /// Splatters plus the ground collider they probe for. Without a collider
+        /// in the scene nothing lands, which is the effect's one scene dependency.
+        /// </summary>
+        private NetworkHitSplatters ConfigureSplatters()
+        {
+            GameObject ground = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            ground.name = "Ground";
+            ground.transform.SetParent(rootObject.transform);
+            ground.transform.position = new Vector3(0f, -0.5f, 0f);
+            ground.transform.localScale = new Vector3(200f, 1f, 200f);
+            Physics.SyncTransforms();
+
+            NetworkHitSplatters splatters =
+                gameObject.AddComponent<NetworkHitSplatters>();
+            splatters.Configure(rootObject.transform);
+            applier.ConfigureSplatters(splatters);
+            return splatters;
+        }
 
         private NetworkHitscanTracers ConfigureRifleTracers()
         {

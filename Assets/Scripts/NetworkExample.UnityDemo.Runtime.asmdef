@@ -3,7 +3,8 @@
   "rootNamespace": "NetworkExample.UnityDemo",
   "references": [
     "NetworkExample.Kernel",
-    "Unity.InputSystem"
+    "Unity.InputSystem",
+    "Unity.RenderPipelines.Universal.Runtime"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],

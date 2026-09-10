@@ -26,6 +26,20 @@ namespace NetworkExample.UnityDemo.Rendering
             "weapon is unaffected.")]
         private NetworkHitscanTracers hitscanTracers;
 
+        [SerializeField]
+        [Tooltip(
+            "Throws splatters where an actor dies. Optional: without it a death " +
+            "still plays its animation and leaves nothing on the ground.")]
+        private NetworkHitSplatters hitSplatters;
+
+        [SerializeField]
+        [Tooltip(
+            "Logs every signal that could mean an actor died -- the replicated " +
+            "dead flag turning on, the death presentation event, and the " +
+            "despawn that follows -- so a death that leaves no mark on the " +
+            "ground can be traced to whichever signal did not arrive.")]
+        private bool logDeathSignals;
+
         private readonly HashSet<ulong> visibleThisFrame = new HashSet<ulong>();
         private readonly Dictionary<ulong, KnownEntity> knownEntities =
             new Dictionary<ulong, KnownEntity>();
@@ -62,6 +76,11 @@ namespace NetworkExample.UnityDemo.Rendering
             hitscanTracers = tracers;
         }
 
+        public void ConfigureSplatters(NetworkHitSplatters splatters)
+        {
+            hitSplatters = splatters;
+        }
+
         public void Apply(RenderEntityState[] states, int count)
         {
             if (states == null || entityRegistry == null || prefabRegistry == null)
@@ -87,11 +106,10 @@ namespace NetworkExample.UnityDemo.Rendering
                     entityRegistry.Register(entityKey, visual);
                 }
                 entityRegistry.RegisterNetId(state.net_id, visual);
-                bool wasServerBacked =
-                    knownEntities.TryGetValue(entityKey, out KnownEntity known) &&
-                    known.serverBacked;
-                knownEntities[entityKey] = new KnownEntity(
-                    wasServerBacked || state.net_id != 0);
+                bool knownBefore =
+                    knownEntities.TryGetValue(entityKey, out KnownEntity known);
+                bool wasServerBacked = knownBefore && known.serverBacked;
+                bool isDead = known.wasDead;
 
                 if (state.entity_type == KernelEntityType.Projectile)
                 {
@@ -106,7 +124,33 @@ namespace NetworkExample.UnityDemo.Rendering
                 {
                     ApplyTransform(visual.transform, state);
                     ApplyActorState(visual, state);
+
+                    if (state.entity_type == KernelEntityType.Actor)
+                    {
+                        isDead = (state.visual_flags &
+                            KernelConstants.VisualFlagDead) != 0;
+                        // An actor this client watched alive and now sees dead
+                        // died in front of it, and the transition happens on
+                        // exactly one frame. One that is already dead the first
+                        // time it is seen died before this client was watching,
+                        // or before it came into range -- marking the ground for
+                        // that would drop a fresh splat under every corpse a
+                        // late joiner walks up to.
+                        if (isDead && !known.wasDead && knownBefore)
+                        {
+                            LogDeathSignal("dead flag raised", state.net_id);
+                            TrySplat(visual);
+                        }
+                        else if (isDead && !knownBefore)
+                        {
+                            LogDeathSignal("first seen already dead", state.net_id);
+                        }
+                    }
                 }
+
+                knownEntities[entityKey] = new KnownEntity(
+                    wasServerBacked || state.net_id != 0,
+                    isDead);
             }
 
             entityKeysToRemove.Clear();
@@ -287,6 +331,11 @@ namespace NetworkExample.UnityDemo.Rendering
                             view,
                             remoteEvent.action_template_id);
                     }
+                    else if (remoteEvent.event_type ==
+                        KernelRemoteActionPresentationEventType.DeathTrigger)
+                    {
+                        LogDeathSignal("death presentation event", remoteEvent.actor_net_id);
+                    }
                 }
             }
         }
@@ -335,12 +384,42 @@ namespace NetworkExample.UnityDemo.Rendering
                     continue;
                 }
 
+                // Read the position before the registry drops the visual: the
+                // despawn is the last word anyone gets about where this entity
+                // was, and removing it first throws that away.
+                bool hadVisual = entityRegistry.TryGetByNetId(
+                    lifecycleEvent.net_id,
+                    out GameObject despawning) && despawning != null;
+                Vector3 lastPosition = hadVisual
+                    ? despawning.transform.position
+                    : Vector3.zero;
+
+                LogDeathSignal(
+                    "despawn (" + lifecycleEvent.reason + ")",
+                    lifecycleEvent.net_id,
+                    "entityType=" + lifecycleEvent.entity_type +
+                    " actorType=" + lifecycleEvent.actor_type +
+                    " at=" + (hadVisual ? lastPosition.ToString() : "<already gone>"));
+
                 if (entityRegistry.RemoveByNetId(
                         lifecycleEvent.net_id,
                         out ulong entityKey))
                 {
+                    // A corpse this client actually watched die has already been
+                    // marked from the dead flag, and one it first met already
+                    // dead is deliberately never marked. Either way the ground
+                    // has had its answer, so the despawn must not add a second.
+                    bool settledWhileAlive =
+                        !knownEntities.TryGetValue(entityKey, out KnownEntity known) ||
+                        !known.wasDead;
+
                     knownEntities.Remove(entityKey);
                     visibleThisFrame.Remove(entityKey);
+
+                    if (hadVisual && settledWhileAlive && IsKill(lifecycleEvent))
+                    {
+                        TrySplatAt(lastPosition);
+                    }
                 }
             }
         }
@@ -371,6 +450,78 @@ namespace NetworkExample.UnityDemo.Rendering
                 actionTemplateId,
                 visual.transform.position,
                 view.WorldAimDirection);
+        }
+
+        /// <summary>
+        /// Marks the ground under a dying actor, if anything is drawing splats.
+        /// </summary>
+        /// <remarks>
+        /// Raised from the replicated dead flag rather than from the death
+        /// presentation event or the despawn, because that flag is the only one
+        /// of the three that is guaranteed. The presentation event belongs to an
+        /// action instance and reports what an animator should trigger, so
+        /// whether it arrives at all depends on what killed the actor. The
+        /// despawn is worse: it carries
+        /// <see cref="KernelDespawnReason"/>.Destroyed for an actor that merely
+        /// went out of range as much as for one that was killed, and it arrives
+        /// after <see cref="ApplyEntityLifecycleEvents"/> has already dropped the
+        /// visual this reads the position off.
+        /// </remarks>
+        private void TrySplat(GameObject visual)
+        {
+            if (visual == null)
+            {
+                return;
+            }
+
+            TrySplatAt(visual.transform.position);
+        }
+
+        private void TrySplatAt(Vector3 position)
+        {
+            if (hitSplatters == null)
+            {
+                return;
+            }
+
+            hitSplatters.TrySplat(position);
+        }
+
+        /// <summary>
+        /// Whether a despawn is an actor being killed rather than an entity
+        /// merely going away.
+        /// </summary>
+        /// <remarks>
+        /// This is a proxy, and it is the best one the lifecycle event carries.
+        /// The kernel spends <see cref="KernelDespawnReason"/>.Destroyed on
+        /// everything that is deliberately removed, so the reason alone would
+        /// mark the ground under every expired projectile -- which is most of
+        /// what despawns in a firefight. Narrowing it to actors is what makes it
+        /// mean death: an actor that leaves for any other cause reports that
+        /// cause instead, OutOfRange or Disconnected.
+        ///
+        /// It stays a proxy, though. An actor the server removes for a reason of
+        /// its own -- despawning a wave, ending a round -- is indistinguishable
+        /// here from one that was killed, and would leave a mark it did not earn.
+        /// </remarks>
+        private static bool IsKill(KernelEntityLifecycleEvent lifecycleEvent)
+        {
+            return lifecycleEvent.entity_type == KernelEntityType.Actor &&
+                lifecycleEvent.reason == KernelDespawnReason.Destroyed;
+        }
+
+        private void LogDeathSignal(string signal, uint netId, string detail = null)
+        {
+            if (!logDeathSignals)
+            {
+                return;
+            }
+
+            Debug.Log(
+                "Death signal: " + signal +
+                " netId=" + netId +
+                " splatters=" + (hitSplatters == null ? "<none bound>" : "bound") +
+                (string.IsNullOrEmpty(detail) ? string.Empty : "  " + detail));
         }
 
         private static bool ShouldRender(RenderEntityState state)
@@ -473,10 +624,15 @@ namespace NetworkExample.UnityDemo.Rendering
         private readonly struct KnownEntity
         {
             public readonly bool serverBacked;
+            // Carried frame to frame so death can be spotted as a transition.
+            // The replicated flag says "is dead", which is true for as long as
+            // the corpse is rendered; only the edge means "just died".
+            public readonly bool wasDead;
 
-            public KnownEntity(bool serverBacked)
+            public KnownEntity(bool serverBacked, bool wasDead)
             {
                 this.serverBacked = serverBacked;
+                this.wasDead = wasDead;
             }
         }
 

@@ -41,7 +41,15 @@ Shader "Custom/TerrainStandardChecker"
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
             #pragma multi_compile_fragment _ _SHADOWS_SOFT _SHADOWS_SOFT_LOW _SHADOWS_SOFT_MEDIUM _SHADOWS_SOFT_HIGH
 
+            // Decal support. URP writes decals into the DBuffer before opaque
+            // geometry draws, but a surface only shows them if it reads them
+            // back out -- there is no pass that stamps them on from outside.
+            // Under the screen-space technique none of these are set and the
+            // whole thing compiles away.
+            #pragma multi_compile_fragment _ _DBUFFER_MRT1 _DBUFFER_MRT2 _DBUFFER_MRT3
+
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DBuffer.hlsl"
 
             TEXTURE2D(_MainTex);
             SAMPLER(sampler_MainTex);
@@ -93,6 +101,15 @@ Shader "Custom/TerrainStandardChecker"
                 checker = abs(checker);
 
                 half4 checkerColor = lerp(_ColorA, _ColorB, checker);
+                half3 albedo = checkerColor.rgb;
+
+                // Albedo only. The decal's normal and MAOS channels are dropped
+                // because this surface has none of its own to blend them with:
+                // it is flat-shaded off a checker and lit by nothing but the
+                // main light's shadow term.
+                #if defined(_DBUFFER)
+                    ApplyDecalToBaseColor(input.positionCS, albedo);
+                #endif
 
                 #if defined(REQUIRES_VERTEX_SHADOW_COORD_INTERPOLATOR)
                     float4 shadowCoord = input.shadowCoord;
@@ -106,8 +123,10 @@ Shader "Custom/TerrainStandardChecker"
                 Light mainLight = GetMainLight(shadowCoord);
                 half attenuation = mainLight.shadowAttenuation;
 
-                // Interpolate between the unlit texture and the shaded color tint based on shadow mapping
-                half3 shadowResult = lerp(checkerColor.rgb * _ShadowColor.rgb, checkerColor.rgb, attenuation);
+                // Interpolate between the unlit texture and the shaded color tint based on shadow mapping.
+                // Shadowing is applied after the decal so a splat in shadow is
+                // darkened with the ground it sits on rather than glowing on it.
+                half3 shadowResult = lerp(albedo * _ShadowColor.rgb, albedo, attenuation);
 
                 return half4(shadowResult, checkerColor.a);
             }
@@ -170,6 +189,71 @@ Shader "Custom/TerrainStandardChecker"
             half4 shadowFrag (ShadowVaryings input) : SV_Target
             {
                 return 0;
+            }
+            ENDHLSL
+        }
+
+        // Pass needed so decals land on this surface at all.
+        //
+        // Turning decals on makes URP ask for scene normals, and asking for
+        // normals swaps the depth prepass for a depth+normals one -- the two are
+        // an either/or, not both. A surface with only a DepthOnly pass drops out
+        // of the prepass entirely at that point, so the DBuffer resolves its
+        // projections against whatever is behind this one and the decal lands
+        // somewhere else, or nowhere.
+        //
+        // Tagged DepthNormalsOnly rather than DepthNormals: the partial prepass a
+        // deferred renderer runs only accepts that tag, and this shader has no
+        // GBuffer pass that could fill its normals in instead.
+        Pass
+        {
+            Name "DepthNormalsOnly"
+            Tags { "LightMode"="DepthNormalsOnly" }
+
+            ZWrite On
+            Cull Back
+
+            HLSLPROGRAM
+            #pragma vertex depthNormalsVert
+            #pragma fragment depthNormalsFrag
+
+            // Deferred wants octahedral-packed normals, forward wants them plain.
+            #pragma multi_compile_fragment _ _GBUFFER_NORMALS_OCT
+
+            struct DepthNormalsAttributes
+            {
+                float4 positionOS : POSITION;
+                float3 normalOS : NORMAL;
+            };
+
+            struct DepthNormalsVaryings
+            {
+                float3 normalWS : TEXCOORD0;
+                float4 positionCS : SV_POSITION;
+            };
+
+            DepthNormalsVaryings depthNormalsVert (DepthNormalsAttributes input)
+            {
+                DepthNormalsVaryings output;
+
+                VertexPositionInputs vertexInput = GetVertexPositionInputs(input.positionOS.xyz);
+                VertexNormalInputs normalInput = GetVertexNormalInputs(input.normalOS);
+                output.positionCS = vertexInput.positionCS;
+                output.normalWS = NormalizeNormalPerVertex(normalInput.normalWS);
+                return output;
+            }
+
+            half4 depthNormalsFrag (DepthNormalsVaryings input) : SV_Target
+            {
+                #if defined(_GBUFFER_NORMALS_OCT)
+                    float3 normalWS = normalize(input.normalWS);
+                    float2 octNormalWS = PackNormalOctQuadEncode(normalWS);
+                    float2 remappedOctNormalWS = saturate(octNormalWS * 0.5 + 0.5);
+                    half3 packedNormalWS = half3(PackFloat2To888(remappedOctNormalWS));
+                    return half4(packedNormalWS, 0.0);
+                #else
+                    return half4(NormalizeNormalPerPixel(input.normalWS), 0.0);
+                #endif
             }
             ENDHLSL
         }
