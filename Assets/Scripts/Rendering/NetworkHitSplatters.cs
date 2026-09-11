@@ -86,7 +86,7 @@ namespace NetworkExample.UnityDemo.Rendering
         [SerializeField]
         [Min(0.01f)]
         [Tooltip("Seconds from launch to landing. Longer lobs the arc higher.")]
-        private float flightSeconds = 0.5f;
+        private float flightSeconds = 0.2f;
 
         [SerializeField]
         [Min(0f)]
