@@ -40,6 +40,12 @@ namespace NetworkExample.UnityDemo.Items
         /// </summary>
         private System.Action throwSubmitted;
 
+        /// <summary>
+        /// The direction the reticle is pointing, pushed each frame by the runner.
+        /// Zero falls back to the view transform's forward.
+        /// </summary>
+        private Vector3 reticleAimDirection;
+
         private readonly Dictionary<ulong, PendingRequest> pendingRequests =
             new Dictionary<ulong, PendingRequest>();
         private readonly LocalInventorySelectionModel selection =
@@ -76,6 +82,42 @@ namespace NetworkExample.UnityDemo.Items
             inputSampler = sampler;
             viewTransform = cameraTransform;
             throwSubmitted = onThrowSubmitted;
+        }
+
+        /// <summary>
+        /// Supplies the direction a shot would travel, so a throw can leave along
+        /// the same line.
+        /// </summary>
+        /// <remarks>
+        /// Camera forward is not that line. The reticle is allowed to sit off
+        /// centre -- 13% of the frame width while aimed, which is 11.4 degrees of
+        /// yaw at the aim field of view -- and the aim direction is taken through
+        /// it. Throwing down camera forward would miss the reticle by that angle
+        /// for no reason the player could see.
+        ///
+        /// This aligns the direction only. The item still arcs: the kernel launches
+        /// it at a fixed 24 m/s under gravity, and nothing on the wire carries a
+        /// speed or an arc for the client to set. Landing the item on the reticle
+        /// rather than merely sending it that way would need the point the reticle
+        /// ray hits, which the client cannot ask for.
+        /// </remarks>
+        public void SetAimDirection(Vector3 direction)
+        {
+            reticleAimDirection = direction;
+        }
+
+        /// <summary>
+        /// The direction an item action should use: the reticle's, or the view's
+        /// own forward when no reticle direction has been supplied.
+        /// </summary>
+        public Vector3 ResolveAimDirection()
+        {
+            if (ItemPropTargetSelector.IsFiniteNonZero(reticleAimDirection))
+            {
+                return reticleAimDirection.normalized;
+            }
+
+            return viewTransform == null ? Vector3.zero : viewTransform.forward;
         }
 
         public void UpdateAuthoritativeState(NetworkClient client)
@@ -372,12 +414,10 @@ namespace NetworkExample.UnityDemo.Items
                 return;
             }
 
-            Vector3 direction = viewTransform == null
-                ? Vector3.zero
-                : viewTransform.forward;
+            Vector3 direction = ResolveAimDirection();
             if (!ItemPropTargetSelector.IsFiniteNonZero(direction))
             {
-                LogWarning("Throw ignored because the camera forward direction is invalid.");
+                LogWarning("Throw ignored because the aim direction is invalid.");
                 return;
             }
 

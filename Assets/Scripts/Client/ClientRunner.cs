@@ -250,6 +250,10 @@ namespace NetworkExample.UnityDemo.Client
             renderStateApplier.ApplyEntityLifecycleEvents(
                 lifecycleEvents,
                 SafeCount(lifecycleEventCount, lifecycleEvents.Length));
+            if (followCamera != null)
+            {
+                itemPropController.SetAimDirection(followCamera.AimDirection);
+            }
             itemPropController.ProcessInput(client, renderStates, safeRenderCount);
 
             if (debugView != null)
