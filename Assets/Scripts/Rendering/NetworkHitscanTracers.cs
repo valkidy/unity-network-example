@@ -241,14 +241,26 @@ namespace NetworkExample.UnityDemo.Rendering
             float reach,
             NetworkInstantWeaponPresentation weapon)
         {
-            NetworkTracerView tracer = Rent(weapon.ProjectileTemplateId);
+            NetworkTracerView tracer = Rent(weapon.ProjectileTemplateId, origin, direction);
             if (tracer != null)
             {
                 tracer.Play(origin, direction, reach, Mathf.Max(0.001f, tracerSeconds));
             }
         }
 
-        private NetworkTracerView Rent(uint projectileTemplateId)
+        /// <summary>
+        /// Hands back an idle tracer for this weapon, building one at
+        /// <paramref name="spawnPosition"/> facing <paramref name="spawnDirection"/>
+        /// when the pool has none. The shot's own pose is threaded this far down
+        /// so a freshly built instance wakes up on the shot rather than at the
+        /// world origin -- what a prefab's Awake sees is where a world-space trail
+        /// or particle system starts drawing, and the pose it is given afterwards
+        /// does not take that back.
+        /// </summary>
+        private NetworkTracerView Rent(
+            uint projectileTemplateId,
+            Vector3 spawnPosition,
+            Vector3 spawnDirection)
         {
             if (!tracersByTemplate.TryGetValue(
                     projectileTemplateId,
@@ -284,7 +296,10 @@ namespace NetworkExample.UnityDemo.Rendering
                 return oldest;
             }
 
-            NetworkTracerView created = Create(projectileTemplateId);
+            NetworkTracerView created = Create(
+                projectileTemplateId,
+                spawnPosition,
+                spawnDirection);
             if (created != null)
             {
                 tracers.Add(created);
@@ -293,16 +308,29 @@ namespace NetworkExample.UnityDemo.Rendering
             return created;
         }
 
-        private NetworkTracerView Create(uint projectileTemplateId)
+        private NetworkTracerView Create(
+            uint projectileTemplateId,
+            Vector3 spawnPosition,
+            Vector3 spawnDirection)
         {
             GameObject prefab = ResolvePrefab(projectileTemplateId);
-            GameObject instance = prefab != null
-                ? Instantiate(prefab)
-                : CreateProceduralTracer();
+            Transform parent = tracerRoot != null ? tracerRoot : transform;
+            Quaternion rotation = SpawnRotation(spawnDirection);
+            GameObject instance;
+            if (prefab != null)
+            {
+                // Posed by Instantiate itself, which applies the transform before
+                // the clone's Awake runs.
+                instance = Instantiate(prefab, spawnPosition, rotation, parent);
+            }
+            else
+            {
+                instance = CreateProceduralTracer();
+                instance.transform.SetParent(parent, false);
+                instance.transform.SetPositionAndRotation(spawnPosition, rotation);
+            }
+
             instance.name = "Tracer";
-            instance.transform.SetParent(
-                tracerRoot != null ? tracerRoot : transform,
-                false);
 
             // An authored beam prefab carries a NetworkProjectileView, which would
             // otherwise sit there waiting for a render state that never comes for
@@ -359,6 +387,15 @@ namespace NetworkExample.UnityDemo.Rendering
         /// convention an authored prefab follows: a cylinder is two units tall, so
         /// the body's local +Z becomes the shot's axis once it is turned onto it.
         /// </summary>
+        private static Quaternion SpawnRotation(Vector3 direction)
+        {
+            // A degenerate direction never draws -- NetworkTracerView.Play stops
+            // on it -- but it still must not reach LookRotation, which logs for it.
+            return direction.sqrMagnitude > 1e-8f
+                ? Quaternion.LookRotation(direction.normalized, Vector3.up)
+                : Quaternion.identity;
+        }
+
         private GameObject CreateProceduralTracer()
         {
             var root = new GameObject("Tracer");

@@ -350,6 +350,12 @@ namespace NetworkExample.UnityDemo.Rendering
         private NetworkSplatView Create()
         {
             var root = new GameObject("Splat");
+            // Deactivated before anything is built under it, and it stays that
+            // way until a launch poses it: a child instantiated into an inactive
+            // parent does not wake up at all, so a flight prefab carrying a
+            // world-space trail or particle system runs its Awake at the throw
+            // rather than wherever the pool happened to build it.
+            root.SetActive(false);
             root.transform.SetParent(splatRoot != null ? splatRoot : transform, false);
 
             NetworkSplatView view = root.AddComponent<NetworkSplatView>();
@@ -378,11 +384,18 @@ namespace NetworkExample.UnityDemo.Rendering
 
         private Transform CreateFlightBody(Transform parent)
         {
+            // Parented as it is created, with instantiateInWorldSpace false, which
+            // lands the clone on the prefab's authored local pose exactly as
+            // SetParent(parent, false) did -- without the moment spent unparented
+            // at the world origin.
             GameObject body = flightPrefab != null
-                ? Instantiate(flightPrefab)
+                ? Instantiate(flightPrefab, parent, false)
                 : GameObject.CreatePrimitive(PrimitiveType.Cube);
             body.name = "SplatBody";
-            body.transform.SetParent(parent, false);
+            if (flightPrefab == null)
+            {
+                body.transform.SetParent(parent, false);
+            }
 
             // A splat is thrown along a solved arc, so anything that would push it
             // off that arc -- or that would report a hit to gameplay -- is removed.

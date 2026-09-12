@@ -40,18 +40,71 @@ namespace NetworkExample.UnityDemo.Rendering
                 parent);
         }
 
+        /// <summary>
+        /// Creates the visual for <paramref name="state"/> already standing where
+        /// that state says it stands.
+        /// </summary>
+        /// <remarks>
+        /// The pose is handed to Instantiate rather than assigned afterwards,
+        /// because Unity applies it as part of creation: Awake, OnEnable and every
+        /// component that samples its transform the moment it wakes up see the
+        /// spawn pose and never the world origin. Creating at the origin and
+        /// moving the object later leaves the whole opening frame at the origin
+        /// for anything that does not wait for the move -- a rigidbody
+        /// interpolating from where it woke up, a world-space trail or particle
+        /// system already emitting, a state whose transform is applied on a later
+        /// frame (a stale actor is only marked stale on the frame it appears) --
+        /// which is what made a fresh prefab flash at the origin before sliding
+        /// into place.
+        /// </remarks>
         public GameObject InstantiateVisual(RenderEntityState state, Transform parent)
         {
             GameObject prefab = GetPrefab(state);
             bool usesProceduralPlaceholder = prefab == null;
-            GameObject visual = prefab == null
-                ? CreatePlaceholder(state)
-                : Instantiate(prefab);
+            Vector3 position = SpawnPosition(state);
+            Quaternion rotation = SpawnRotation(state);
+
+            GameObject visual;
+            if (prefab == null)
+            {
+                visual = CreatePlaceholder(state);
+                visual.transform.SetParent(parent, false);
+                visual.transform.SetPositionAndRotation(position, rotation);
+            }
+            else
+            {
+                // Keeps the prefab's authored localScale, exactly as
+                // SetParent(parent, false) did.
+                visual = Instantiate(prefab, position, rotation, parent);
+            }
 
             visual.name = NameFor(state);
-            visual.transform.SetParent(parent, false);
             ApplyVisualDefaults(visual, state, usesProceduralPlaceholder);
             return visual;
+        }
+
+        private static Vector3 SpawnPosition(RenderEntityState state)
+        {
+            return new Vector3(state.position.x, state.position.y, state.position.z);
+        }
+
+        private static Quaternion SpawnRotation(RenderEntityState state)
+        {
+            var rotation = new Quaternion(
+                state.rotation.x,
+                state.rotation.y,
+                state.rotation.z,
+                state.rotation.w);
+
+            // An all-zero quaternion is what an unset rotation looks like on the
+            // wire, and handing that to Instantiate logs a conversion error and
+            // produces an undefined orientation.
+            float sqrMagnitude =
+                (rotation.x * rotation.x) +
+                (rotation.y * rotation.y) +
+                (rotation.z * rotation.z) +
+                (rotation.w * rotation.w);
+            return sqrMagnitude > 1e-6f ? rotation : Quaternion.identity;
         }
 
         private GameObject GetPrefab(RenderEntityState state)

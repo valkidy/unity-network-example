@@ -654,6 +654,81 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
+        public void InstantiateVisual_WithPrefab_SpawnsAtStatePoseInsteadOfTheOrigin()
+        {
+            var prefab = new GameObject("PosePrefab");
+            var catalog = ScriptableObject.CreateInstance<NetworkPrefabCatalog>();
+            try
+            {
+                catalog.Configure(null, null, prefab, prefab);
+                prefabRegistry.Configure(catalog);
+
+                RenderEntityState state = State(
+                    12,
+                    KernelEntityType.Actor,
+                    new KernelVec3(4f, 1.5f, -7f),
+                    KernelActorType.Player);
+                state.rotation = new KernelQuat(0f, 0.7071068f, 0f, 0.7071068f);
+
+                GameObject visual = prefabRegistry.InstantiateVisual(
+                    state,
+                    rootObject.transform);
+
+                Assert.That(
+                    visual.transform.position,
+                    Is.EqualTo(new Vector3(4f, 1.5f, -7f)));
+                Assert.That(
+                    Quaternion.Angle(
+                        visual.transform.rotation,
+                        Quaternion.Euler(0f, 90f, 0f)),
+                    Is.LessThan(0.01f));
+            }
+            finally
+            {
+                Object.DestroyImmediate(catalog);
+                Object.DestroyImmediate(prefab);
+                prefabRegistry.Configure(null);
+            }
+        }
+
+        [Test]
+        public void InstantiateVisual_WithPlaceholderAndUnsetRotation_SpawnsAtStatePosition()
+        {
+            RenderEntityState state = State(
+                13,
+                KernelEntityType.Actor,
+                new KernelVec3(-2f, 0f, 8f),
+                KernelActorType.Agent);
+            // What an unset rotation looks like on the wire; it must not reach
+            // the transform as a zero quaternion.
+            state.rotation = new KernelQuat(0f, 0f, 0f, 0f);
+
+            GameObject visual = prefabRegistry.InstantiateVisual(
+                state,
+                rootObject.transform);
+
+            Assert.That(visual.transform.position, Is.EqualTo(new Vector3(-2f, 0f, 8f)));
+            Assert.That(visual.transform.rotation, Is.EqualTo(Quaternion.identity));
+        }
+
+        [Test]
+        public void Apply_WithActorFirstSeenStale_SpawnsAtItsOwnPoseNotTheOrigin()
+        {
+            RenderEntityState stale = State(
+                104,
+                KernelEntityType.Actor,
+                new KernelVec3(6f, 0f, -3f),
+                KernelActorType.Player);
+            stale.status = RenderEntityStatus.Stale;
+
+            applier.Apply(new[] { stale }, 1);
+
+            Assert.That(entityRegistry.TryGet(104, out GameObject visual), Is.True);
+            Assert.That(visual.transform.position, Is.EqualTo(new Vector3(6f, 0f, -3f)));
+            Assert.That(visual.GetComponent<NetworkActorView>().IsStale, Is.True);
+        }
+
+        [Test]
         public void Apply_WithStaleActor_KeepsLastPoseAndSuppressesPresentation()
         {
             RenderEntityState active = State(

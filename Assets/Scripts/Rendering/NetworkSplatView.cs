@@ -182,8 +182,12 @@ namespace NetworkExample.UnityDemo.Rendering
             decalSize = launch.decalSize;
 
             phase = Phase.Flight;
-            gameObject.SetActive(true);
+            // Posed before it is shown: OnEnable on a re-used splat -- and on a
+            // freshly built one, which wakes up at the origin -- would otherwise
+            // run while the object still stands wherever it last was, which is
+            // where any world-space effect on the body starts emitting.
             transform.SetPositionAndRotation(launch.origin, Quaternion.identity);
+            gameObject.SetActive(true);
             ShowFlightBody(true);
             ShowDecal(false);
             appliedFade = -1f;
