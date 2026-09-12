@@ -11,7 +11,9 @@ Material:
   m_Shader: {fileID: 4800000, guid: fda5d8fc7730f4c44bf0325e96c9c563, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
-  m_ValidKeywords: []
+  m_ValidKeywords:
+  - _RECEIVE_SHADOWS_ON
+  - _ROUNDED_SILHOUETTE_ON
   m_InvalidKeywords: []
   m_LightmapFlags: 4
   m_EnableInstancingVariants: 0
@@ -84,10 +86,13 @@ Material:
     - _NoiseStrength: 1
     - _OcclusionStrength: 1
     - _Parallax: 0.02
+    - _ReceiveShadows: 1
     - _ReflectionStrength: 1.5
     - _RefractionStrength: 1
     - _RoundCornerStrength: 1
+    - _RoundedSilhouette: 1
     - _RoundRadius: 0.12
+    - _ShadowStrength: 0.5
     - _SmoothnessTextureChannel: 0
     - _SpecularHighlights: 1
     - _SrcBlend: 1
@@ -99,5 +104,6 @@ Material:
     - _Color: {r: 1, g: 1, b: 1, a: 1}
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
     - _IceColor: {r: 0.4448202, g: 0.64233875, b: 0.7924528, a: 1}
+    - _ShadowTint: {r: 0.35, g: 0.45, b: 0.65, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

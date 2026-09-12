@@ -21,6 +21,25 @@ Shader "Unlit/IceBlock"
         _BoxHalfExtents ("Box Half Extents", Vector) = (0.5, 0.5, 0.5, 0.0)
         _RoundRadius ("Round Radius", Range(0, 0.5)) = 0.08
         _RoundCornerStrength ("Round Corner Strength", Range(0, 1)) = 1.0
+
+        // Rounded Corner Silhouette: ray-marches the rounded box in the forward,
+        // shadow and depth passes, so the block, its cast shadow and
+        // _CameraDepthTexture all share one rounded silhouette instead of the
+        // mesh's sharp box. Costs a per-pixel march and disables early-Z in those
+        // passes; off falls back to a sharp box with faked rounded normals.
+        //
+        // With it on, Round Corner Strength scales the radius that actually
+        // shapes the block (and the shading normal is the exact one); with it off
+        // it only blends the faked normal towards the mesh normal.
+        //
+        // Receive Shadows: the forward pass is unlit, so the main light's shadow
+        // has to be applied by hand. Strength/Tint control how dark and how cold
+        // the shadowed ice gets.
+        [Header(Shadows)]
+        [Toggle(_ROUNDED_SILHOUETTE_ON)] _RoundedSilhouette ("Rounded Corner Silhouette", Float) = 1
+        [Toggle(_RECEIVE_SHADOWS_ON)] _ReceiveShadows ("Receive Shadows", Float) = 1
+        _ShadowStrength ("Receive Shadow Strength", Range(0, 1)) = 0.5
+        _ShadowTint ("Receive Shadow Tint", Color) = (0.35, 0.45, 0.65, 1.0)
     }
 
     SubShader
@@ -56,7 +75,124 @@ Shader "Unlit/IceBlock"
             float4 _BoxHalfExtents;
             float _RoundRadius;
             float _RoundCornerStrength;
+
+            float _RoundedSilhouette;
+            float _ReceiveShadows;
+            float _ShadowStrength;
+            float4 _ShadowTint;
         CBUFFER_END
+
+        // ------------------------------------------------------------
+        // Rounded box geometry, shared by the forward and shadow passes
+        // ------------------------------------------------------------
+
+        // A radius larger than the smallest half extent would invert the shape.
+        float ClampRoundRadius(float3 halfExtents, float radius)
+        {
+            float maxRadius =
+                max(min(halfExtents.x, min(halfExtents.y, halfExtents.z)) - 1e-4, 0.0);
+
+            return clamp(radius, 0.0, maxRadius);
+        }
+
+        float3 BoxFaceNormalOS(float3 p, float3 halfExtents)
+        {
+            float3 safeExt = max(halfExtents, float3(1e-5, 1e-5, 1e-5));
+            float3 ap = abs(p / safeExt);
+
+            if (ap.x > ap.y && ap.x > ap.z)
+                return float3(sign(p.x), 0.0, 0.0);
+            else if (ap.y > ap.z)
+                return float3(0.0, sign(p.y), 0.0);
+            else
+                return float3(0.0, 0.0, sign(p.z));
+        }
+
+        float3 RoundedBoxNormalOS(float3 p, float3 halfExtents, float radius)
+        {
+            radius = ClampRoundRadius(halfExtents, radius);
+
+            if (radius <= 1e-5)
+                return BoxFaceNormalOS(p, halfExtents);
+
+            float3 inner = clamp(p, -halfExtents + radius, halfExtents - radius);
+            float3 n = p - inner;
+            float lenN = length(n);
+
+            if (lenN <= 1e-5)
+                return BoxFaceNormalOS(p, halfExtents);
+
+            return n / lenN;
+        }
+
+        // Signed distance to the rounded box (negative inside).
+        float SdRoundedBoxOS(float3 p, float3 halfExtents, float radius)
+        {
+            radius = ClampRoundRadius(halfExtents, radius);
+
+            float3 q = abs(p) - (halfExtents - radius);
+
+            return length(max(q, 0.0)) +
+                   min(max(q.x, max(q.y, q.z)), 0.0) -
+                   radius;
+        }
+
+        // Sphere-traces the rounded box from a ray origin sitting on (or outside)
+        // the mesh box. Returns false when the ray misses, which is exactly the
+        // sliver of mesh surface that the rounded corners cut away.
+        bool RayMarchRoundedBoxOS(
+            float3 ro,
+            float3 rd,
+            float3 halfExtents,
+            float radius,
+            out float tHit)
+        {
+            float maxDist = 2.0 * length(halfExtents) + 1e-3;
+            float epsilon = 1e-4 * max(maxDist, 1.0);
+
+            tHit = 0.0;
+
+            [loop]
+            for (int step = 0; step < 32; ++step)
+            {
+                float d = SdRoundedBoxOS(ro + rd * tHit, halfExtents, radius);
+
+                if (d < epsilon)
+                    return true;
+
+                tHit += d;
+
+                if (tHit > maxDist)
+                    break;
+            }
+
+            return false;
+        }
+
+        // The silhouette follows how round the block actually looks: at
+        // _RoundCornerStrength 0 it collapses back to the plain mesh box.
+        float RoundedSilhouetteRadius()
+        {
+            return _RoundRadius * _RoundCornerStrength;
+        }
+
+        // Marches the rounded box from a point on the mesh box surface along a
+        // world-space ray. Returns false when the ray misses, which is exactly the
+        // sliver of mesh surface that the rounded corners cut away.
+        bool RoundedBoxHitOS(float3 rayOriginOS, float3 rayDirWS, out float3 hitOS)
+        {
+            float3 halfExtents = _BoxHalfExtents.xyz;
+
+            float3 rayDirOS = normalize(TransformWorldToObjectDir(rayDirWS));
+
+            float tHit;
+            bool hit =
+                RayMarchRoundedBoxOS(
+                    rayOriginOS, rayDirOS, halfExtents, RoundedSilhouetteRadius(), tHit);
+
+            hitOS = rayOriginOS + rayDirOS * tHit;
+            return hit;
+        }
         ENDHLSL
 
         Pass
@@ -71,7 +207,17 @@ Shader "Unlit/IceBlock"
 
             #pragma vertex vert
             #pragma fragment frag
+
+            #pragma shader_feature_local _ _ROUNDED_SILHOUETTE_ON
+            #pragma shader_feature_local_fragment _ _RECEIVE_SHADOWS_ON
+
+            // Unity cannot resolve #pragma inside #if, so the shadow variants are
+            // always declared; they are only sampled when _RECEIVE_SHADOWS_ON is set.
+            #pragma multi_compile_fragment _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
+            #pragma multi_compile_fragment _ _SHADOWS_SOFT
+
             #include_with_pragmas "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Fog.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
 
             struct appdata
             {
@@ -159,40 +305,6 @@ Shader "Unlit/IceBlock"
             }
 
             // ------------------------------------------------------------
-            // Rounded box fake normal
-            // ------------------------------------------------------------
-
-            float3 BoxFaceNormalOS(float3 p, float3 halfExtents)
-            {
-                float3 safeExt = max(halfExtents, float3(1e-5, 1e-5, 1e-5));
-                float3 ap = abs(p / safeExt);
-
-                if (ap.x > ap.y && ap.x > ap.z)
-                    return float3(sign(p.x), 0.0, 0.0);
-                else if (ap.y > ap.z)
-                    return float3(0.0, sign(p.y), 0.0);
-                else
-                    return float3(0.0, 0.0, sign(p.z));
-            }
-
-            float3 RoundedBoxNormalOS(float3 p, float3 halfExtents, float radius)
-            {
-                radius = min(radius, min(halfExtents.x, min(halfExtents.y, halfExtents.z)) - 1e-4);
-
-                if (radius <= 1e-5)
-                    return BoxFaceNormalOS(p, halfExtents);
-
-                float3 inner = clamp(p, -halfExtents + radius, halfExtents - radius);
-                float3 n = p - inner;
-                float lenN = length(n);
-
-                if (lenN <= 1e-5)
-                    return BoxFaceNormalOS(p, halfExtents);
-
-                return n / lenN;
-            }
-
-            // ------------------------------------------------------------
             // Ray-box exit intersection
             // ro is assumed inside box
             // ------------------------------------------------------------
@@ -231,7 +343,11 @@ Shader "Unlit/IceBlock"
                 return o;
             }
 
+        #if defined(_ROUNDED_SILHOUETTE_ON)
+            half4 frag(v2f i, out float outDepth : SV_Depth) : SV_Target
+        #else
             half4 frag(v2f i) : SV_Target
+        #endif
             {
                 const float AIR_IOR = 1.0;
                 const float ICE_IOR = 1.31;
@@ -241,24 +357,49 @@ Shader "Unlit/IceBlock"
                 float3 P = i.worldPos;
                 float3 localP = i.localPos;
 
+                // camera -> surface; GetWorldSpaceViewDir covers orthographic too.
+                float3 V = -normalize(GetWorldSpaceViewDir(P));
+
+                // --------------------------------------------------------
+                // 1. Surface point and normal
+                // --------------------------------------------------------
+
+            #if defined(_ROUNDED_SILHOUETTE_ON)
+                // Swap the mesh box surface for the rounded box the shadow and
+                // depth passes march, so all three agree on the silhouette.
+                // The hit lies on the camera ray through localP, so V still is
+                // the view direction at the new surface point.
+                float shapeRadius = RoundedSilhouetteRadius();
+
+                float3 hitOS;
+                clip(RoundedBoxHitOS(localP, V, hitOS) ? 1.0 : -1.0);
+
+                localP = hitOS;
+                P = TransformObjectToWorld(hitOS);
+
+                float4 hitCS = TransformObjectToHClip(hitOS);
+                outDepth = hitCS.z / hitCS.w;
+
+                // Real geometry now, so the rounded normal is exact - blending it
+                // back towards the mesh normal would only re-flatten it.
+                float3 N =
+                    normalize(
+                        TransformObjectToWorldNormal(
+                            RoundedBoxNormalOS(localP, halfExtents, shapeRadius)));
+            #else
+                float shapeRadius = _RoundRadius;
+
                 float3 meshN_WS = normalize(i.worldNormal);
 
-                // --------------------------------------------------------
-                // 1. Rounded corner normal in object space
-                // --------------------------------------------------------
-
                 float3 roundedN_OS =
-                    RoundedBoxNormalOS(localP, halfExtents, _RoundRadius);
+                    RoundedBoxNormalOS(localP, halfExtents, shapeRadius);
 
                 float3 roundedN_WS =
                     normalize(TransformObjectToWorldNormal(roundedN_OS));
 
                 float3 N =
                     normalize(lerp(meshN_WS, roundedN_WS, _RoundCornerStrength));
-
-                // camera -> surface
-                float3 V =
-                    normalize(P - GetCameraPositionWS());
+            #endif
 
                 // --------------------------------------------------------
                 // 2. Small ice surface roughness
@@ -328,7 +469,7 @@ Shader "Unlit/IceBlock"
 
                     // Approximate rounded normal at exit point
                     float3 exitRoundedN_OS =
-                        RoundedBoxNormalOS(localExit, halfExtents, _RoundRadius);
+                        RoundedBoxNormalOS(localExit, halfExtents, shapeRadius);
 
                     float3 exitRoundedN_WS =
                         normalize(TransformObjectToWorldNormal(exitRoundedN_OS));
@@ -413,12 +554,151 @@ Shader "Unlit/IceBlock"
 
                 iceColor *= baseColor;
 
+                // --------------------------------------------------------
+                // 10. Main light shadow (this pass is unlit, so it has to be
+                //     applied manually)
+                // --------------------------------------------------------
+
+            #if defined(_RECEIVE_SHADOWS_ON)
+                float4 shadowCoord = TransformWorldToShadowCoord(P);
+
+                half shadowAtten =
+                    MainLightShadow(
+                        shadowCoord,
+                        P,
+                        half4(1.0, 1.0, 1.0, 1.0),
+                        _MainLightOcclusionProbes);
+
+                // 0 = fully shadowed, 1 = lit, scaled by the material strength.
+                float shadowMask =
+                    lerp(1.0, shadowAtten, _ShadowStrength);
+
+                iceColor = lerp(iceColor * _ShadowTint.rgb, iceColor, shadowMask);
+            #endif
+
                 half4 col = half4(iceColor, 1.0);
 
                 col.rgb = MixFog(col.rgb, i.fogFactor);
                 return col;
             }
 
+            ENDHLSL
+        }
+
+        // Casts shadows into the directional / punctual light shadow maps.
+        Pass
+        {
+            Name "ShadowCaster"
+            Tags { "LightMode"="ShadowCaster" }
+
+            ZWrite On
+            ZTest LEqual
+            ColorMask 0
+            Cull Back
+
+            HLSLPROGRAM
+            #pragma vertex shadowVert
+            #pragma fragment shadowFrag
+
+            // Set by URP when rendering point / spot light shadows.
+            #pragma multi_compile_vertex _ _CASTING_PUNCTUAL_LIGHT_SHADOW
+
+            #pragma shader_feature_local _ _ROUNDED_SILHOUETTE_ON
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
+
+            // Filled in by ShadowUtils.SetupShadowCasterConstantBuffer, so these stay
+            // outside UnityPerMaterial.
+            float3 _LightDirection;
+            float3 _LightPosition;
+
+            struct ShadowAttributes
+            {
+                float4 positionOS : POSITION;
+                float3 normalOS   : NORMAL;
+            };
+
+            struct ShadowVaryings
+            {
+                float4 positionCS : SV_POSITION;
+                float3 positionOS : TEXCOORD0;
+            };
+
+            // Direction the shadow-map ray travels through this fragment.
+            float3 ShadowRayDirWS(float3 positionWS)
+            {
+            #if _CASTING_PUNCTUAL_LIGHT_SHADOW
+                return normalize(positionWS - _LightPosition);
+            #else
+                return -_LightDirection;
+            #endif
+            }
+
+            // Direction from the fragment towards the light, as ApplyShadowBias expects.
+            float3 ShadowLightDirWS(float3 positionWS)
+            {
+            #if _CASTING_PUNCTUAL_LIGHT_SHADOW
+                return normalize(_LightPosition - positionWS);
+            #else
+                return _LightDirection;
+            #endif
+            }
+
+            float4 ShadowPositionHClip(float3 positionWS, float3 normalWS)
+            {
+                float4 positionCS =
+                    TransformWorldToHClip(
+                        ApplyShadowBias(positionWS, normalWS, ShadowLightDirWS(positionWS)));
+
+                return ApplyShadowClamping(positionCS);
+            }
+
+            ShadowVaryings shadowVert (ShadowAttributes input)
+            {
+                ShadowVaryings output;
+
+                float3 positionWS = TransformObjectToWorld(input.positionOS.xyz);
+                float3 normalWS = TransformObjectToWorldNormal(input.normalOS);
+
+                // The mesh box fully contains the rounded box, so rasterising it
+                // gives the rounded path a conservative set of candidate pixels.
+                output.positionCS = ShadowPositionHClip(positionWS, normalWS);
+                output.positionOS = input.positionOS.xyz;
+
+                return output;
+            }
+
+        #if defined(_ROUNDED_SILHOUETTE_ON)
+            half4 shadowFrag (ShadowVaryings input, out float outDepth : SV_Depth) : SV_Target
+            {
+                float3 rayDirWS =
+                    ShadowRayDirWS(TransformObjectToWorld(input.positionOS));
+
+                float3 hitOS;
+
+                // Missed the rounded box entirely: this pixel is part of the
+                // corner the rounding cut away, so it must not occlude.
+                clip(RoundedBoxHitOS(input.positionOS, rayDirWS, hitOS) ? 1.0 : -1.0);
+
+                float3 hitWS = TransformObjectToWorld(hitOS);
+
+                float3 hitNormalWS =
+                    normalize(
+                        TransformObjectToWorldNormal(
+                            RoundedBoxNormalOS(
+                                hitOS, _BoxHalfExtents.xyz, RoundedSilhouetteRadius())));
+
+                float4 positionCS = ShadowPositionHClip(hitWS, hitNormalWS);
+
+                outDepth = positionCS.z / positionCS.w;
+                return 0;
+            }
+        #else
+            half4 shadowFrag (ShadowVaryings input) : SV_Target
+            {
+                return 0;
+            }
+        #endif
             ENDHLSL
         }
 
@@ -436,6 +716,8 @@ Shader "Unlit/IceBlock"
             #pragma vertex depthVert
             #pragma fragment depthFrag
 
+            #pragma shader_feature_local _ _ROUNDED_SILHOUETTE_ON
+
             struct DepthAttributes
             {
                 float4 positionOS : POSITION;
@@ -444,19 +726,56 @@ Shader "Unlit/IceBlock"
             struct DepthVaryings
             {
                 float4 positionCS : SV_POSITION;
+                float3 positionOS : TEXCOORD0;
             };
 
             DepthVaryings depthVert (DepthAttributes input)
             {
                 DepthVaryings output;
+
+                // The mesh box fully contains the rounded box, so rasterising it
+                // gives the rounded path a conservative set of candidate pixels.
                 output.positionCS = TransformObjectToHClip(input.positionOS.xyz);
+                output.positionOS = input.positionOS.xyz;
+
                 return output;
             }
 
+        #if defined(_ROUNDED_SILHOUETTE_ON)
+            half4 depthFrag (DepthVaryings input, out float outDepth : SV_Depth) : SV_Target
+            {
+                float3 positionWS = TransformObjectToWorld(input.positionOS);
+
+                // camera -> surface; GetWorldSpaceViewDir covers orthographic too.
+                float3 rayDirWS = -normalize(GetWorldSpaceViewDir(positionWS));
+
+                float3 hitOS;
+                clip(RoundedBoxHitOS(input.positionOS, rayDirWS, hitOS) ? 1.0 : -1.0);
+
+                float4 positionCS = TransformObjectToHClip(hitOS);
+                float roundedDepth = positionCS.z / positionCS.w;
+
+                // The march re-derives the depth from an interpolated object-space
+                // position, so it lands a few ULPs away from what the forward pass
+                // computes for the same hit. Clamp to the mesh surface and nudge a
+                // hair further from the camera, so a forward fragment can never be
+                // rejected by ZTest LEqual and speckle the block. (Depth priming,
+                // which tests Equal, cannot be made safe this way and is not
+                // supported while the rounded silhouette is on.)
+            #if UNITY_REVERSED_Z
+                outDepth = min(roundedDepth, input.positionCS.z) * (1.0 - 1e-6);
+            #else
+                outDepth = max(roundedDepth, input.positionCS.z) + 1e-6;
+            #endif
+
+                return 0;
+            }
+        #else
             half4 depthFrag (DepthVaryings input) : SV_Target
             {
                 return 0;
             }
+        #endif
             ENDHLSL
         }
     }
