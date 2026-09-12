@@ -1,5 +1,5 @@
 fileFormatVersion: 2
-guid: a3b68b008e6ca41d2b4ad388d69203f5
+guid: 34334a54e7e69495dad6e2094f8e4d72
 ModelImporter:
   serializedVersion: 24200
   internalIDToNameTable: []
@@ -31,11 +31,11 @@ ModelImporter:
     extraUserProperties: []
     clipAnimations:
     - serializedVersion: 16
-      name: run-backwards
+      name: skin@rifle-side-step-right
       takeName: mixamo.com
       internalID: -203655887218126122
       firstFrame: 0
-      lastFrame: 10
+      lastFrame: 18
       wrapMode: 0
       orientationOffsetY: 0
       level: 0

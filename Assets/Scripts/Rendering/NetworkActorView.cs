@@ -293,7 +293,8 @@ namespace NetworkExample.UnityDemo.Rendering
                 ? transform.InverseTransformDirection(WorldAimDirection)
                 : Vector3.zero;
             LocalMove = ResolveLocalMove(
-                new Vector3(state.velocity.x, 0f, state.velocity.z));
+                new Vector3(state.velocity.x, 0f, state.velocity.z),
+                IsAimDrivenFacing());
 
             Animator target = GetAnimator();
             SetFloatIfPresent(target, SpeedParameter, Speed);
@@ -469,11 +470,25 @@ namespace NetworkExample.UnityDemo.Rendering
         /// has settled for the frame, or the feet are measured against a rotation
         /// the body has already left.
         /// </summary>
-        private Vector2 ResolveLocalMove(Vector3 velocity)
+        /// <remarks>
+        /// While facing is not aim-driven the actor is running forwards by
+        /// definition -- the body is chasing the velocity, and reports (0, 1)
+        /// outright rather than being measured. Measuring it would report the turn
+        /// instead of the travel: the body swings at a limited rate, so for the
+        /// fraction of a second after aim is released while backpedalling, the
+        /// velocity is genuinely sideways relative to a body that has not finished
+        /// coming about, and the legs would flick through a sidestep on the way.
+        /// </remarks>
+        private Vector2 ResolveLocalMove(Vector3 velocity, bool aimDriven)
         {
             if (velocity.sqrMagnitude <= MovementFacingSpeedThresholdSqr)
             {
                 return Vector2.zero;
+            }
+
+            if (!aimDriven)
+            {
+                return new Vector2(0f, 1f);
             }
 
             Vector3 local = transform.InverseTransformDirection(velocity.normalized);

@@ -471,6 +471,64 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
 
             Assert.That(entityRegistry.TryGet(100, out GameObject visual), Is.True);
             NetworkActorView actorView = visual.GetComponent<NetworkActorView>();
+            Assert.That(actorView.LocalMove.x, Is.EqualTo(0f).Within(0.0001f));
+            Assert.That(actorView.LocalMove.y, Is.EqualTo(1f).Within(0.0001f));
+        }
+
+        /// <summary>
+        /// Strafing while aimed. Facing is pinned to the aim, so travel across the
+        /// body reads on the lateral axis -- and the sign has to match the actor's
+        /// own right, not the world's. Facing +Z puts its right at +X.
+        /// </summary>
+        [Test]
+        public void Apply_WhileAimingAcrossTheDirectionOfTravel_ReportsLateralLocalMove()
+        {
+            RenderEntityState state = State(
+                100,
+                KernelEntityType.Actor,
+                new KernelVec3(),
+                KernelActorType.Player);
+            state.template_id = 1;
+            state.visual_flags = KernelConstants.VisualFlagAiming |
+                KernelConstants.VisualFlagMoving;
+            state.aim_direction = new KernelVec3(0f, 0f, 1f);
+            state.velocity = new KernelVec3(-5f, 0f, 0f);
+
+            applier.Apply(new[] { state }, 1);
+
+            Assert.That(entityRegistry.TryGet(100, out GameObject visual), Is.True);
+            NetworkActorView actorView = visual.GetComponent<NetworkActorView>();
+            Assert.That(actorView.LocalMove.x, Is.EqualTo(-1f).Within(0.0001f));
+            Assert.That(actorView.LocalMove.y, Is.EqualTo(0f).Within(0.0001f));
+        }
+
+        /// <summary>
+        /// Releasing aim while backpedalling turns the body about at a limited
+        /// rate, so for a moment the velocity really is sideways relative to a body
+        /// that has not finished coming round. Measuring that would flick the legs
+        /// through a sidestep on the way; a body chasing its own velocity is
+        /// running forwards by definition and has to report so.
+        /// </summary>
+        [Test]
+        public void Apply_WhileFacingIsStillCatchingUpToVelocity_StaysOnForwardLocalMove()
+        {
+            RenderEntityState state = State(
+                100,
+                KernelEntityType.Actor,
+                new KernelVec3(),
+                KernelActorType.Player);
+            state.template_id = 1;
+            state.visual_flags = KernelConstants.VisualFlagMoving;
+            state.velocity = new KernelVec3(0f, 0f, 5f);
+            applier.Apply(new[] { state }, 1);
+
+            // Same actor, velocity now square across the facing it just adopted.
+            state.velocity = new KernelVec3(5f, 0f, 0f);
+            applier.Apply(new[] { state }, 1);
+
+            Assert.That(entityRegistry.TryGet(100, out GameObject visual), Is.True);
+            NetworkActorView actorView = visual.GetComponent<NetworkActorView>();
+            Assert.That(actorView.LocalMove.x, Is.EqualTo(0f).Within(0.0001f));
             Assert.That(actorView.LocalMove.y, Is.EqualTo(1f).Within(0.0001f));
         }
 
