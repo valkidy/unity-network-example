@@ -33,6 +33,13 @@ namespace NetworkExample.UnityDemo.Items
         private readonly List<ulong> containerIdsToRemove = new List<ulong>();
         private readonly List<KernelItemInstanceView> flattenedItems =
             new List<KernelItemInstanceView>();
+        /// <summary>
+        /// Raised once a throw request has actually gone out, so presentation can
+        /// answer the input. A callback rather than a direct reference keeps this
+        /// controller unaware of how -- or whether -- the throw is drawn.
+        /// </summary>
+        private System.Action throwSubmitted;
+
         private readonly Dictionary<ulong, PendingRequest> pendingRequests =
             new Dictionary<ulong, PendingRequest>();
         private readonly LocalInventorySelectionModel selection =
@@ -63,10 +70,12 @@ namespace NetworkExample.UnityDemo.Items
 
         public void Configure(
             NetworkItemPropInputSampler sampler,
-            Transform cameraTransform)
+            Transform cameraTransform,
+            System.Action onThrowSubmitted = null)
         {
             inputSampler = sampler;
             viewTransform = cameraTransform;
+            throwSubmitted = onThrowSubmitted;
         }
 
         public void UpdateAuthoritativeState(NetworkClient client)
@@ -383,7 +392,10 @@ namespace NetworkExample.UnityDemo.Items
                     direction.x,
                     direction.y,
                     direction.z));
-            Submit(client, request, KernelDomainAction.Throw);
+            if (Submit(client, request, KernelDomainAction.Throw))
+            {
+                throwSubmitted?.Invoke();
+            }
         }
 
         private void SubmitPickupRequest(
@@ -418,7 +430,7 @@ namespace NetworkExample.UnityDemo.Items
             Submit(client, request, KernelDomainAction.Pickup);
         }
 
-        private void Submit(
+        private bool Submit(
             NetworkClient client,
             KernelGameplayRequest request,
             KernelDomainAction action)
@@ -430,7 +442,7 @@ namespace NetworkExample.UnityDemo.Items
                     " action=" + action +
                     " item=" + request.selected_item_instance_id +
                     " target=" + request.target_net_id + ".");
-                return;
+                return false;
             }
 
             pendingRequests[request.request_id] = new PendingRequest(
@@ -443,6 +455,7 @@ namespace NetworkExample.UnityDemo.Items
                 " item=" + request.selected_item_instance_id +
                 " target=" + request.target_net_id +
                 " quantity=" + request.requested_quantity + ".");
+            return true;
         }
 
         private void LogSelectedItem(string prefix)

@@ -260,6 +260,22 @@ namespace NetworkExample.UnityDemo.Rendering
             GetOrAddActorView(visual).BeginPredictedAction(intent);
         }
 
+        /// <summary>
+        /// Plays the local player's throw animation. Item actions do not travel the
+        /// KernelActionIntent path that weapons do, so they need their own way in.
+        /// </summary>
+        public void TriggerLocalItemThrow(uint localPlayerNetId)
+        {
+            if (localPlayerNetId == 0 ||
+                entityRegistry == null ||
+                !entityRegistry.TryGetByNetId(localPlayerNetId, out GameObject visual))
+            {
+                return;
+            }
+
+            GetOrAddActorView(visual).TriggerItemThrow();
+        }
+
         public void ApplyLocalActionResults(
             uint localPlayerNetId,
             KernelLocalActionResult[] results,

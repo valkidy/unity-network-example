@@ -532,6 +532,90 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             Assert.That(actorView.LocalMove.y, Is.EqualTo(1f).Within(0.0001f));
         }
 
+        /// <summary>
+        /// A thrown item is a gameplay request, not a weapon action: no
+        /// VisualFlagFiring, no ActionPhase. None of the signals that normally
+        /// raise the upper body layer fire, so the throw has to open a window of
+        /// its own or it plays into a layer parked at zero and is never seen.
+        /// </summary>
+        [Test]
+        public void TriggerItemThrow_RaisesTheUpperBodyLayerWithNoActionRunning()
+        {
+            NetworkActorView actorView = ApplyIdlePlayer();
+            Assert.That(actorView.ResolveUpperBodyLayerGoal(), Is.EqualTo(0f));
+
+            actorView.TriggerItemThrow();
+
+            Assert.That(actorView.ActionPhase, Is.EqualTo(KernelActionPhase.None));
+            Assert.That(actorView.IsFiring, Is.False);
+            Assert.That(actorView.IsAiming, Is.False);
+            Assert.That(actorView.ResolveUpperBodyLayerGoal(), Is.EqualTo(1f));
+        }
+
+        [Test]
+        public void AdvanceItemThrowHold_PastTheWindow_ReleasesTheUpperBodyLayer()
+        {
+            NetworkActorView actorView = ApplyIdlePlayer();
+            actorView.TriggerItemThrow();
+
+            actorView.AdvanceItemThrowHold(0.5f);
+            Assert.That(actorView.ResolveUpperBodyLayerGoal(), Is.EqualTo(1f));
+
+            actorView.AdvanceItemThrowHold(5f);
+            Assert.That(actorView.ResolveUpperBodyLayerGoal(), Is.EqualTo(0f));
+        }
+
+        [Test]
+        public void TriggerItemThrow_OnADeadActor_DoesNothing()
+        {
+            RenderEntityState state = State(
+                100,
+                KernelEntityType.Actor,
+                new KernelVec3(),
+                KernelActorType.Player);
+            state.template_id = 1;
+            state.visual_flags = KernelConstants.VisualFlagDead;
+            applier.Apply(new[] { state }, 1);
+            Assert.That(entityRegistry.TryGet(100, out GameObject visual), Is.True);
+            NetworkActorView actorView = visual.GetComponent<NetworkActorView>();
+
+            actorView.TriggerItemThrow();
+
+            Assert.That(actorView.ResolveUpperBodyLayerGoal(), Is.EqualTo(0f));
+        }
+
+        [Test]
+        public void TriggerLocalItemThrow_WithAnUnknownNetId_IsIgnored()
+        {
+            ApplyIdlePlayer();
+
+            Assert.DoesNotThrow(() => applier.TriggerLocalItemThrow(0U));
+            Assert.DoesNotThrow(() => applier.TriggerLocalItemThrow(4242U));
+        }
+
+        [Test]
+        public void TriggerLocalItemThrow_ReachesTheLocalPlayersActorView()
+        {
+            NetworkActorView actorView = ApplyIdlePlayer();
+
+            applier.TriggerLocalItemThrow(100U);
+
+            Assert.That(actorView.ResolveUpperBodyLayerGoal(), Is.EqualTo(1f));
+        }
+
+        private NetworkActorView ApplyIdlePlayer()
+        {
+            RenderEntityState state = State(
+                100,
+                KernelEntityType.Actor,
+                new KernelVec3(),
+                KernelActorType.Player);
+            state.template_id = 1;
+            applier.Apply(new[] { state }, 1);
+            Assert.That(entityRegistry.TryGet(100, out GameObject visual), Is.True);
+            return visual.GetComponent<NetworkActorView>();
+        }
+
         [Test]
         public void Apply_WithNoVelocity_ReportsNoLocalMove()
         {

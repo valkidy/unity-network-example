@@ -323,7 +323,13 @@ namespace NetworkExample.UnityDemo.Client
             {
                 itemPropController = gameObject.AddComponent<NetworkItemPropController>();
             }
-            itemPropController.Configure(itemPropInputSampler, followCamera.transform);
+            itemPropController.Configure(
+                itemPropInputSampler,
+                followCamera.transform,
+                // Reads the field at call time, so it still resolves once the
+                // client exists and the local player has a net id.
+                () => renderStateApplier?.TriggerLocalItemThrow(
+                    client == null ? 0U : client.LocalPlayerNetId));
 
             entityRegistry = GetComponent<NetworkEntityRegistry>();
             if (entityRegistry == null)

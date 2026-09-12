@@ -87,6 +87,7 @@ namespace NetworkExample.UnityDemo.Rendering
         private static readonly int RecoveryParameter = Animator.StringToHash("Recovery");
         private static readonly int IdleParameter = Animator.StringToHash("Idle");
         private static readonly int FireCommitParameter = Animator.StringToHash("FireCommit");
+        private static readonly int ThrowParameter = Animator.StringToHash("Throw");
         private static readonly int CastingCommitParameter = Animator.StringToHash("CastingCommit");
         private static readonly int ReloadCommitParameter = Animator.StringToHash("ReloadCommit");
         private static readonly int HitReactionParameter = Animator.StringToHash("HitReaction");
@@ -110,6 +111,7 @@ namespace NetworkExample.UnityDemo.Rendering
         // controller's layer names on every call.
         private int upperBodyLayerIndex = UnresolvedLayer;
         private float upperBodyLayerWeight;
+        private float itemThrowHoldRemaining;
 
         private const int UnresolvedLayer = -2;
 
@@ -162,6 +164,21 @@ namespace NetworkExample.UnityDemo.Rendering
             "Layer weight units per second when blending the firing layer in and " +
             "out. 0 snaps it.")]
         private float upperBodyBlendSpeed = 12f;
+
+        /// <summary>
+        /// How long the upper body layer is held up after a throw is started.
+        /// </summary>
+        /// <remarks>
+        /// A thrown item is a gameplay request, not a weapon action: nothing sets
+        /// VisualFlagFiring and no ActionPhase runs, so none of the signals that
+        /// normally raise this layer ever fire. Without a window of its own the
+        /// throw animation would play into a layer parked at weight zero and never
+        /// be seen. Sized to the clip; a longer value just holds the rest pose a
+        /// moment longer, a shorter one cuts the throw off part way.
+        /// </remarks>
+        [SerializeField]
+        [Min(0f)]
+        private float itemThrowHoldSeconds = 1.3f;
 
         [Header("Action Triggers")]
         [SerializeField]
@@ -331,6 +348,7 @@ namespace NetworkExample.UnityDemo.Rendering
                 return;
             }
 
+            AdvanceItemThrowHold(Time.unscaledDeltaTime);
             float goal = ResolveUpperBodyLayerGoal();
             upperBodyLayerWeight = upperBodyBlendSpeed > 0f
                 ? Mathf.MoveTowards(
@@ -354,9 +372,23 @@ namespace NetworkExample.UnityDemo.Rendering
         /// running at all. Without it the aim layer would only ever surface during
         /// the shot itself, and the raise and lower animations would never play.
         /// </remarks>
+        /// <summary>
+        /// Runs down the window a throw holds the upper body layer up for. Takes
+        /// its delta rather than reading the clock so the window can be stepped
+        /// from a test, where <see cref="Time.unscaledDeltaTime"/> is zero.
+        /// </summary>
+        public void AdvanceItemThrowHold(float deltaTime)
+        {
+            itemThrowHoldRemaining = Mathf.Max(
+                0f, itemThrowHoldRemaining - Mathf.Max(0f, deltaTime));
+        }
+
         public float ResolveUpperBodyLayerGoal()
         {
-            return IsAiming || IsFiring || ActionPhase != KernelActionPhase.None
+            return IsAiming ||
+                IsFiring ||
+                itemThrowHoldRemaining > 0f ||
+                ActionPhase != KernelActionPhase.None
                 ? 1f
                 : 0f;
         }
@@ -526,6 +558,27 @@ namespace NetworkExample.UnityDemo.Rendering
 
             forward = Vector3.zero;
             return false;
+        }
+
+        /// <summary>
+        /// Plays the throw animation and holds the upper body layer up for it.
+        /// </summary>
+        /// <remarks>
+        /// Driven from the request being submitted rather than from the kernel
+        /// accepting it, matching how a weapon action is predicted: the throw is
+        /// the player's own input and has to answer on the frame they pressed it,
+        /// not a round trip later. A rejected throw therefore still animates -- the
+        /// item simply does not leave the hand.
+        /// </remarks>
+        public void TriggerItemThrow()
+        {
+            if (IsStale || IsDead)
+            {
+                return;
+            }
+
+            itemThrowHoldRemaining = itemThrowHoldSeconds;
+            SetTriggerIfPresent(GetAnimator(), ThrowParameter);
         }
 
         public void BeginPredictedAction(KernelActionIntent intent)
