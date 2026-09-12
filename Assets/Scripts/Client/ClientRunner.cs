@@ -6,6 +6,7 @@ using NetworkExample.Kernel.Client;
 using NetworkExample.UnityDemo.CameraSystem;
 using NetworkExample.UnityDemo.Common;
 using NetworkExample.UnityDemo.Input;
+using NetworkExample.UnityDemo.UI;
 using NetworkExample.UnityDemo.Items;
 using NetworkExample.UnityDemo.Rendering;
 using UnityEngine;
@@ -78,6 +79,7 @@ namespace NetworkExample.UnityDemo.Client
         private NetworkHitscanTracers hitscanTracers;
         private NetworkHitSplatters hitSplatters;
         private ThirdPersonFollowCamera followCamera;
+        private AimReticleView aimReticleView;
         private readonly NetworkPresentationClock presentationClock = new NetworkPresentationClock();
         private NetworkInputSubmissionClock inputSubmissionClock;
         private GameplayCatalogSyncOptions gameplayCatalogSyncOptions;
@@ -142,6 +144,15 @@ namespace NetworkExample.UnityDemo.Client
             if (!started || client == null)
             {
                 return;
+            }
+
+            // Aim is polled every frame, not on the input submission clock, so the
+            // camera reacts at frame rate instead of at the slower submit cadence.
+            inputSampler.UpdateAimState();
+            if (followCamera != null)
+            {
+                followCamera.SetAiming(inputSampler.IsAiming);
+                inputSampler.SetAimDirection(followCamera.AimDirection);
             }
 
             KernelActionIntent predictedIntent = default;
@@ -286,6 +297,13 @@ namespace NetworkExample.UnityDemo.Client
         private void EnsureComponents()
         {
             followCamera = NetworkDemoScene.EnsureDefaultView();
+
+            aimReticleView = GetComponent<AimReticleView>();
+            if (aimReticleView == null)
+            {
+                aimReticleView = gameObject.AddComponent<AimReticleView>();
+            }
+            aimReticleView.Configure(followCamera);
 
             inputSampler = GetComponent<NetworkInputSampler>();
             if (inputSampler == null)

@@ -71,6 +71,8 @@ namespace NetworkExample.UnityDemo.Rendering
 
         private static readonly int MovingParameter = Animator.StringToHash("Moving");
         private static readonly int SpeedParameter = Animator.StringToHash("Speed");
+        private static readonly int MoveXParameter = Animator.StringToHash("MoveX");
+        private static readonly int MoveYParameter = Animator.StringToHash("MoveY");
         private static readonly int GroundedParameter = Animator.StringToHash("Grounded");
         private static readonly int FallingParameter = Animator.StringToHash("Falling");
         private static readonly int ReloadingParameter = Animator.StringToHash("Reloading");
@@ -125,6 +127,25 @@ namespace NetworkExample.UnityDemo.Rendering
             "Set it to the prefab's authored maximum locomotion speed for a normalized 0..1 value.")]
         private float speedNormalization = 1f;
 
+        /// <summary>
+        /// How fast the body may swing to a new facing, in degrees per second.
+        /// Nothing on the wire constrains this: the kernel replicates a rotation
+        /// that never changes for these actors, so the turn is entirely a
+        /// presentation decision made here.
+        /// </summary>
+        /// <remarks>
+        /// This governs every turn, not just the aim-driven ones, and it has to.
+        /// An action ends on some frame and facing hands back from the aim to the
+        /// velocity on that frame; if one of those two sources snapped, firing once
+        /// while running would swing the body onto the reticle and then flick it
+        /// back to the run direction. Rate limiting both sides makes the handover
+        /// invisible. It costs nothing in the ordinary case, because velocity
+        /// direction is already smoothed by the controller's own acceleration.
+        /// </remarks>
+        [SerializeField]
+        [Min(0f)]
+        private float maxFacingDegreesPerSecond = 540f;
+
         [SerializeField]
         [Tooltip(
             "Animator layer that plays the firing action on top of locomotion, or " +
@@ -163,6 +184,23 @@ namespace NetworkExample.UnityDemo.Rendering
         public KernelActionPhase ActionPhase { get; private set; }
         public uint ActionInstanceId { get; private set; }
         public float Speed { get; private set; }
+
+        /// <summary>
+        /// Which way the actor is travelling relative to the way it is facing:
+        /// x to its right, y along its forward, as a unit direction on the ground
+        /// plane, or zero when it is not moving.
+        /// </summary>
+        /// <remarks>
+        /// Direction only -- <see cref="Speed"/> already carries how fast. Keeping
+        /// magnitude out of it means the locomotion thresholds do not move when
+        /// speedNormalization is left unconfigured, which it is on most actors.
+        ///
+        /// This is only ever interesting because facing and movement were pulled
+        /// apart: while facing follows velocity the value is pinned at (0, 1) by
+        /// construction. It goes negative exactly when the body is held on the aim
+        /// and the feet are going the other way.
+        /// </remarks>
+        public Vector2 LocalMove { get; private set; }
         public uint ActionTemplateId { get; private set; }
         public Vector3 AimDirection { get; private set; }
 
@@ -208,7 +246,6 @@ namespace NetworkExample.UnityDemo.Rendering
             }
 
             IsStale = false;
-            ApplyMovementFacing(state);
             ActorType = state.actor_type;
             VisualFlags = state.visual_flags;
             ActionPhase = state.action.phase;
@@ -246,12 +283,22 @@ namespace NetworkExample.UnityDemo.Rendering
             WorldAimDirection = worldAim.sqrMagnitude > 0.000001f
                 ? worldAim.normalized
                 : Vector3.zero;
+
+            // Facing has to settle before the aim is taken into local space below,
+            // or the animator is fed this frame's aim measured against last frame's
+            // rotation -- which reads as the upper body lagging the turn.
+            ApplyMovementFacing(state);
+
             AimDirection = WorldAimDirection != Vector3.zero
                 ? transform.InverseTransformDirection(WorldAimDirection)
                 : Vector3.zero;
+            LocalMove = ResolveLocalMove(
+                new Vector3(state.velocity.x, 0f, state.velocity.z));
 
             Animator target = GetAnimator();
             SetFloatIfPresent(target, SpeedParameter, Speed);
+            SetFloatIfPresent(target, MoveXParameter, LocalMove.x);
+            SetFloatIfPresent(target, MoveYParameter, LocalMove.y);
             SetFloatIfPresent(target, AimXParameter, AimDirection.x);
             SetFloatIfPresent(target, AimYParameter, AimDirection.y);
             SetFloatIfPresent(target, AimZParameter, AimDirection.z);
@@ -283,10 +330,7 @@ namespace NetworkExample.UnityDemo.Rendering
                 return;
             }
 
-            // ActionPhase covers windup and recovery as well; VisualFlagFiring is
-            // the same signal from the other side. Either one alone would leave a
-            // gap in weapons that spend most of an action outside Active.
-            float goal = IsFiring || ActionPhase != KernelActionPhase.None ? 1f : 0f;
+            float goal = ResolveUpperBodyLayerGoal();
             upperBodyLayerWeight = upperBodyBlendSpeed > 0f
                 ? Mathf.MoveTowards(
                     upperBodyLayerWeight,
@@ -294,6 +338,26 @@ namespace NetworkExample.UnityDemo.Rendering
                     upperBodyBlendSpeed * Time.unscaledDeltaTime)
                 : goal;
             target.SetLayerWeight(layer, upperBodyLayerWeight);
+        }
+
+        /// <summary>
+        /// Whether the upper body layer should be carrying the pose this frame.
+        /// </summary>
+        /// <remarks>
+        /// ActionPhase covers windup and recovery as well; VisualFlagFiring is the
+        /// same signal from the other side. Either one alone would leave a gap in
+        /// weapons that spend most of an action outside Active.
+        ///
+        /// Aiming belongs here for a different reason: holding a weapon up is a
+        /// pose the actor keeps for as long as the button is down, with no action
+        /// running at all. Without it the aim layer would only ever surface during
+        /// the shot itself, and the raise and lower animations would never play.
+        /// </remarks>
+        public float ResolveUpperBodyLayerGoal()
+        {
+            return IsAiming || IsFiring || ActionPhase != KernelActionPhase.None
+                ? 1f
+                : 0f;
         }
 
         private int ResolveUpperBodyLayer(Animator target)
@@ -333,15 +397,64 @@ namespace NetworkExample.UnityDemo.Rendering
                 return;
             }
 
-            Vector3 movement = new Vector3(
-                state.velocity.x,
-                0f,
-                state.velocity.z);
-            if (movement.sqrMagnitude > MovementFacingSpeedThresholdSqr)
+            ApplyFacing(
+                WorldAimDirection,
+                new Vector3(state.velocity.x, 0f, state.velocity.z),
+                IsAimDrivenFacing(),
+                Time.unscaledDeltaTime);
+        }
+
+        /// <summary>
+        /// True while the body should point where the weapon points rather than
+        /// where the feet are going.
+        /// </summary>
+        /// <remarks>
+        /// Aiming is the obvious case, and it is what lets a player walk backwards
+        /// without the character turning round to do it -- the move vector is
+        /// already camera-relative, so leaving facing on the aim is the whole of
+        /// backpedalling.
+        ///
+        /// Firing is the less obvious one, and it is the reason a shot used to
+        /// leave in a direction the character was visibly not pointing: the aim
+        /// comes from the reticle while facing came from velocity, so running left
+        /// and shooting forward pointed the body west and the bullet north. Windup
+        /// and recovery are included so the turn starts with the animation rather
+        /// than on the frame the projectile spawns.
+        /// </remarks>
+        private bool IsAimDrivenFacing()
+        {
+            return !IsDead && (IsAiming || IsWindup || IsFiring || IsRecovery);
+        }
+
+        /// <summary>
+        /// Points the body for one frame. Public, and taking its inputs rather
+        /// than reading them, so the turn can be stepped with a real delta from a
+        /// test -- <see cref="Time.unscaledDeltaTime"/> is zero in edit mode, which
+        /// would freeze every rate-limited turn at its starting angle.
+        /// </summary>
+        public void ApplyFacing(
+            Vector3 worldAimDirection,
+            Vector3 velocity,
+            bool aimDriven,
+            float deltaTime)
+        {
+            if (TryResolveFacingForward(
+                    worldAimDirection,
+                    velocity,
+                    aimDriven,
+                    out Vector3 forward))
             {
-                lastMovementRotation = Quaternion.LookRotation(
-                    movement.normalized,
-                    Vector3.up);
+                Quaternion desired = Quaternion.LookRotation(forward, Vector3.up);
+                // The first facing an actor ever resolves has nothing to turn away
+                // from, so it is adopted outright rather than crawled to from
+                // whatever rotation the spawn happened to use.
+                lastMovementRotation =
+                    hasMovementRotation && maxFacingDegreesPerSecond > 0f
+                        ? Quaternion.RotateTowards(
+                            lastMovementRotation,
+                            desired,
+                            maxFacingDegreesPerSecond * Mathf.Max(0f, deltaTime))
+                        : desired;
                 hasMovementRotation = true;
             }
 
@@ -349,6 +462,55 @@ namespace NetworkExample.UnityDemo.Rendering
             {
                 transform.rotation = lastMovementRotation;
             }
+        }
+
+        /// <summary>
+        /// Takes a world velocity into the actor's own frame. Must run after facing
+        /// has settled for the frame, or the feet are measured against a rotation
+        /// the body has already left.
+        /// </summary>
+        private Vector2 ResolveLocalMove(Vector3 velocity)
+        {
+            if (velocity.sqrMagnitude <= MovementFacingSpeedThresholdSqr)
+            {
+                return Vector2.zero;
+            }
+
+            Vector3 local = transform.InverseTransformDirection(velocity.normalized);
+            return new Vector2(local.x, local.z);
+        }
+
+        /// <summary>
+        /// Picks the direction the body should point this frame, flattened onto the
+        /// ground plane because a body yaws and does not pitch. Returns false when
+        /// neither source has anything to say -- an actor standing still and not
+        /// aiming keeps whatever facing it already had.
+        /// </summary>
+        public static bool TryResolveFacingForward(
+            Vector3 worldAimDirection,
+            Vector3 velocity,
+            bool aimDriven,
+            out Vector3 forward)
+        {
+            if (aimDriven)
+            {
+                Vector3 flatAim = new Vector3(worldAimDirection.x, 0f, worldAimDirection.z);
+                if (flatAim.sqrMagnitude > MovementFacingSpeedThresholdSqr)
+                {
+                    forward = flatAim.normalized;
+                    return true;
+                }
+            }
+
+            Vector3 flatVelocity = new Vector3(velocity.x, 0f, velocity.z);
+            if (flatVelocity.sqrMagnitude > MovementFacingSpeedThresholdSqr)
+            {
+                forward = flatVelocity.normalized;
+                return true;
+            }
+
+            forward = Vector3.zero;
+            return false;
         }
 
         public void BeginPredictedAction(KernelActionIntent intent)

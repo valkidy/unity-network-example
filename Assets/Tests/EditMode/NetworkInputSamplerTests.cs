@@ -1,3 +1,4 @@
+using System.Reflection;
 using NetworkExample.Kernel;
 using NetworkExample.UnityDemo.Input;
 using NUnit.Framework;
@@ -215,6 +216,166 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             Assert.That(held.action_input.action_instance_id,
                 Is.EqualTo(first.action_intent.action_instance_id));
             Assert.That(held.action_input.held, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Sample_WithNoAimInput_LeavesButtonsClear()
+        {
+            KernelPlayerInput input = sampler.Sample();
+
+            Assert.That(input.buttons, Is.Zero);
+            Assert.That(sampler.IsAiming, Is.False);
+        }
+
+        [Test]
+        public void Sample_WhileAimKeyIsHeld_SetsAimButtonBit()
+        {
+            SetKey(Key.LeftShift);
+
+            KernelPlayerInput input = sampler.Sample();
+
+            Assert.That(sampler.IsAiming, Is.True);
+            Assert.That(input.buttons & (uint)InputButton.Aim, Is.EqualTo((uint)InputButton.Aim));
+        }
+
+        /// <summary>
+        /// Hold-to-aim has to drop the moment the key comes up. Sample() re-polls
+        /// the button itself, so a release that lands between submissions cannot
+        /// leave the kernel holding a stale aim bit.
+        /// </summary>
+        [Test]
+        public void Sample_AfterAimKeyIsReleased_ClearsAimButtonBit()
+        {
+            SetKey(Key.LeftShift);
+            sampler.Sample();
+
+            SetKey();
+            KernelPlayerInput released = sampler.Sample();
+
+            Assert.That(sampler.IsAiming, Is.False);
+            Assert.That(released.buttons, Is.Zero);
+        }
+
+        [Test]
+        public void ApplyAimInput_InHoldMode_TracksButtonState()
+        {
+            sampler.ApplyAimInput(true);
+            Assert.That(sampler.IsAiming, Is.True);
+
+            sampler.ApplyAimInput(true);
+            Assert.That(sampler.IsAiming, Is.True);
+
+            sampler.ApplyAimInput(false);
+            Assert.That(sampler.IsAiming, Is.False);
+        }
+
+        [Test]
+        public void ApplyAimInput_InToggleMode_LatchesOnEachPressEdge()
+        {
+            SetToggleMode(true);
+
+            sampler.ApplyAimInput(true);
+            Assert.That(sampler.IsAiming, Is.True);
+
+            // Still held: no new edge, so the state must not flip back.
+            sampler.ApplyAimInput(true);
+            Assert.That(sampler.IsAiming, Is.True);
+
+            sampler.ApplyAimInput(false);
+            Assert.That(sampler.IsAiming, Is.True);
+
+            sampler.ApplyAimInput(true);
+            Assert.That(sampler.IsAiming, Is.False);
+        }
+
+        [Test]
+        public void ResetSession_ClearsAimState()
+        {
+            sampler.ApplyAimInput(true);
+
+            sampler.ResetSession();
+
+            Assert.That(sampler.IsAiming, Is.False);
+        }
+
+        [Test]
+        public void AimAction_BindsKeyboardMouseAndGamepad()
+        {
+            InputAction aim = GetAimAction();
+
+            CollectionAssert.AreEquivalent(
+                new[] { "<Keyboard>/leftShift", "<Mouse>/rightButton", "<Gamepad>/leftTrigger" },
+                System.Linq.Enumerable.ToArray(
+                    System.Linq.Enumerable.Select(aim.bindings, b => b.path)));
+        }
+
+        private InputAction GetAimAction()
+        {
+            FieldInfo field = typeof(NetworkInputSampler).GetField(
+                "aimAction",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            return (InputAction)field.GetValue(sampler);
+        }
+
+        private void SetToggleMode(bool enabled)
+        {
+            FieldInfo field = typeof(NetworkInputSampler).GetField(
+                "aimToggleMode",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            field.SetValue(sampler, enabled);
+        }
+
+        [Test]
+        public void GetAimDirection_WithPushedReticleDirection_PrefersItOverViewForward()
+        {
+            GameObject view = new GameObject("View");
+            try
+            {
+                view.transform.rotation = Quaternion.identity;
+                sampler.SetViewTransform(view.transform);
+                sampler.SetAimDirection(new Vector3(1f, 0f, 1f));
+
+                Vector3 aim = sampler.GetAimDirection(Vector2.zero);
+
+                Assert.That(aim.x, Is.EqualTo(0.70710678f).Within(0.0001f));
+                Assert.That(aim.z, Is.EqualTo(0.70710678f).Within(0.0001f));
+            }
+            finally
+            {
+                Object.DestroyImmediate(view);
+            }
+        }
+
+        [Test]
+        public void Sample_WithPushedReticleDirection_SubmitsThatAimDirection()
+        {
+            sampler.SetAimDirection(Vector3.right);
+
+            KernelPlayerInput input = sampler.Sample();
+
+            Assert.That(input.aim_dir.x, Is.EqualTo(1f).Within(0.0001f));
+            Assert.That(input.aim_dir.z, Is.EqualTo(0f).Within(0.0001f));
+        }
+
+        [Test]
+        public void SetAimDirection_WithZeroVector_FallsBackToTheViewTransform()
+        {
+            GameObject view = new GameObject("View");
+            try
+            {
+                view.transform.rotation = Quaternion.Euler(0f, 90f, 0f);
+                sampler.SetViewTransform(view.transform);
+                sampler.SetAimDirection(Vector3.zero);
+
+                Vector3 aim = sampler.GetAimDirection(Vector2.zero);
+
+                Assert.That(aim.x, Is.EqualTo(1f).Within(0.0001f));
+                Assert.That(aim.z, Is.EqualTo(0f).Within(0.0001f));
+            }
+            finally
+            {
+                Object.DestroyImmediate(view);
+            }
         }
 
         private void SetKey(params Key[] keys)

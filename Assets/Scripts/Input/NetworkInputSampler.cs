@@ -22,11 +22,20 @@ namespace NetworkExample.UnityDemo.Input
         [SerializeField]
         private float firePressedThreshold = 0.5f;
 
+        /// <summary>
+        /// Hold-to-aim by default. Toggle mode latches the state on each press
+        /// instead, for players who would rather not hold a button down.
+        /// </summary>
+        [SerializeField]
+        private bool aimToggleMode = false;
+
         private InputAction moveAction;
         private InputAction fireAction;
         private InputAction[] weaponSelectActions;
         private InputAction reloadAction;
+        private InputAction aimAction;
         private Transform viewTransform;
+        private Vector3 reticleAimDirection;
         private readonly HashSet<uint> outstandingActionIds = new HashSet<uint>();
         private uint inputSequence;
         private uint nextActionInstanceId = 1;
@@ -40,8 +49,17 @@ namespace NetworkExample.UnityDemo.Input
         private byte selectedWeapon;
         private bool wasFirePressed;
         private bool wasReloadPressed;
+        private bool wasAimPressed;
+        private bool isAiming;
 
         public int OutstandingActionCount => outstandingActionIds.Count;
+
+        /// <summary>
+        /// The one aim state everything else reads -- the camera framing, the
+        /// reticle and the <see cref="InputButton.Aim"/> bit the kernel sees are
+        /// all driven from here, so they cannot disagree.
+        /// </summary>
+        public bool IsAiming => isAiming;
         public bool HasWeaponLoadout => weaponSlotCount > 0;
         public int SelectedWeaponSlot => selectedWeaponSlot;
         public byte SelectedWeaponId => selectedWeapon;
@@ -49,6 +67,18 @@ namespace NetworkExample.UnityDemo.Input
         public void SetViewTransform(Transform target)
         {
             viewTransform = target;
+        }
+
+        /// <summary>
+        /// Supplies the direction the reticle is pointing at, pushed once a frame
+        /// by the runner. It takes precedence over the view transform's forward:
+        /// once the reticle is allowed to sit off centre, camera forward is no
+        /// longer the direction a shot has to travel to land under it. A zero
+        /// vector clears the override.
+        /// </summary>
+        public void SetAimDirection(Vector3 direction)
+        {
+            reticleAimDirection = direction;
         }
 
         public bool ConfigureWeaponLoadout(byte[] weaponIds, int initialActiveSlot)
@@ -133,6 +163,14 @@ namespace NetworkExample.UnityDemo.Input
 
             reloadAction = new InputAction("Reload", InputActionType.Button);
             reloadAction.AddBinding("<Keyboard>/r");
+
+            // Left shift keeps the arrow keys free to aim with and WASD free to
+            // move with; the other two are the conventional aim controls on their
+            // own devices.
+            aimAction = new InputAction("Aim", InputActionType.Button);
+            aimAction.AddBinding("<Keyboard>/leftShift");
+            aimAction.AddBinding("<Mouse>/rightButton");
+            aimAction.AddBinding("<Gamepad>/leftTrigger");
         }
 
         private void OnEnable()
@@ -141,6 +179,7 @@ namespace NetworkExample.UnityDemo.Input
             fireAction?.Enable();
             SetWeaponSelectActionsEnabled(true);
             reloadAction?.Enable();
+            aimAction?.Enable();
         }
 
         private void OnDisable()
@@ -149,6 +188,7 @@ namespace NetworkExample.UnityDemo.Input
             fireAction?.Disable();
             SetWeaponSelectActionsEnabled(false);
             reloadAction?.Disable();
+            aimAction?.Disable();
             ResetSession();
         }
 
@@ -169,12 +209,51 @@ namespace NetworkExample.UnityDemo.Input
             weaponSelectActions = null;
             reloadAction?.Dispose();
             reloadAction = null;
+            aimAction?.Dispose();
+            aimAction = null;
+        }
+
+        /// <summary>
+        /// Polls the aim button and folds it into <see cref="IsAiming"/>. Called
+        /// once a frame by the runner so the camera can react at frame rate rather
+        /// than at the slower input submission cadence, and again from
+        /// <see cref="Sample"/> so a sample is never taken against a stale state.
+        /// Edge detection makes the extra call a no-op.
+        /// </summary>
+        public void UpdateAimState()
+        {
+            EnsureActionsCreated();
+            EnsureActionsEnabled();
+            ApplyAimInput(IsActionPressed(aimAction));
+        }
+
+        /// <summary>
+        /// Applies one already-read aim button state. Split from
+        /// <see cref="UpdateAimState"/> so the hold and toggle behaviour can be
+        /// driven directly without a device attached.
+        /// </summary>
+        public void ApplyAimInput(bool aimPressed)
+        {
+            if (aimToggleMode)
+            {
+                if (aimPressed && !wasAimPressed)
+                {
+                    isAiming = !isAiming;
+                }
+            }
+            else
+            {
+                isAiming = aimPressed;
+            }
+
+            wasAimPressed = aimPressed;
         }
 
         public KernelPlayerInput Sample()
         {
             EnsureActionsCreated();
             EnsureActionsEnabled();
+            UpdateAimState();
             Vector2 rawMove =
                 moveAction == null ? Vector2.zero : moveAction.ReadValue<Vector2>();
             Vector2 move = TransformMoveToWorld(rawMove);
@@ -231,7 +310,7 @@ namespace NetworkExample.UnityDemo.Input
                 move = new KernelVec2(move.x, move.y),
                 look_delta = new KernelVec2(0f, 0f),
                 aim_dir = new KernelVec3(aimDirection.x, aimDirection.y, aimDirection.z),
-                buttons = 0U,
+                buttons = isAiming ? (uint)InputButton.Aim : 0U,
                 selected_weapon = selectedWeapon,
                 action_intent = actionIntent,
                 action_input = actionInput,
@@ -263,6 +342,11 @@ namespace NetworkExample.UnityDemo.Input
 
         public Vector3 GetAimDirection(Vector2 worldMove)
         {
+            if (reticleAimDirection.sqrMagnitude > 0.0001f)
+            {
+                return reticleAimDirection.normalized;
+            }
+
             if (viewTransform != null && viewTransform.forward.sqrMagnitude > 0.0001f)
             {
                 return viewTransform.forward.normalized;
@@ -300,6 +384,8 @@ namespace NetworkExample.UnityDemo.Input
             heldFireActionInstanceId = 0;
             wasFirePressed = false;
             wasReloadPressed = false;
+            wasAimPressed = false;
+            isAiming = false;
             if (weaponSlotCount > 0)
             {
                 TrySelectWeaponSlot(activeWeaponSlot);
@@ -393,6 +479,7 @@ namespace NetworkExample.UnityDemo.Input
             fireAction?.Enable();
             SetWeaponSelectActionsEnabled(true);
             reloadAction?.Enable();
+            aimAction?.Enable();
         }
 
         private static ulong NowMicroseconds()

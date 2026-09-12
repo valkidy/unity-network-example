@@ -371,7 +371,10 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
                 KernelActorType.Player);
             state.template_id = 1;
             state.velocity = new KernelVec3(3f, 99f, 4f);
-            state.aim_direction = new KernelVec3(0f, 0f, 2f);
+            // Pitched aim on purpose. The action phase below makes facing
+            // aim-driven, so the body absorbs the aim's yaw and the local aim keeps
+            // only its pitch -- which is exactly what the upper body needs.
+            state.aim_direction = new KernelVec3(0f, 3f, 4f);
             state.visual_flags = KernelConstants.VisualFlagGrounded |
                 KernelConstants.VisualFlagFalling;
             state.animation_state = ushort.MaxValue;
@@ -388,9 +391,124 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             Assert.That(actorView.IsGrounded, Is.True);
             Assert.That(actorView.IsFalling, Is.True);
             Assert.That(actorView.ActionPhase, Is.EqualTo(KernelActionPhase.Recovery));
-            Assert.That(actorView.AimDirection.x, Is.EqualTo(-0.6f).Within(0.0001f));
-            Assert.That(actorView.AimDirection.y, Is.EqualTo(0f).Within(0.0001f));
+            Assert.That(actorView.AimDirection.x, Is.EqualTo(0f).Within(0.0001f));
+            Assert.That(actorView.AimDirection.y, Is.EqualTo(0.6f).Within(0.0001f));
             Assert.That(actorView.AimDirection.z, Is.EqualTo(0.8f).Within(0.0001f));
+        }
+
+        /// <summary>
+        /// Holding a weapon up is a pose the actor keeps with no action running, so
+        /// the aim flag alone has to carry the upper body layer. Before this the
+        /// layer only surfaced during a shot, which left the raise and lower
+        /// animations with no window to play in.
+        /// </summary>
+        [Test]
+        public void Apply_WhileAimingWithNoAction_AsksForTheUpperBodyLayer()
+        {
+            RenderEntityState state = State(
+                100,
+                KernelEntityType.Actor,
+                new KernelVec3(),
+                KernelActorType.Player);
+            state.template_id = 1;
+            state.visual_flags = KernelConstants.VisualFlagAiming;
+
+            applier.Apply(new[] { state }, 1);
+
+            Assert.That(entityRegistry.TryGet(100, out GameObject visual), Is.True);
+            NetworkActorView actorView = visual.GetComponent<NetworkActorView>();
+            Assert.That(actorView.IsAiming, Is.True);
+            Assert.That(actorView.ActionPhase, Is.EqualTo(KernelActionPhase.None));
+            Assert.That(actorView.ResolveUpperBodyLayerGoal(), Is.EqualTo(1f));
+        }
+
+        /// <summary>
+        /// The backpedal signal. Facing is held on the aim while the feet go the
+        /// other way, so the move vector taken into the actor's own frame points
+        /// backwards -- which is the only thing that can tell the locomotion layer
+        /// to reverse the cycle instead of running the forward one.
+        /// </summary>
+        [Test]
+        public void Apply_WhileAimingAgainstTheDirectionOfTravel_ReportsBackwardLocalMove()
+        {
+            RenderEntityState state = State(
+                100,
+                KernelEntityType.Actor,
+                new KernelVec3(),
+                KernelActorType.Player);
+            state.template_id = 1;
+            state.visual_flags = KernelConstants.VisualFlagAiming |
+                KernelConstants.VisualFlagMoving;
+            state.aim_direction = new KernelVec3(0f, 0f, 1f);
+            state.velocity = new KernelVec3(0f, 0f, -5f);
+
+            applier.Apply(new[] { state }, 1);
+
+            Assert.That(entityRegistry.TryGet(100, out GameObject visual), Is.True);
+            NetworkActorView actorView = visual.GetComponent<NetworkActorView>();
+            Assert.That(actorView.LocalMove.x, Is.EqualTo(0f).Within(0.0001f));
+            Assert.That(actorView.LocalMove.y, Is.EqualTo(-1f).Within(0.0001f));
+        }
+
+        /// <summary>
+        /// The same world velocity with no aim turns the body round instead, so the
+        /// actor is running forwards and the local move has to say so.
+        /// </summary>
+        [Test]
+        public void Apply_WhileNotAiming_ReportsForwardLocalMoveForTheSameVelocity()
+        {
+            RenderEntityState state = State(
+                100,
+                KernelEntityType.Actor,
+                new KernelVec3(),
+                KernelActorType.Player);
+            state.template_id = 1;
+            state.visual_flags = KernelConstants.VisualFlagMoving;
+            state.aim_direction = new KernelVec3(0f, 0f, 1f);
+            state.velocity = new KernelVec3(0f, 0f, -5f);
+
+            applier.Apply(new[] { state }, 1);
+
+            Assert.That(entityRegistry.TryGet(100, out GameObject visual), Is.True);
+            NetworkActorView actorView = visual.GetComponent<NetworkActorView>();
+            Assert.That(actorView.LocalMove.y, Is.EqualTo(1f).Within(0.0001f));
+        }
+
+        [Test]
+        public void Apply_WithNoVelocity_ReportsNoLocalMove()
+        {
+            RenderEntityState state = State(
+                100,
+                KernelEntityType.Actor,
+                new KernelVec3(),
+                KernelActorType.Player);
+            state.template_id = 1;
+            state.visual_flags = KernelConstants.VisualFlagAiming;
+            state.aim_direction = new KernelVec3(0f, 0f, 1f);
+
+            applier.Apply(new[] { state }, 1);
+
+            Assert.That(entityRegistry.TryGet(100, out GameObject visual), Is.True);
+            NetworkActorView actorView = visual.GetComponent<NetworkActorView>();
+            Assert.That(actorView.LocalMove, Is.EqualTo(Vector2.zero));
+        }
+
+        [Test]
+        public void Apply_WhileNeitherAimingNorActing_ReleasesTheUpperBodyLayer()
+        {
+            RenderEntityState state = State(
+                100,
+                KernelEntityType.Actor,
+                new KernelVec3(),
+                KernelActorType.Player);
+            state.template_id = 1;
+            state.visual_flags = KernelConstants.VisualFlagMoving;
+
+            applier.Apply(new[] { state }, 1);
+
+            Assert.That(entityRegistry.TryGet(100, out GameObject visual), Is.True);
+            NetworkActorView actorView = visual.GetComponent<NetworkActorView>();
+            Assert.That(actorView.ResolveUpperBodyLayerGoal(), Is.EqualTo(0f));
         }
 
         [Test]
