@@ -29,6 +29,13 @@ namespace NetworkExample.UnityDemo.Host
         [SerializeField]
         private bool enableVisualDebug = true;
 
+        [Tooltip(
+            "Logs every local action the kernel did not accept, with the reason " +
+            "it gave. Off by default because a busy fight can produce one per " +
+            "commit; turn it on to find out why a burst stopped.")]
+        [SerializeField]
+        private bool logActionResultFailures = false;
+
         private NetworkHost host;
         private KernelEvent[] events;
         private RenderEntityState[] renderStates;
@@ -420,12 +427,38 @@ namespace NetworkExample.UnityDemo.Host
             for (int index = 0; index < safeCount; ++index)
             {
                 KernelLocalActionResult result = localActionResults[index];
-                inputSampler.CompleteAction(result.action_instance_id);
-                if (result.result != KernelLocalActionResultType.Accepted)
-                {
-                    inputSampler.StopActionInput(result.action_instance_id);
-                }
+                LogActionResultFailure(result);
+                inputSampler.ApplyActionResult(
+                    result.action_instance_id,
+                    result.result,
+                    result.reason);
             }
+        }
+
+        /// <summary>
+        /// The reason an action ended is the only evidence of why a burst stopped:
+        /// a hit reaction cancelling it and a weapon that ran dry look identical
+        /// from the outside.
+        /// </summary>
+        private void LogActionResultFailure(KernelLocalActionResult result)
+        {
+            if (!logActionResultFailures ||
+                result.result == KernelLocalActionResultType.Accepted)
+            {
+                return;
+            }
+
+            Debug.Log(
+                "HostMode local action " +
+                result.action_instance_id +
+                " ended: " +
+                result.result +
+                " (" +
+                result.reason +
+                ") at tick " +
+                result.authoritative_tick +
+                "; may restart while held = " +
+                NetworkInputSampler.CanRestartWhileHeld(result.reason));
         }
 
         private static int SafeCount(uint count, int capacity)

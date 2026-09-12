@@ -8,6 +8,15 @@ namespace NetworkExample.UnityDemo.Input
     [DisallowMultipleComponent]
     public sealed class NetworkInputSampler : MonoBehaviour
     {
+        /// <summary>
+        /// How many times one trigger hold may restart itself without the kernel
+        /// confirming anything in between. It bounds the pathological case -- a
+        /// kernel that cancels every fire action the instant it starts, which
+        /// would otherwise have the sampler spin out one intent per sample for
+        /// as long as the trigger is down.
+        /// </summary>
+        private const int MaxHeldFireRestarts = 3;
+
         private static readonly string[] WeaponSelectBindings =
         {
             "<Keyboard>/1",
@@ -40,6 +49,10 @@ namespace NetworkExample.UnityDemo.Input
         private uint inputSequence;
         private uint nextActionInstanceId = 1;
         private uint heldFireActionInstanceId;
+        // Set when the kernel ends a fire action that the player is still
+        // holding the trigger for, so the next sample can ask for a new one.
+        private bool restartHeldFire;
+        private int heldFireRestartBudget = MaxHeldFireRestarts;
         private readonly byte[] weaponIdsBySlot = new byte[KernelConstants.MaxWeaponSlots];
         private int weaponSlotCount;
         private int activeWeaponSlot;
@@ -263,14 +276,44 @@ namespace NetworkExample.UnityDemo.Input
             bool fireTriggered = isFirePressed && !wasFirePressed;
             bool fireReleased = !isFirePressed && wasFirePressed;
             wasFirePressed = isFirePressed;
+
+            // A fire action the kernel took away -- cancelled by a hit reaction,
+            // corrected after a rollback, never submitted at all -- leaves the
+            // trigger physically down with nothing behind it. The press is over,
+            // so no rising edge is coming: without restarting it here the weapon
+            // stays dead until the player lets go and presses again, which is what
+            // taking damage mid-burst used to look like in game.
+            bool fireRestarted =
+                isFirePressed &&
+                !fireTriggered &&
+                restartHeldFire &&
+                heldFireActionInstanceId == 0 &&
+                heldFireRestartBudget > 0;
+            if (!isFirePressed)
+            {
+                restartHeldFire = false;
+            }
             bool isReloadPressed = IsActionPressed(reloadAction);
             bool reloadTriggered = isReloadPressed && !wasReloadPressed;
             wasReloadPressed = isReloadPressed;
 
             KernelActionIntent actionIntent = default;
             KernelActionInput actionInput = default;
-            if (fireTriggered)
+            if (fireTriggered || fireRestarted)
             {
+                // A fresh press is the player asking again and gets the full
+                // budget back. A restart spends from it, so a kernel that refuses
+                // every attempt cannot be asked forever.
+                if (fireRestarted)
+                {
+                    --heldFireRestartBudget;
+                }
+                else
+                {
+                    heldFireRestartBudget = MaxHeldFireRestarts;
+                }
+
+                restartHeldFire = false;
                 heldFireActionInstanceId = AllocateActionInstanceId();
                 actionIntent = CreateActionIntent(
                     heldFireActionInstanceId,
@@ -367,12 +410,81 @@ namespace NetworkExample.UnityDemo.Input
             outstandingActionIds.Remove(actionInstanceId);
         }
 
+        /// <summary>
+        /// Folds one authoritative action result into the sampler's bookkeeping.
+        /// The single entry point the runners use, so host and client cannot
+        /// drift apart on what a result means.
+        /// </summary>
+        public void ApplyActionResult(
+            uint actionInstanceId,
+            KernelLocalActionResultType result,
+            KernelLocalActionResultReason reason)
+        {
+            if (result != KernelLocalActionResultType.Accepted)
+            {
+                StopActionInput(actionInstanceId, reason);
+                return;
+            }
+
+            CompleteAction(actionInstanceId);
+            if (actionInstanceId != 0 &&
+                actionInstanceId == heldFireActionInstanceId)
+            {
+                // The kernel confirmed this hold, so whatever restarts it took to
+                // get here are paid for.
+                heldFireRestartBudget = MaxHeldFireRestarts;
+            }
+        }
+
         public void StopActionInput(uint actionInstanceId)
         {
+            StopActionInput(actionInstanceId, KernelLocalActionResultReason.None);
+        }
+
+        /// <summary>
+        /// Ends one action the sampler is tracking. When it is the fire action the
+        /// player is still holding the trigger for, <paramref name="reason"/>
+        /// decides whether firing may resume on its own.
+        /// </summary>
+        public void StopActionInput(
+            uint actionInstanceId,
+            KernelLocalActionResultReason reason)
+        {
             CompleteAction(actionInstanceId);
-            if (heldFireActionInstanceId == actionInstanceId)
+            if (actionInstanceId == 0 ||
+                heldFireActionInstanceId != actionInstanceId)
             {
-                heldFireActionInstanceId = 0;
+                return;
+            }
+
+            heldFireActionInstanceId = 0;
+            restartHeldFire = CanRestartWhileHeld(reason);
+        }
+
+        /// <summary>
+        /// Whether a fire action that ended for this reason may restart itself
+        /// while the trigger is still held.
+        /// </summary>
+        /// <remarks>
+        /// The split is whether asking again immediately could answer differently.
+        /// An action the kernel took away -- cancelled by a hit reaction, timed
+        /// out, or one that never reached it -- can be asked for again, and is
+        /// exactly what the player still has the trigger down for. A refusal that
+        /// will keep answering the same way until something else changes -- no
+        /// ammo, reloading, cooling down, dead -- waits for a fresh press, so the
+        /// sampler cannot spin one intent per sample against a kernel saying no.
+        /// </remarks>
+        public static bool CanRestartWhileHeld(KernelLocalActionResultReason reason)
+        {
+            switch (reason)
+            {
+                case KernelLocalActionResultReason.None:
+                case KernelLocalActionResultReason.Cancelled:
+                case KernelLocalActionResultReason.TimedOut:
+                case KernelLocalActionResultReason.InvalidActionId:
+                    return true;
+                default:
+                    return false;
             }
         }
 
@@ -382,6 +494,8 @@ namespace NetworkExample.UnityDemo.Input
             inputSequence = 0;
             nextActionInstanceId = 1;
             heldFireActionInstanceId = 0;
+            restartHeldFire = false;
+            heldFireRestartBudget = MaxHeldFireRestarts;
             wasFirePressed = false;
             wasReloadPressed = false;
             wasAimPressed = false;
