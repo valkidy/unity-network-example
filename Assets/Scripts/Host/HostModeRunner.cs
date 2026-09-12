@@ -34,11 +34,25 @@ namespace NetworkExample.UnityDemo.Host
             "it gave. Off by default because a busy fight can produce one per " +
             "commit; turn it on to find out why a burst stopped.")]
         [SerializeField]
-        private bool logActionResultFailures = false;
+        private bool logActionResultFailures = true;
+
+        [Tooltip(
+            "Reports when the fire trigger is held but nothing is coming out of " +
+            "it, with the authoritative action state beside what the sampler " +
+            "believes. Rare by nature, so it is on by default.")]
+        [SerializeField]
+        private bool logFireStalls = true;
+
+        [Tooltip(
+            "How long the trigger may be held with no commit progress before that " +
+            "counts as a stall. Must clear the slowest weapon's cadence.")]
+        [SerializeField]
+        private float fireStallSeconds = 1.5f;
 
         private NetworkHost host;
         private KernelEvent[] events;
         private RenderEntityState[] renderStates;
+        private NetworkFireStallDiagnostic fireStallDiagnostic;
         private KernelEntityLifecycleEvent[] lifecycleEvents;
         private KernelLocalActionResult[] localActionResults;
         private KernelRemoteActionPresentationEvent[] remoteActionEvents;
@@ -60,6 +74,7 @@ namespace NetworkExample.UnityDemo.Host
             EnsureComponents();
             events = new KernelEvent[Mathf.Max(1, maxEvents)];
             renderStates = new RenderEntityState[Mathf.Max(1, maxRenderStates)];
+            fireStallDiagnostic = new NetworkFireStallDiagnostic(fireStallSeconds);
             lifecycleEvents = new KernelEntityLifecycleEvent[Mathf.Max(1, maxEvents)];
             localActionResults = new KernelLocalActionResult[Mathf.Max(1, maxActionEvents)];
             remoteActionEvents =
@@ -193,6 +208,7 @@ namespace NetworkExample.UnityDemo.Host
             int safeRenderCount = renderCount > (uint)renderStates.Length
                 ? renderStates.Length
                 : (int)renderCount;
+            ObserveFireStall(safeRenderCount);
             renderStateApplier.Apply(renderStates, safeRenderCount);
             UpdateCameraTarget(host.LocalPlayerNetId);
             renderStateApplier.ApplyKernelEvents(
@@ -428,6 +444,7 @@ namespace NetworkExample.UnityDemo.Host
             {
                 KernelLocalActionResult result = localActionResults[index];
                 LogActionResultFailure(result);
+                fireStallDiagnostic?.NoteActionResult(result.result, result.reason);
                 inputSampler.ApplyActionResult(
                     result.action_instance_id,
                     result.result,
@@ -448,10 +465,17 @@ namespace NetworkExample.UnityDemo.Host
                 return;
             }
 
+            string binding = inputSampler.TryGetActionBinding(
+                result.action_instance_id,
+                out KernelActionBinding actionBinding)
+                ? actionBinding.ToString()
+                : "unknown";
             Debug.Log(
                 "HostMode local action " +
                 result.action_instance_id +
-                " ended: " +
+                " (" +
+                binding +
+                ") ended: " +
                 result.result +
                 " (" +
                 result.reason +
@@ -459,6 +483,60 @@ namespace NetworkExample.UnityDemo.Host
                 result.authoritative_tick +
                 "; may restart while held = " +
                 NetworkInputSampler.CanRestartWhileHeld(result.reason));
+        }
+
+
+        /// <summary>
+        /// Reports a held trigger that has stopped producing shots, pairing what
+        /// the sampler believes against the authoritative action state.
+        /// </summary>
+        private void ObserveFireStall(int safeRenderCount)
+        {
+            if (!logFireStalls || fireStallDiagnostic == null)
+            {
+                return;
+            }
+
+            bool hasState = TryGetLocalPlayerState(
+                safeRenderCount,
+                host.LocalPlayerNetId,
+                out RenderEntityState localState);
+            if (fireStallDiagnostic.Observe(
+                    Time.unscaledDeltaTime,
+                    inputSampler.IsFireHeld,
+                    inputSampler.HeldFireActionInstanceId,
+                    hasState,
+                    localState.action,
+                    localState.visual_flags,
+                    inputSampler.OutstandingActionCount,
+                    inputSampler.TotalActionsAllocated,
+                    out string report))
+            {
+                Debug.LogWarning("HostMode " + report);
+            }
+        }
+
+        private bool TryGetLocalPlayerState(
+            int safeRenderCount,
+            uint localPlayerNetId,
+            out RenderEntityState found)
+        {
+            found = default;
+            if (renderStates == null || localPlayerNetId == 0)
+            {
+                return false;
+            }
+
+            for (int index = 0; index < safeRenderCount; ++index)
+            {
+                if (renderStates[index].net_id == localPlayerNetId)
+                {
+                    found = renderStates[index];
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static int SafeCount(uint count, int capacity)

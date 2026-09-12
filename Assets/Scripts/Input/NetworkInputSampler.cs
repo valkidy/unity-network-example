@@ -45,7 +45,11 @@ namespace NetworkExample.UnityDemo.Input
         private InputAction aimAction;
         private Transform viewTransform;
         private Vector3 reticleAimDirection;
-        private readonly HashSet<uint> outstandingActionIds = new HashSet<uint>();
+        // Keyed by action instance id so a result can be reported against the
+        // binding that asked for it: "reload was refused too" is a different
+        // diagnosis from "only firing was refused".
+        private readonly Dictionary<uint, KernelActionBinding> outstandingActionIds =
+            new Dictionary<uint, KernelActionBinding>();
         private uint inputSequence;
         private uint nextActionInstanceId = 1;
         private uint heldFireActionInstanceId;
@@ -66,6 +70,35 @@ namespace NetworkExample.UnityDemo.Input
         private bool isAiming;
 
         public int OutstandingActionCount => outstandingActionIds.Count;
+
+        /// <summary>
+        /// How many action instances this session has created. If firing wedges
+        /// after a fixed number of them, the limit is a resource somewhere, not a
+        /// timing accident.
+        /// </summary>
+        public uint TotalActionsAllocated => nextActionInstanceId - 1;
+
+        /// <summary>
+        /// The binding an outstanding action instance was created for.
+        /// </summary>
+        public bool TryGetActionBinding(
+            uint actionInstanceId,
+            out KernelActionBinding binding)
+        {
+            return outstandingActionIds.TryGetValue(actionInstanceId, out binding);
+        }
+
+        /// <summary>
+        /// The fire action the sampler is currently feeding, or 0 when it is
+        /// feeding none. Exposed so a stall can be read against the authoritative
+        /// action rather than guessed at.
+        /// </summary>
+        public uint HeldFireActionInstanceId => heldFireActionInstanceId;
+
+        /// <summary>
+        /// Whether the trigger was down at the last sample.
+        /// </summary>
+        public bool IsFireHeld => wasFirePressed;
 
         /// <summary>
         /// The one aim state everything else reads -- the camera framing, the
@@ -279,10 +312,8 @@ namespace NetworkExample.UnityDemo.Input
 
             // A fire action the kernel took away -- cancelled by a hit reaction,
             // corrected after a rollback, never submitted at all -- leaves the
-            // trigger physically down with nothing behind it. The press is over,
-            // so no rising edge is coming: without restarting it here the weapon
-            // stays dead until the player lets go and presses again, which is what
-            // taking damage mid-burst used to look like in game.
+            // trigger down with nothing behind it. Without restarting it here the
+            // weapon stays dead until the player lets go and presses again.
             bool fireRestarted =
                 isFirePressed &&
                 !fireTriggered &&
@@ -314,7 +345,8 @@ namespace NetworkExample.UnityDemo.Input
                 }
 
                 restartHeldFire = false;
-                heldFireActionInstanceId = AllocateActionInstanceId();
+                heldFireActionInstanceId = AllocateActionInstanceId(
+                    KernelActionBinding.PrimaryFire);
                 actionIntent = CreateActionIntent(
                     heldFireActionInstanceId,
                     KernelActionBinding.PrimaryFire);
@@ -337,7 +369,7 @@ namespace NetworkExample.UnityDemo.Input
             if (reloadTriggered && actionIntent.action_instance_id == 0)
             {
                 actionIntent = CreateActionIntent(
-                    AllocateActionInstanceId(),
+                    AllocateActionInstanceId(KernelActionBinding.Reload),
                     KernelActionBinding.Reload);
             }
 
@@ -506,7 +538,7 @@ namespace NetworkExample.UnityDemo.Input
             }
         }
 
-        private uint AllocateActionInstanceId()
+        private uint AllocateActionInstanceId(KernelActionBinding binding)
         {
             uint actionInstanceId;
             do
@@ -515,9 +547,9 @@ namespace NetworkExample.UnityDemo.Input
             }
             while (actionInstanceId == 0 ||
                 actionInstanceId == heldFireActionInstanceId ||
-                outstandingActionIds.Contains(actionInstanceId));
+                outstandingActionIds.ContainsKey(actionInstanceId));
 
-            outstandingActionIds.Add(actionInstanceId);
+            outstandingActionIds[actionInstanceId] = binding;
             return actionInstanceId;
         }
 
