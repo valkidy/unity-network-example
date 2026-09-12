@@ -16,6 +16,14 @@ namespace NetworkExample.UnityDemo.Client
     [DisallowMultipleComponent]
     public sealed class ClientRunner : MonoBehaviour
     {
+        /// <summary>
+        /// How long to wait before configuring the synchronized catalog again
+        /// after a failed attempt. Short enough that a bundle still being written
+        /// to disk is picked up within a frame or two of landing, long enough
+        /// that a permanent failure does not re-read and re-hash it every frame.
+        /// </summary>
+        private const float CatalogConfigureRetrySeconds = 0.25f;
+
         [SerializeField]
         private string serverAddress = "127.0.0.1:7777";
 
@@ -110,6 +118,13 @@ namespace NetworkExample.UnityDemo.Client
         private float readyWithoutRenderSeconds;
         private bool readyWithoutRenderWarningLogged;
         private NetworkClientConnectionState lastConnectionState;
+        // The synchronized catalog is what gives the sampler its weapon loadout,
+        // and Update submits no input at all without one. Tracked separately from
+        // the connection state so a failed attempt can be retried while the
+        // connection stays ready.
+        private bool synchronizedCatalogConfigured;
+        private bool catalogConfigureFailureLogged;
+        private float nextCatalogConfigureTime;
 
         private void Awake()
         {
@@ -317,6 +332,9 @@ namespace NetworkExample.UnityDemo.Client
             readyWithoutRenderSeconds = 0f;
             readyWithoutRenderWarningLogged = false;
             lastConnectionState = NetworkClientConnectionState.Idle;
+            synchronizedCatalogConfigured = false;
+            catalogConfigureFailureLogged = false;
+            nextCatalogConfigureTime = 0f;
             presentationClock.Reset();
             inputSubmissionClock?.Reset();
         }
@@ -616,32 +634,21 @@ namespace NetworkExample.UnityDemo.Client
         private void LogConnectionState()
         {
             NetworkClientConnectionState connectionState = client.ConnectionState;
-            if (connectionState == lastConnectionState)
+            bool stateChanged = connectionState != lastConnectionState;
+            lastConnectionState = connectionState;
+
+            // Reaching ready is not one moment to be handled and forgotten. The
+            // catalog the sync writes to disk can still be landing when the
+            // connection first reports ready, so the configure below is retried
+            // on later frames instead of being consumed with the state edge.
+            if (connectionState == NetworkClientConnectionState.Ready)
             {
+                TryConfigureSynchronizedCatalogWhileReady();
                 return;
             }
 
-            lastConnectionState = connectionState;
-            if (connectionState == NetworkClientConnectionState.Ready)
+            if (!stateChanged)
             {
-                GameplayCatalogSyncResult syncResult = client.CatalogSyncResult;
-                if (!ConfigureSynchronizedCatalog(syncResult))
-                {
-                    return;
-                }
-                Debug.Log(
-                    "Client gameplay catalog sync ready cache_hit=" +
-                    syncResult.CacheHit +
-                    " memory_only=" +
-                    syncResult.MemoryOnly +
-                    " " +
-                    NetworkGameplayCatalogBundle.FormatLoadResult(syncResult.LoadResult));
-                if (!string.IsNullOrEmpty(syncResult.CacheWarning))
-                {
-                    Debug.LogWarning(
-                        "Client gameplay catalog cache warning: " +
-                        syncResult.CacheWarning);
-                }
                 return;
             }
 
@@ -654,6 +661,69 @@ namespace NetworkExample.UnityDemo.Client
             }
 
             Debug.Log("Client connection state=" + connectionState);
+        }
+
+        /// <summary>
+        /// Configures the synchronized catalog, retrying on every frame the
+        /// connection stays ready until it succeeds once.
+        /// </summary>
+        /// <remarks>
+        /// Without a catalog the sampler has no weapon loadout, and
+        /// <see cref="Update"/> gates every input submission on
+        /// <see cref="NetworkInputSampler.HasWeaponLoadout"/> -- so a client that
+        /// gives up after one failed attempt keeps rendering the world and
+        /// orbiting the camera while movement and fire do nothing at all, with
+        /// one error line as the only sign. One attempt reads the cached bundle
+        /// off disk and hashes it, so the retry is paced rather than run every
+        /// frame: a failure that is never going to clear must not turn into a
+        /// per-frame disk read for the rest of the session.
+        /// </remarks>
+        private void TryConfigureSynchronizedCatalogWhileReady()
+        {
+            if (synchronizedCatalogConfigured ||
+                Time.unscaledTime < nextCatalogConfigureTime)
+            {
+                return;
+            }
+
+            nextCatalogConfigureTime =
+                Time.unscaledTime + CatalogConfigureRetrySeconds;
+            GameplayCatalogSyncResult syncResult = client.CatalogSyncResult;
+            if (!ConfigureSynchronizedCatalog(syncResult))
+            {
+                return;
+            }
+
+            synchronizedCatalogConfigured = true;
+            Debug.Log(
+                "Client gameplay catalog sync ready cache_hit=" +
+                syncResult.CacheHit +
+                " memory_only=" +
+                syncResult.MemoryOnly +
+                " " +
+                NetworkGameplayCatalogBundle.FormatLoadResult(syncResult.LoadResult));
+            if (!string.IsNullOrEmpty(syncResult.CacheWarning))
+            {
+                Debug.LogWarning(
+                    "Client gameplay catalog cache warning: " +
+                    syncResult.CacheWarning);
+            }
+        }
+
+        /// <summary>
+        /// Reports why the synchronized catalog could not be configured, once per
+        /// connection. The attempt now repeats every frame until it succeeds, so
+        /// logging each failure would bury the console.
+        /// </summary>
+        private void LogCatalogConfigureFailure(string message)
+        {
+            if (catalogConfigureFailureLogged)
+            {
+                return;
+            }
+
+            catalogConfigureFailureLogged = true;
+            Debug.LogError(message);
         }
 
         /// <summary>
@@ -681,7 +751,7 @@ namespace NetworkExample.UnityDemo.Client
                     out byte[] bundleBytes,
                     out diagnostic))
             {
-                Debug.LogError(
+                LogCatalogConfigureFailure(
                     "Client could not read the synchronized gameplay catalog bundle: " +
                     (string.IsNullOrEmpty(diagnostic)
                         ? "no bundle bytes"
@@ -694,7 +764,7 @@ namespace NetworkExample.UnityDemo.Client
                     syncResult.Manifest.entry_path,
                     out string manifestError))
             {
-                Debug.LogError(
+                LogCatalogConfigureFailure(
                     "Client could not read skeleton manifests, so kernel poses will " +
                     "be rejected: " + manifestError);
                 return false;
@@ -708,7 +778,7 @@ namespace NetworkExample.UnityDemo.Client
                     out diagnostic) ||
                 !inputSampler.ConfigureWeaponLoadout(weaponIds, activeWeaponSlot))
             {
-                Debug.LogError(
+                LogCatalogConfigureFailure(
                     "Client could not configure the synchronized player weapon loadout: " +
                     (string.IsNullOrEmpty(diagnostic)
                         ? "invalid weapon slot configuration"
