@@ -107,7 +107,7 @@ namespace NetworkExample.UnityDemo.Rendering
 
         [SerializeField]
         [Tooltip("Footprint of a landed splat on the surface, picked per splat.")]
-        private Vector2 splatSizeRange = new Vector2(1.7f, 2.5f);
+        private Vector2 splatSizeRange = new Vector2(1.7f, 5.0f);
 
         [SerializeField]
         [Min(0.01f)]
