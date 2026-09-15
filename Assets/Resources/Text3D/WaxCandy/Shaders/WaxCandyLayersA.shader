@@ -102,6 +102,21 @@ Shader "Custom/Wax Candy Layers V7 Letter"
         _ContactSpanB ("Contact Spans 3 And 4 - X0 X1 X0 X1", Vector) = (0, 0, 0, 0)
         _ContactInfo ("Contact Count, Contact Half Depth, Reach", Vector) = (0, 0.2, 1, 0)
         _SpreadCurve ("Spread Curve - Higher Holds Inner Layers Longer", Range(0.25,6)) = 3
+
+        [Header(Melt Flow)]
+        [Toggle(_MELT_FLOW)] _MeltFlow ("Melt Flow", Float) = 0
+        // 19.8 s is glyph_block's lifetime_ticks 900 x 0.66 at the kernel's 30 Hz tick.
+        _FlowDuration ("Flow Duration - Seconds For The Front To Reach The Bottom", Float) = 19.8
+        _FlowTimeScale ("Flow Time Scale - Zero Holds At The Time Offset", Float) = 1
+        _MeltTime ("Flow Time Offset - Seconds", Float) = 0
+        _FlowRadial ("Pedestal - Leaves The Flow Out", Range(0,1)) = 0
+        _FrontStartDepth ("Top Band That Stretches - Object Units", Range(0.02,1)) = 0.25
+        _FrontCenterFalloff ("Front Slower Toward The Sides", Range(0,1)) = 0.6
+        _FrontSineAmplitude ("Front Sine Amplitude", Range(0,1)) = 0.35
+        _FrontSineWavelength ("Front Sine Wavelength - Object Units", Range(0.05,2)) = 0.45
+        _FrontSoftness ("Front Soft Transition - Object Units", Range(0.001,0.5)) = 0.12
+        _FrontBeadHeight ("Front Bead Height", Range(0,0.08)) = 0.015
+        _FrontBeadWidth ("Front Bead Width - Object Units", Range(0.005,0.2)) = 0.06
     }
     SubShader
     {
@@ -129,6 +144,8 @@ Shader "Custom/Wax Candy Layers V7 Letter"
             float4 _FrontSoftboxCenter, _FrontSoftboxSize;
             float4 _SourceLetterBounds, _ContactSpanA, _ContactSpanB, _ContactInfo;
             float _SpreadCurve;
+            float _FlowDuration, _FlowTimeScale, _MeltTime, _FlowRadial;
+            float _FrontStartDepth, _FrontCenterFalloff, _FrontSineAmplitude, _FrontSineWavelength, _FrontSoftness, _FrontBeadHeight, _FrontBeadWidth;
         CBUFFER_END
         TEXTURE2D(_EdgeDistanceMap);
         SAMPLER(sampler_EdgeDistanceMap);
@@ -261,6 +278,9 @@ Shader "Custom/Wax Candy Layers V7 Letter"
             // multi_compile, not shader_feature: pedestal materials turn it on at runtime, where
             // a build would otherwise have stripped the variant no material asset uses.
             #pragma multi_compile_local_fragment _ _PEDESTAL_SPREAD
+            // shader_feature: melt flow is switched on in the material asset, whose keyword keeps the
+            // variant in a build, and runtime glyph and pedestal materials copy it from that template.
+            #pragma shader_feature_local_fragment _MELT_FLOW
             #pragma multi_compile_instancing
             #pragma multi_compile_fog
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
@@ -341,6 +361,51 @@ Shader "Custom/Wax Candy Layers V7 Letter"
                 float2 p = _DistanceMapRect.xy + IN.uv * _DistanceMapRect.zw;
 
                 float2 np = p * _NoiseScale;
+                float ripple = 0.0;
+                #if defined(_MELT_FLOW)
+                    // The layers at the top of the letter run down its face. A front starts a band below
+                    // the top and moves down, fastest at the top center and waving across x, so it reads as
+                    // a sine curve, on the walls too since they share the planar mapping. Every column reaches
+                    // the bottom when _FlowDuration seconds have passed. A pedestal is left out.
+                    if (_FlowRadial < 0.5)
+                    {
+                        // The renderer's user value is when this glyph appeared, in hundredths of a second
+                        // since the level loaded, which is the clock _Time.y runs on. Zero flows from load.
+                        float flowStart = unity_RendererUserValue * 0.01;
+                        float flowTime = (_Time.y - flowStart) * _FlowTimeScale + _MeltTime;
+                        float top = _LetterBounds.w;
+                        float letterHeight = max(_LetterBounds.w - _LetterBounds.y, 1e-4);
+                        float centerX = 0.5 * (_LetterBounds.x + _LetterBounds.z);
+                        float halfWidth = max(0.5 * (_LetterBounds.z - _LetterBounds.x), 1e-4);
+                        float fromCenter = saturate(abs(p.x - centerX) / halfWidth);
+                        float frontShape = (1.0 - _FrontCenterFalloff * fromCenter * fromCenter)
+                            * (1.0 + _FrontSineAmplitude * sin(6.2832 * (p.x - centerX) / max(_FrontSineWavelength, 1e-3)));
+                        // A column's shape sets its pace as an exponent on the shared progress: the top
+                        // center runs nearly linear, slower columns lag and catch up, and all of them have
+                        // travelled the full distance, soft band included, when the duration ends.
+                        float progress = saturate(flowTime / max(_FlowDuration, 1e-3));
+                        float columnPace = clamp(frontShape / (1.0 + _FrontSineAmplitude), 0.2, 1.0);
+                        float fullTravel = letterHeight - _FrontStartDepth + _FrontSoftness;
+                        float travel = pow(progress, 1.0 / columnPace) * fullTravel;
+                        float front = top - _FrontStartDepth - travel;
+
+                        // Above the front the top band stretches from its own length down to the front;
+                        // below it the letter keeps its layers. The two blend across a soft band, so the
+                        // coordinates stay continuous and no hard seam appears at the front.
+                        float originalY = p.y;
+                        float flowed = smoothstep(front - _FrontSoftness, front + _FrontSoftness, originalY);
+                        float stretchedY = top - (top - originalY) * _FrontStartDepth / max(top - front, _FrontStartDepth);
+                        float flowY = lerp(originalY, stretchedY, flowed);
+                        float2 flowUV = float2(IN.uv.x, (flowY - _DistanceMapRect.y) / max(_DistanceMapRect.w, 1e-4));
+                        d = LetterEdgeDistance(flowUV, IN.positionOS);
+                        p = float2(p.x, flowY);
+                        np = p * _NoiseScale;
+
+                        // A bead of wax rides the front and catches the light.
+                        float beadOffset = (originalY - front) / max(_FrontBeadWidth, 1e-4);
+                        ripple = exp(-beadOffset * beadOffset) * _FrontBeadHeight;
+                    }
+                #endif
                 float warp = FBM(np + float2(3.1, 7.4));
                 float mottle = FBM(np * 0.7 + warp * 1.5);
                 float rough = ValueNoise(np * 5.0 + warp * 3.0);
@@ -422,7 +487,7 @@ Shader "Custom/Wax Candy Layers V7 Letter"
                 // Ceramic surface: the edge distance inflates the flat faces so highlights roll off the rims.
                 float3 n0 = NormalizeNormalPerPixel(IN.normalWS);
                 float3 v = GetWorldSpaceNormalizeViewDir(IN.positionWS);
-                float3 n = BumpNormal(IN.positionWS, PuffNormal(IN.uv, IN.positionOS, IN.positionWS, n0), (rough - 0.5) * _Wobble);
+                float3 n = BumpNormal(IN.positionWS, PuffNormal(IN.uv, IN.positionOS, IN.positionWS, n0), (rough - 0.5) * _Wobble + ripple);
 
                 InputData inputData = (InputData)0;
                 inputData.positionWS = IN.positionWS;

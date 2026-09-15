@@ -26,6 +26,11 @@ namespace NetworkExample.UnityDemo.Text3D
     /// that wears the glyph's own layers, spreading out from where it stands. The pedestal's
     /// width and height count toward fitting the box; its depth does not, because the pool
     /// spreads out on the ground past the hitbox's thin slab.
+    ///
+    /// When the material's melt flow is on, it starts when the character is assigned: the time
+    /// is written to each part's renderer user value, which the shader reads without breaking
+    /// SRP batching. A client that first sees a block partway through its life starts the flow
+    /// from the top all the same.
     /// </remarks>
     [DisallowMultipleComponent]
     public sealed class WaxGlyphBlock : MonoBehaviour
@@ -88,6 +93,7 @@ namespace NetworkExample.UnityDemo.Text3D
         private GameObject glyphObject;
         private GameObject pedestalObject;
         private bool seedAssigned;
+        private float flowStartTime;
 
         /// <summary>The character picked by the last seed; -1 before one is assigned.</summary>
         public int Codepoint { get; private set; } = -1;
@@ -97,6 +103,16 @@ namespace NetworkExample.UnityDemo.Text3D
 
         /// <summary>The child that draws the pedestal; null until its assets are ready, or without one.</summary>
         public GameObject PedestalObject => pedestalObject;
+
+        /// <summary><see cref="Time.timeSinceLevelLoad"/> when the current character was assigned; the melt flow starts there.</summary>
+        public float FlowStartTime => flowStartTime;
+
+        /// <summary>
+        /// Renderer user value the shader's melt flow reads as its start: hundredths of a second
+        /// since the level loaded, the clock <c>_Time.y</c> runs on.
+        /// </summary>
+        public static uint FlowStartUserValue(float timeSinceLevelLoad) =>
+            (uint)Mathf.Round(Mathf.Max(0f, timeSinceLevelLoad) * 100f);
 
         public Vector3 BoxSize => boxSize;
 
@@ -145,6 +161,7 @@ namespace NetworkExample.UnityDemo.Text3D
 
             DestroyParts();
             Codepoint = codepoint;
+            flowStartTime = Time.timeSinceLevelLoad;
             entry = WaxGlyphLibrary.Request(fontPath, codepoint, buildSettings, template, pedestal);
             enabled = true;
         }
@@ -262,7 +279,9 @@ namespace NetworkExample.UnityDemo.Text3D
             part.transform.localRotation = rotation;
             part.transform.localScale = Vector3.one * scale;
             part.AddComponent<MeshFilter>().sharedMesh = mesh;
-            part.AddComponent<MeshRenderer>().sharedMaterial = material;
+            var partRenderer = part.AddComponent<MeshRenderer>();
+            partRenderer.sharedMaterial = material;
+            partRenderer.SetShaderUserValue(FlowStartUserValue(flowStartTime));
             return part;
         }
 

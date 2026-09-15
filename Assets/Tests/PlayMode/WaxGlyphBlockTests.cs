@@ -37,6 +37,10 @@ namespace NetworkExample.UnityDemo.Tests.PlayMode
                     Is.EqualTo(Quaternion.identity),
                     "an unturned glyph reads from -Z, the side the thrower stands on");
                 Assert.That(
+                    firstBlock.GlyphObject.GetComponent<MeshRenderer>().GetShaderUserValue(),
+                    Is.EqualTo(WaxGlyphBlock.FlowStartUserValue(firstBlock.FlowStartTime)),
+                    "the glyph's renderer carries when its melt flow starts");
+                Assert.That(
                     secondBlock.GlyphObject.GetComponent<MeshFilter>().sharedMesh,
                     Is.SameAs(firstBlock.GlyphObject.GetComponent<MeshFilter>().sharedMesh),
                     "blocks showing the same character share its mesh");

@@ -23,6 +23,7 @@ namespace NetworkExample.UnityDemo.Text3D
         public static readonly int ContactSpanBId = Shader.PropertyToID("_ContactSpanB");
         public static readonly int ContactInfoId = Shader.PropertyToID("_ContactInfo");
         public static readonly int SpreadCurveId = Shader.PropertyToID("_SpreadCurve");
+        public static readonly int FlowRadialId = Shader.PropertyToID("_FlowRadial");
 
         public const string PedestalSpreadKeyword = "_PEDESTAL_SPREAD";
 
@@ -117,6 +118,9 @@ namespace NetworkExample.UnityDemo.Text3D
             material.SetVector(FrontAxisId, new Vector4(0f, 1f, 0f, 0f));
             material.SetFloat(DepthCenterId, pedestal.HalfDepth);
             material.SetFloat(OpenBottomId, 0f);
+
+            // The melt flow runs down letters; this marks a pedestal so it is left out.
+            material.SetFloat(FlowRadialId, 1f);
 
             int count = Mathf.Min(contactSpans.Count, MaxContactSpans);
             var packed = new float[2 * MaxContactSpans];
