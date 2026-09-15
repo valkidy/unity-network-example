@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -16,6 +17,17 @@ namespace NetworkExample.UnityDemo.Text3D
         public static readonly int FrontAxisId = Shader.PropertyToID("_FrontAxis");
         public static readonly int DepthCenterId = Shader.PropertyToID("_DepthCenter");
         public static readonly int HalfDepthId = Shader.PropertyToID("_HalfDepth");
+        public static readonly int OpenBottomId = Shader.PropertyToID("_OpenBottom");
+        public static readonly int SourceLetterBoundsId = Shader.PropertyToID("_SourceLetterBounds");
+        public static readonly int ContactSpanAId = Shader.PropertyToID("_ContactSpanA");
+        public static readonly int ContactSpanBId = Shader.PropertyToID("_ContactSpanB");
+        public static readonly int ContactInfoId = Shader.PropertyToID("_ContactInfo");
+        public static readonly int SpreadCurveId = Shader.PropertyToID("_SpreadCurve");
+
+        public const string PedestalSpreadKeyword = "_PEDESTAL_SPREAD";
+
+        /// <summary>Contact spans the shader takes; any more are folded into the last one.</summary>
+        public const int MaxContactSpans = 4;
 
         /// <summary>Uploads the mesh and releases its CPU copy.</summary>
         public static Mesh CreateMesh(WaxGlyphGeometry geometry)
@@ -83,6 +95,49 @@ namespace NetworkExample.UnityDemo.Text3D
             material.SetVector(FrontAxisId, new Vector4(0f, 0f, 1f, 0f));
             material.SetFloat(DepthCenterId, 0f);
             material.SetFloat(HalfDepthId, geometry.HalfDepth);
+            return material;
+        }
+
+        /// <summary>
+        /// Instances the template for a pedestal laid flat under <paramref name="glyph"/>, wearing
+        /// the glyph's own layers spread outward from where it stands.
+        /// </summary>
+        /// <param name="contactSpans">Where the glyph stands, (x start, x end), sorted, as <see cref="WaxGlyphPedestal.Build"/> gives them.</param>
+        public static Material CreatePedestalMaterial(
+            Material template,
+            WaxGlyphGeometry glyph,
+            WaxGlyphGeometry pedestal,
+            Texture2D distanceMap,
+            IReadOnlyList<Vector2> contactSpans,
+            float colorReach,
+            float colorCurve)
+        {
+            Material material = CreateMaterial(template, pedestal, distanceMap);
+            material.name = $"{template.name} Pedestal {Describe(pedestal.Codepoint)}";
+            material.SetVector(FrontAxisId, new Vector4(0f, 1f, 0f, 0f));
+            material.SetFloat(DepthCenterId, pedestal.HalfDepth);
+            material.SetFloat(OpenBottomId, 0f);
+
+            int count = Mathf.Min(contactSpans.Count, MaxContactSpans);
+            var packed = new float[2 * MaxContactSpans];
+            for (int i = 0; i < count; i++)
+            {
+                packed[2 * i] = contactSpans[i].x;
+                packed[2 * i + 1] = contactSpans[i].y;
+            }
+
+            // Spans are sorted, so stretching the last slot to the last end covers the rest.
+            if (contactSpans.Count > MaxContactSpans)
+            {
+                packed[2 * MaxContactSpans - 1] = contactSpans[contactSpans.Count - 1].y;
+            }
+
+            material.SetVector(ContactSpanAId, new Vector4(packed[0], packed[1], packed[2], packed[3]));
+            material.SetVector(ContactSpanBId, new Vector4(packed[4], packed[5], packed[6], packed[7]));
+            material.SetVector(ContactInfoId, new Vector4(count, glyph.HalfDepth, colorReach, 0f));
+            material.SetVector(SourceLetterBoundsId, glyph.LetterBounds);
+            material.SetFloat(SpreadCurveId, colorCurve);
+            material.EnableKeyword(PedestalSpreadKeyword);
             return material;
         }
 

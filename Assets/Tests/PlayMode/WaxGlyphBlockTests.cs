@@ -50,6 +50,13 @@ namespace NetworkExample.UnityDemo.Tests.PlayMode
                 Assert.That(Mathf.Abs(bounds.center.x), Is.LessThan(tolerance), "centered across");
                 Assert.That(bounds.extents.x, Is.LessThanOrEqualTo(0.5f * box.x + tolerance));
                 Assert.That(bounds.extents.z, Is.LessThanOrEqualTo(0.5f * box.z + tolerance));
+
+                Assert.That(firstBlock.PedestalObject, Is.Not.Null, "blocks stand in a pedestal by default");
+                Bounds pedestal = firstBlock.PedestalObject.GetComponent<MeshRenderer>().bounds;
+                Assert.That(pedestal.min.y, Is.EqualTo(0f).Within(tolerance), "the pedestal lies on the ground");
+                Assert.That(Mathf.Max(-pedestal.min.x, pedestal.max.x), Is.LessThanOrEqualTo(0.5f * box.x + tolerance), "pedestal width");
+                Assert.That(bounds.min.y, Is.GreaterThan(0f), "the glyph is lifted into the pedestal");
+                Assert.That(bounds.min.y, Is.LessThan(pedestal.max.y), "the glyph's bottom is sunk into the pedestal");
             }
             finally
             {

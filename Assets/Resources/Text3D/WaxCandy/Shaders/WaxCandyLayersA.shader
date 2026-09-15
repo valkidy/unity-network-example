@@ -94,6 +94,14 @@ Shader "Custom/Wax Candy Layers V7 Letter"
         _FrontSoftbox ("Front Softbox Highlight", Range(0,3)) = 1.2
         _FrontSoftboxCenter ("Front Softbox Position - View XY", Vector) = (-0.15, 0.2, 0, 0)
         _FrontSoftboxSize ("Front Softbox Half Size - View XY", Vector) = (0.12, 0.08, 0, 0)
+
+        [Header(Pedestal Wears The Letter Layers)]
+        [Toggle(_PEDESTAL_SPREAD)] _PedestalSpread ("Letter Layers Spread From Contact", Float) = 0
+        _SourceLetterBounds ("Standing Letter Bounds - Map XMin YMin XMax YMax", Vector) = (-1, 0, 1, 2)
+        _ContactSpanA ("Contact Spans 1 And 2 - X0 X1 X0 X1", Vector) = (0, 0, 0, 0)
+        _ContactSpanB ("Contact Spans 3 And 4 - X0 X1 X0 X1", Vector) = (0, 0, 0, 0)
+        _ContactInfo ("Contact Count, Contact Half Depth, Reach", Vector) = (0, 0.2, 1, 0)
+        _SpreadCurve ("Spread Curve - Higher Holds Inner Layers Longer", Range(0.25,6)) = 3
     }
     SubShader
     {
@@ -119,6 +127,8 @@ Shader "Custom/Wax Candy Layers V7 Letter"
             float _Smoothness, _Coat, _CoatSmoothness, _SpecularStrength;
             float _StudioHighlight, _StudioSize, _StudioSharpness, _FrontSoftbox;
             float4 _FrontSoftboxCenter, _FrontSoftboxSize;
+            float4 _SourceLetterBounds, _ContactSpanA, _ContactSpanB, _ContactInfo;
+            float _SpreadCurve;
         CBUFFER_END
         TEXTURE2D(_EdgeDistanceMap);
         SAMPLER(sampler_EdgeDistanceMap);
@@ -248,6 +258,9 @@ Shader "Custom/Wax Candy Layers V7 Letter"
             #pragma target 3.5
             #pragma vertex Vert
             #pragma fragment Frag
+            // multi_compile, not shader_feature: pedestal materials turn it on at runtime, where
+            // a build would otherwise have stripped the variant no material asset uses.
+            #pragma multi_compile_local_fragment _ _PEDESTAL_SPREAD
             #pragma multi_compile_instancing
             #pragma multi_compile_fog
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
@@ -306,12 +319,26 @@ Shader "Custom/Wax Candy Layers V7 Letter"
                 return saturate(1.0 - dist * _StudioSharpness) * smoothstep(0.0, 0.2, reflectionVS.z);
             }
 
+            #if defined(_PEDESTAL_SPREAD)
+            // Keeps the nearer of best and one contact span: x in [x0, x1], the letter's depth across map y.
+            void NearestContact(float2 p, float x0, float x1, float index, inout float best, inout float bestX)
+            {
+                float active = step(index + 0.5, _ContactInfo.x);
+                float cx = clamp(p.x, x0, x1);
+                float dist = length(float2(p.x - cx, max(abs(p.y) - _ContactInfo.y, 0.0)));
+                float closer = active * step(dist, best);
+                best = lerp(best, dist, closer);
+                bestX = lerp(bestX, cx, closer);
+            }
+            #endif
+
             half4 Frag(Varyings IN) : SV_Target
             {
                 UNITY_SETUP_INSTANCE_ID(IN);
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(IN);
                 float d = LetterEdgeDistance(IN.uv, IN.positionOS);
-                float2 p = IN.positionOS.xy;
+                // Map-space position: object XY on a letter, the ground plane on a pedestal laid flat.
+                float2 p = _DistanceMapRect.xy + IN.uv * _DistanceMapRect.zw;
 
                 float2 np = p * _NoiseScale;
                 float warp = FBM(np + float2(3.1, 7.4));
@@ -325,6 +352,23 @@ Shader "Custom/Wax Candy Layers V7 Letter"
                 float2 halfExtent = max(0.5 * (_LetterBounds.zw - _LetterBounds.xy), 1e-4);
                 float2 s = float2((p.x - (_LetterBounds.x + halfExtent.x)) / halfExtent.x,
                                   (p.y - _LetterBounds.y) / (2.0 * halfExtent.y));
+                #if defined(_PEDESTAL_SPREAD)
+                    // A pedestal wears the letter's own layers, continued from where the letter stands: x is
+                    // the nearest contact point, and height is how far from that contact toward the rim's
+                    // outline the point lies, bent by the curve, so colors at the contact match the letter's
+                    // base and the outer layers crowd toward the rim.
+                    float contactDistance = 1e5;
+                    float contactX = p.x;
+                    NearestContact(p, _ContactSpanA.x, _ContactSpanA.y, 0.0, contactDistance, contactX);
+                    NearestContact(p, _ContactSpanA.z, _ContactSpanA.w, 1.0, contactDistance, contactX);
+                    NearestContact(p, _ContactSpanB.x, _ContactSpanB.y, 2.0, contactDistance, contactX);
+                    NearestContact(p, _ContactSpanB.z, _ContactSpanB.w, 3.0, contactDistance, contactX);
+                    float rimDistance = SAMPLE_TEXTURE2D(_EdgeDistanceMap, sampler_EdgeDistanceMap, IN.uv).r * _DistanceRange;
+                    float bodyRim = max(rimDistance - _OutlineWidth, 0.0);
+                    float outward = pow(saturate(contactDistance / max(contactDistance + bodyRim, 1e-4)), _SpreadCurve);
+                    float2 sourceHalf = max(0.5 * (_SourceLetterBounds.zw - _SourceLetterBounds.xy), 1e-4);
+                    s = float2((contactX - (_SourceLetterBounds.x + sourceHalf.x)) / sourceHalf.x, outward * _ContactInfo.z);
+                #endif
                 s.x += _ArchLean * s.y;
                 float layerNoiseA = FBM(np * 0.9 + float2(31.7, 12.3));
                 float layerNoiseB = FBM(np * 1.1 + float2(8.9, 27.4));

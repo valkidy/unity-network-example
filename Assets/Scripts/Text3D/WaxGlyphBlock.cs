@@ -21,6 +21,11 @@ namespace NetworkExample.UnityDemo.Text3D
     /// Glyph outlines run +X to the right as seen looking toward +Z, so an unturned glyph
     /// reads from its -Z side. That is the side a thrower sees, because the kernel yaws a
     /// spawned block so its +Z follows the throw direction.
+    ///
+    /// By default the glyph stands sunk into a melted-wax pedestal (<see cref="WaxGlyphPedestal"/>)
+    /// that wears the glyph's own layers, spreading out from where it stands. The pedestal's
+    /// width and height count toward fitting the box; its depth does not, because the pool
+    /// spreads out on the ground past the hitbox's thin slab.
     /// </remarks>
     [DisallowMultipleComponent]
     public sealed class WaxGlyphBlock : MonoBehaviour
@@ -56,6 +61,13 @@ namespace NetworkExample.UnityDemo.Text3D
         [SerializeField]
         private float boxMargin = 0.03f;
 
+        [Tooltip("Stands the glyph in a melted-wax pedestal that wears the glyph's own layers.")]
+        [SerializeField]
+        private bool buildPedestal = true;
+
+        [SerializeField]
+        private WaxGlyphPedestalSettings pedestalSettings = WaxGlyphPedestalSettings.Default;
+
         [Tooltip("Turns the glyph around so it reads from +Z. Unturned it reads from -Z, where the thrower stands: " +
                  "the kernel yaws a spawned entity so +Z follows the throw direction.")]
         [SerializeField]
@@ -74,6 +86,7 @@ namespace NetworkExample.UnityDemo.Text3D
         private GlyphCharacterSet parsedSet;
         private WaxGlyphLibrary.Entry entry;
         private GameObject glyphObject;
+        private GameObject pedestalObject;
         private bool seedAssigned;
 
         /// <summary>The character picked by the last seed; -1 before one is assigned.</summary>
@@ -81,6 +94,9 @@ namespace NetworkExample.UnityDemo.Text3D
 
         /// <summary>The child that draws the glyph; null until its assets are ready.</summary>
         public GameObject GlyphObject => glyphObject;
+
+        /// <summary>The child that draws the pedestal; null until its assets are ready, or without one.</summary>
+        public GameObject PedestalObject => pedestalObject;
 
         public Vector3 BoxSize => boxSize;
 
@@ -118,30 +134,47 @@ namespace NetworkExample.UnityDemo.Text3D
 
             WaxGlyphSettings buildSettings = settings;
             buildSettings.pivot = WaxGlyphPivot.BottomCenter;
+            WaxGlyphPedestalSettings? pedestal = buildPedestal ? pedestalSettings : (WaxGlyphPedestalSettings?)null;
             if (prewarmCharacterSet && set.Count <= MaxPrewarmCharacters)
             {
                 foreach (int character in set.EnumerateCodepoints())
                 {
-                    WaxGlyphLibrary.Request(fontPath, character, buildSettings, template);
+                    WaxGlyphLibrary.Request(fontPath, character, buildSettings, template, pedestal);
                 }
             }
 
-            if (glyphObject != null)
+            DestroyParts();
+            Codepoint = codepoint;
+            entry = WaxGlyphLibrary.Request(fontPath, codepoint, buildSettings, template, pedestal);
+            enabled = true;
+        }
+
+        /// <summary>
+        /// XY bounds (xMin, yMin, xMax, yMax) of everything a block shows standing on the
+        /// ground, mirrored about x = 0 for <see cref="FitScale"/>: the glyph lifted by
+        /// <paramref name="lift"/>, and the pedestal's footprint across x and its height.
+        /// </summary>
+        /// <param name="glyphBounds">Mesh XY bounds of a glyph built with its bottom center at the origin.</param>
+        /// <param name="pedestalBounds">Pedestal mesh bounds, bottom on y = 0; null for a glyph without one.</param>
+        public static Vector4 StandingBounds(Vector4 glyphBounds, Bounds? pedestalBounds, float lift)
+        {
+            float halfWidth = Mathf.Max(Mathf.Abs(glyphBounds.x), Mathf.Abs(glyphBounds.z));
+            float top = glyphBounds.w + lift;
+            if (pedestalBounds.HasValue)
             {
-                Destroy(glyphObject);
-                glyphObject = null;
+                Bounds pedestal = pedestalBounds.Value;
+                halfWidth = Mathf.Max(halfWidth, Mathf.Max(Mathf.Abs(pedestal.min.x), Mathf.Abs(pedestal.max.x)));
+                top = Mathf.Max(top, pedestal.max.y);
             }
 
-            Codepoint = codepoint;
-            entry = WaxGlyphLibrary.Request(fontPath, codepoint, buildSettings, template);
-            enabled = true;
+            return new Vector4(-halfWidth, 0f, halfWidth, top);
         }
 
         /// <summary>
         /// Uniform scale that makes a capital <paramref name="capHeightInBox"/> of the box
         /// height, reduced until a glyph with these bounds fits the box.
         /// </summary>
-        /// <param name="letterBounds">Mesh XY bounds (xMin, yMin, xMax, yMax) of a glyph built with its bottom center at the origin.</param>
+        /// <param name="letterBounds">XY bounds (xMin, yMin, xMax, yMax) standing on the origin and centered on x, as <see cref="StandingBounds"/> gives.</param>
         public static float FitScale(
             Vector4 letterBounds,
             float halfDepth,
@@ -203,18 +236,49 @@ namespace NetworkExample.UnityDemo.Text3D
                 return;
             }
 
-            glyphObject = new GameObject($"Glyph {WaxGlyphAssets.Describe(Codepoint)}");
-            glyphObject.transform.SetParent(transform, false);
-            glyphObject.transform.localRotation = faceBackward ? Quaternion.Euler(0f, 180f, 0f) : Quaternion.identity;
-            glyphObject.transform.localScale = Vector3.one * FitScale(
-                entry.LetterBounds,
+            bool hasPedestal = entry.PedestalMesh != null;
+            float lift = hasPedestal ? pedestalSettings.glyphLift : 0f;
+            float scale = FitScale(
+                StandingBounds(entry.LetterBounds, hasPedestal ? entry.PedestalBounds : (Bounds?)null, lift),
                 entry.HalfDepth,
                 settings.capHeight,
                 boxSize,
                 capHeightInBox,
                 boxMargin);
-            glyphObject.AddComponent<MeshFilter>().sharedMesh = entry.Mesh;
-            glyphObject.AddComponent<MeshRenderer>().sharedMaterial = entry.Material;
+            Quaternion rotation = faceBackward ? Quaternion.Euler(0f, 180f, 0f) : Quaternion.identity;
+            string label = WaxGlyphAssets.Describe(Codepoint);
+            glyphObject = CreatePart($"Glyph {label}", entry.Mesh, entry.Material, new Vector3(0f, lift * scale, 0f), rotation, scale);
+            if (hasPedestal)
+            {
+                pedestalObject = CreatePart($"Pedestal {label}", entry.PedestalMesh, entry.PedestalMaterial, Vector3.zero, rotation, scale);
+            }
+        }
+
+        private GameObject CreatePart(string partName, Mesh mesh, Material material, Vector3 position, Quaternion rotation, float scale)
+        {
+            var part = new GameObject(partName);
+            part.transform.SetParent(transform, false);
+            part.transform.localPosition = position;
+            part.transform.localRotation = rotation;
+            part.transform.localScale = Vector3.one * scale;
+            part.AddComponent<MeshFilter>().sharedMesh = mesh;
+            part.AddComponent<MeshRenderer>().sharedMaterial = material;
+            return part;
+        }
+
+        private void DestroyParts()
+        {
+            if (glyphObject != null)
+            {
+                Destroy(glyphObject);
+                glyphObject = null;
+            }
+
+            if (pedestalObject != null)
+            {
+                Destroy(pedestalObject);
+                pedestalObject = null;
+            }
         }
 
         private bool TryGetCharacterSet(out GlyphCharacterSet set)

@@ -51,6 +51,7 @@ MonoBehaviour:
   boxSize: {x: 1, y: 1, z: 0.2}
   capHeightInBox: 0.8
   boxMargin: 0.03
+  buildPedestal: 1
   faceBackward: 0
   prewarmCharacterSet: 1
   previewSeed: 0

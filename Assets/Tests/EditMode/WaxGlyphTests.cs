@@ -210,6 +210,104 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
+        public void Pedestal_EveryDigitAndLatinLetter_IsOneCleanSlabUnderWhereTheGlyphStands()
+        {
+            WaxGlyphSettings settings = WaxGlyphSettings.Default;
+            settings.pivot = WaxGlyphPivot.BottomCenter;
+            WaxGlyphPedestalSettings pedestalSettings = WaxGlyphPedestalSettings.Default;
+            float thickness = 2f * pedestalSettings.halfThickness;
+            int mostContacts = 0;
+            foreach (char character in DigitsAndLatinLetters)
+            {
+                string label = $"'{character}'";
+                WaxGlyphGeometry glyph = WaxGlyphBuilder.Build(Font, character, settings);
+                WaxGlyphGeometry pedestal = WaxGlyphPedestal.Build(glyph, pedestalSettings, character, out List<Vector2> contacts);
+
+                Assert.That(pedestal.IsEmpty, Is.False, label);
+                Assert.That(pedestal.TriangulationClean, Is.True, $"{label} triangulation");
+                Assert.That(pedestal.OverBudget, Is.False, $"{label} budget");
+                Assert.That(pedestal.TriangleCount, Is.LessThanOrEqualTo(pedestalSettings.triangleBudget), label);
+                Assert.That(contacts.Count, Is.GreaterThan(0), $"{label} contact spans");
+                mostContacts = Math.Max(mostContacts, contacts.Count);
+
+                float minY = float.PositiveInfinity;
+                float maxY = float.NegativeInfinity;
+                float worstNormal = 0f;
+                for (int i = 0; i < pedestal.Positions.Length; i++)
+                {
+                    minY = Mathf.Min(minY, pedestal.Positions[i].y);
+                    maxY = Mathf.Max(maxY, pedestal.Positions[i].y);
+                    worstNormal = Mathf.Max(worstNormal, Mathf.Abs(pedestal.Normals[i].magnitude - 1f));
+                }
+
+                Assert.That(minY, Is.EqualTo(0f).Within(1e-4f), $"{label} lies on the ground");
+                Assert.That(maxY, Is.EqualTo(thickness).Within(1e-4f), $"{label} thickness");
+                Assert.That(worstNormal, Is.LessThan(1e-3f), $"{label} unit normals");
+
+                foreach (Vector2 span in contacts)
+                {
+                    var middle = new GlyphVector(0.5 * (span.x + span.y), 0.0);
+                    bool covered = false;
+                    foreach (List<GlyphVector> loop in pedestal.Silhouette)
+                    {
+                        covered |= GlyphPolygon.ContainsEvenOdd(loop, middle);
+                    }
+
+                    Assert.That(covered, Is.True, $"{label} footprint covers the contact at x {middle.X:0.00}");
+                }
+            }
+
+            Debug.Log($"Most contact spans under one glyph: {mostContacts} (the shader takes {WaxGlyphAssets.MaxContactSpans})");
+        }
+
+        [Test]
+        public void StandingBounds_GlyphOnItsPedestal_FitsTheHitboxWidthAndHeight()
+        {
+            WaxGlyphSettings settings = WaxGlyphSettings.Default;
+            settings.pivot = WaxGlyphPivot.BottomCenter;
+            WaxGlyphPedestalSettings pedestalSettings = WaxGlyphPedestalSettings.Default;
+            var box = new Vector3(1f, 1f, 0.2f);
+            const float capHeightInBox = 0.8f;
+            const float margin = 0.03f;
+            const float tolerance = 1e-4f;
+            float deepest = 0f;
+            foreach (char character in DigitsAndLatinLetters)
+            {
+                WaxGlyphGeometry glyph = WaxGlyphBuilder.Build(Font, character, settings);
+                WaxGlyphGeometry pedestal = WaxGlyphPedestal.Build(glyph, pedestalSettings, character, out _);
+                var pedestalBounds = new Bounds(pedestal.Positions[0], Vector3.zero);
+                foreach (Vector3 position in pedestal.Positions)
+                {
+                    pedestalBounds.Encapsulate(position);
+                }
+
+                float lift = pedestalSettings.glyphLift;
+                float scale = WaxGlyphBlock.FitScale(
+                    WaxGlyphBlock.StandingBounds(glyph.LetterBounds, pedestalBounds, lift),
+                    glyph.HalfDepth,
+                    settings.capHeight,
+                    box,
+                    capHeightInBox,
+                    margin);
+
+                float halfWidth = Mathf.Max(Mathf.Abs(pedestalBounds.min.x), Mathf.Abs(pedestalBounds.max.x));
+                float top = pedestalBounds.max.y;
+                foreach (Vector3 position in glyph.Positions)
+                {
+                    halfWidth = Mathf.Max(halfWidth, Mathf.Abs(position.x));
+                    top = Mathf.Max(top, position.y + lift);
+                }
+
+                string label = $"'{character}' at scale {scale:0.000}";
+                Assert.That(halfWidth * scale, Is.LessThanOrEqualTo(0.5f * box.x - margin + tolerance), $"{label} width");
+                Assert.That(top * scale, Is.LessThanOrEqualTo(box.y - margin + tolerance), $"{label} height");
+                deepest = Mathf.Max(deepest, pedestalBounds.size.z * scale);
+            }
+
+            Debug.Log($"Pedestals spread up to {deepest:0.00} deep on the ground, past the hitbox's {box.z}");
+        }
+
+        [Test]
         public void DistanceMap_IsZeroOnTheSilhouetteAndRisesOneUnitPerUnit()
         {
             WaxGlyphSettings settings = WaxGlyphSettings.Default;
