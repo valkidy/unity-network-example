@@ -143,6 +143,11 @@ namespace NetworkExample.UnityDemo.Text3D
             geometry.MapHeight = mapHeight;
             geometry.MaxInteriorDistance = (float)maxDistance;
             geometry.MapMilliseconds = Lap(stopwatch);
+            if (settings.pivot == WaxGlyphPivot.BottomCenter)
+            {
+                MoveToBottomCenter(geometry, silhouette, regions);
+            }
+
             return geometry;
         }
 
@@ -191,6 +196,55 @@ namespace NetworkExample.UnityDemo.Text3D
             }
 
             return Math.Max(3, (budget - 2 * bridgeTerms) / (2 * (minSegments + 1)));
+        }
+
+        // Moves the finished glyph so the bottom center of its mesh bounds, wall bulge
+        // included, is the origin. The map was baked against MapRect, which moves with the
+        // mesh, so the map and the UVs stay valid as they are.
+        private static void MoveToBottomCenter(
+            WaxGlyphGeometry geometry,
+            List<List<GlyphVector>> silhouette,
+            List<GlyphRegion> regions)
+        {
+            Vector4 bounds = geometry.LetterBounds;
+            var offset = new Vector3(-0.5f * (bounds.x + bounds.z), -bounds.y, 0f);
+            Vector3[] positions = geometry.Positions;
+            var min = new Vector2(float.PositiveInfinity, float.PositiveInfinity);
+            var max = new Vector2(float.NegativeInfinity, float.NegativeInfinity);
+            for (int i = 0; i < positions.Length; i++)
+            {
+                positions[i] += offset;
+                min = Vector2.Min(min, positions[i]);
+                max = Vector2.Max(max, positions[i]);
+            }
+
+            // Measured again rather than offset, so the bounds match the moved floats exactly.
+            geometry.LetterBounds = new Vector4(min.x, min.y, max.x, max.y);
+            Vector4 rect = geometry.MapRect;
+            geometry.MapRect = new Vector4(rect.x + offset.x, rect.y + offset.y, rect.z, rect.w);
+
+            var shift = new GlyphVector(offset.x, offset.y);
+            foreach (List<GlyphVector> loop in silhouette)
+            {
+                Translate(loop, shift);
+            }
+
+            foreach (GlyphRegion region in regions)
+            {
+                Translate(region.Outer, shift);
+                foreach (List<GlyphVector> hole in region.Holes)
+                {
+                    Translate(hole, shift);
+                }
+            }
+        }
+
+        private static void Translate(List<GlyphVector> loop, GlyphVector shift)
+        {
+            for (int i = 0; i < loop.Count; i++)
+            {
+                loop[i] += shift;
+            }
         }
 
         private static double Lap(Stopwatch stopwatch)

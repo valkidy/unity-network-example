@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using NetworkExample.Kernel;
 using NetworkExample.Kernel.Presentation;
+using NetworkExample.UnityDemo.Text3D;
 using UnityEngine;
 
 namespace NetworkExample.UnityDemo.Rendering
@@ -104,6 +105,7 @@ namespace NetworkExample.UnityDemo.Rendering
                 {
                     visual = prefabRegistry.InstantiateVisual(state, entityRoot);
                     entityRegistry.Register(entityKey, visual);
+                    SeedGlyphBlock(visual, state);
                 }
                 entityRegistry.RegisterNetId(state.net_id, visual);
                 bool knownBefore =
@@ -567,6 +569,17 @@ namespace NetworkExample.UnityDemo.Rendering
             }
 
             return state.net_id;
+        }
+
+        // The kernel replicates nothing that says which character a glyph block shows, so
+        // every client picks it from the net id, which they all agree on.
+        private static void SeedGlyphBlock(GameObject visual, RenderEntityState state)
+        {
+            if (state.entity_type == KernelEntityType.Prop &&
+                visual.TryGetComponent(out WaxGlyphBlock glyphBlock))
+            {
+                glyphBlock.AssignSeed(state.net_id);
+            }
         }
 
         private static void ApplyProjectileState(GameObject visual, RenderEntityState state)

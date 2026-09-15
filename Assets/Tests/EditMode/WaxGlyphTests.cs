@@ -145,6 +145,71 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
+        public void Build_BottomCenterPivot_MovesMeshMapAndBoundsTogether()
+        {
+            WaxGlyphSettings bottomCenter = WaxGlyphSettings.Default;
+            bottomCenter.pivot = WaxGlyphPivot.BottomCenter;
+
+            WaxGlyphGeometry original = WaxGlyphBuilder.Build(Font, 'g', WaxGlyphSettings.Default);
+            WaxGlyphGeometry moved = WaxGlyphBuilder.Build(Font, 'g', bottomCenter);
+
+            Assert.That(original.LetterBounds.y, Is.LessThan(-0.1f), "'g' hangs below the baseline");
+            Assert.That(moved.LetterBounds.y, Is.EqualTo(0f).Within(1e-5f), "bottom on the origin");
+            Assert.That(moved.LetterBounds.x + moved.LetterBounds.z, Is.EqualTo(0f).Within(1e-4f), "centered across the origin");
+
+            Vector3 offset = moved.Positions[0] - original.Positions[0];
+            for (int i = 0; i < moved.Positions.Length; i++)
+            {
+                Assert.That((moved.Positions[i] - original.Positions[i] - offset).magnitude, Is.LessThan(1e-4f), $"vertex {i}");
+                Assert.That(moved.Uvs[i], Is.EqualTo(original.Uvs[i]), $"uv {i}");
+            }
+
+            Assert.That(moved.MapRect.x - original.MapRect.x, Is.EqualTo(offset.x).Within(1e-4f), "map rect x");
+            Assert.That(moved.MapRect.y - original.MapRect.y, Is.EqualTo(offset.y).Within(1e-4f), "map rect y");
+            Assert.That(moved.DistanceMap, Is.EqualTo(original.DistanceMap));
+            AssertPlanarUvsAndBounds(moved, "'g' bottom center");
+            AssertCapsCoverSilhouette(moved, "'g' bottom center");
+        }
+
+        [Test]
+        public void FitScale_EveryDigitAndLatinLetter_StandsInsideTheGlyphBlockHitbox()
+        {
+            WaxGlyphSettings settings = WaxGlyphSettings.Default;
+            settings.pivot = WaxGlyphPivot.BottomCenter;
+            var box = new Vector3(1f, 1f, 0.2f);
+            const float capHeightInBox = 0.8f;
+            const float margin = 0.03f;
+            const float tolerance = 1e-5f;
+            float capScale = capHeightInBox * box.y / settings.capHeight;
+            var shrunk = new List<string>();
+            foreach (char character in DigitsAndLatinLetters)
+            {
+                WaxGlyphGeometry geometry = WaxGlyphBuilder.Build(Font, character, settings);
+                float scale = WaxGlyphBlock.FitScale(geometry.LetterBounds, geometry.HalfDepth, settings.capHeight, box, capHeightInBox, margin);
+                var min = new Vector3(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity);
+                var max = new Vector3(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
+                foreach (Vector3 position in geometry.Positions)
+                {
+                    min = Vector3.Min(min, position * scale);
+                    max = Vector3.Max(max, position * scale);
+                }
+
+                string label = $"'{character}' at scale {scale:0.000}";
+                Assert.That(min.y, Is.GreaterThanOrEqualTo(-tolerance), $"{label} bottom");
+                Assert.That(max.y, Is.LessThanOrEqualTo(box.y - margin + tolerance), $"{label} top");
+                Assert.That(Mathf.Max(-min.x, max.x), Is.LessThanOrEqualTo(0.5f * box.x - margin + tolerance), $"{label} sides");
+                Assert.That(Mathf.Max(-min.z, max.z), Is.LessThanOrEqualTo(0.5f * box.z + tolerance), $"{label} depth");
+                if (scale < capScale - 1e-6f)
+                {
+                    shrunk.Add($"{character} {scale:0.000}");
+                }
+            }
+
+            Debug.Log($"Glyph block cap scale {capScale:0.000}; shrunk to fit: {string.Join(", ", shrunk)}");
+            Assert.That(shrunk.Count, Is.LessThan(DigitsAndLatinLetters.Length / 4), "most glyphs keep the common cap height");
+        }
+
+        [Test]
         public void DistanceMap_IsZeroOnTheSilhouetteAndRisesOneUnitPerUnit()
         {
             WaxGlyphSettings settings = WaxGlyphSettings.Default;

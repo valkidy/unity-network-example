@@ -3,6 +3,16 @@ using UnityEngine;
 
 namespace NetworkExample.UnityDemo.Text3D
 {
+    /// <summary>Where a glyph's object-space origin sits.</summary>
+    public enum WaxGlyphPivot
+    {
+        /// <summary>The font origin: the pen position on the baseline, so a line of glyphs lines up.</summary>
+        Baseline = 0,
+
+        /// <summary>The bottom center of the mesh bounds, for a single glyph standing on the ground.</summary>
+        BottomCenter = 1,
+    }
+
     /// <summary>
     /// How a character becomes a WaxCandy glyph mesh and edge distance map.
     /// </summary>
@@ -54,6 +64,10 @@ namespace NetworkExample.UnityDemo.Text3D
         [Tooltip("Distance stored at full intensity. Written to the material's _DistanceRange.")]
         public float mapDistanceRange;
 
+        [Tooltip("Baseline keeps the font origin so a line of text lines up. BottomCenter puts the bottom " +
+                 "center of the mesh at the origin, for a single glyph standing on the ground.")]
+        public WaxGlyphPivot pivot;
+
         /// <remarks>
         /// The wall profile comes from the WaxCandy reference letter: its rings bulge at
         /// most about 0.0135 past the silhouette, and its normals match an ellipse whose
@@ -80,6 +94,7 @@ namespace NetworkExample.UnityDemo.Text3D
             mapTexelsPerUnit = 192f,
             mapPadding = 0.06f,
             mapDistanceRange = 0.5f,
+            pivot = WaxGlyphPivot.Baseline,
         };
     }
 }

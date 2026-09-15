@@ -25,7 +25,7 @@ namespace NetworkExample.UnityDemo.Text3D
     [DisallowMultipleComponent]
     public sealed class WaxGlyphText : MonoBehaviour
     {
-        public const string DefaultMaterialResourcePath = "Test/WaxCandyV7/Materials/WaxCandyGlyph";
+        public const string DefaultMaterialResourcePath = "Text3D/WaxCandy/Materials/WaxCandyGlyph";
 
         [SerializeField]
         private string text = "WaxCandy 2026";

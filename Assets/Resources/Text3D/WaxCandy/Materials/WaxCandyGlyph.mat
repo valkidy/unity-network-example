@@ -1,0 +1,99 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!21 &2100000
+Material:
+  serializedVersion: 8
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: WaxCandyGlyph
+  m_Shader: {fileID: 4800000, guid: 9d3f6a2c5e8b4f17a0c2d4e6b8f01a35, type: 3}
+  m_Parent: {fileID: 0}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords: []
+  m_InvalidKeywords: []
+  m_LightmapFlags: 4
+  m_EnableInstancingVariants: 0
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: -1
+  stringTagMap: {}
+  disabledShaderPasses: []
+  m_LockedProperties:
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs:
+    - _EdgeDistanceMap:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    m_Ints: []
+    m_Floats:
+    - _ArchLean: -0.24
+    - _ArchSquareness: 1.93
+    - _BodyGrain: 0
+    - _Coat: 1
+    - _CoatSmoothness: 1
+    - _DepthCenter: 0
+    - _DistanceRange: 0.5
+    - _EdgeRoughness: 0.002
+    - _EdgeWobble: 0.014
+    - _GrainScale: 70
+    - _HalfDepth: 0.2
+    - _NoiseScale: 2.5
+    - _OpenBottom: 1
+    - _OpenBottomBlend: 0.025
+    - _OpenBottomPush: 0.5
+    - _OutlineBlur: 0.03
+    - _OutlineFlowScale: 1.6
+    - _OutlineFlowSoftness: 0.092
+    - _OutlineFlowWobble: 0.5
+    - _OutlineGrain: 0
+    - _OutlineGreen: 0.91
+    - _OutlineGreenCoverage: 0.397
+    - _OutlineGreenStart: 0.605
+    - _OutlineGreenWidth: 0.329
+    - _OutlineShade: 0.128
+    - _OutlineWidth: 0.075
+    - _OutlineYellow: 0.9
+    - _OutlineYellowCoverage: 0.508
+    - _OutlineYellowStart: 0.35
+    - _OutlineYellowWidth: 0.905
+    - _PuffHeight: 0.015
+    - _PuffSampleDistance: 0.011
+    - _PuffWidth: 0.05
+    - _Smoothness: 1
+    - _SpecularStrength: 1
+    - _StrataDepth: 0.045
+    - _StrataSpacing: 0.026
+    - _StrataStrength: 0.218
+    - _StudioHighlight: 1.1
+    - _StudioSharpness: 14
+    - _StudioSize: 0.4
+    - _WallDistanceScale: 0.35
+    - _Wobble: 0.0005
+    - _Zone1Grain: 0
+    - _Zone2Grain: 0.156
+    - _Zone3Grain: 0.247
+    - _Zone4Grain: 0.063
+    - _ZoneSoftness: 0.035
+    - _ZoneWobble: 0.076
+    m_Colors:
+    - _BodyColor: {r: 0.1, g: 0.87, b: 0.93, a: 1}
+    - _DistanceMapRect: {r: -1.1, g: 0, b: 2.2, a: 2.3}
+    - _FrontAxis: {r: 0, g: 0, b: 1, a: 0}
+    - _LetterBounds: {r: -0.7912, g: 0.1576, b: 0.7534, a: 2.0575}
+    - _OutlineColor: {r: 1, g: 0.42, b: 0.03, a: 1}
+    - _OutlineColor2: {r: 1, g: 0.82, b: 0.08, a: 1}
+    - _OutlineColor3: {r: 0.3, g: 0.9, b: 0.05, a: 1}
+    - _StrataColor: {r: 0.2, g: 0.85, b: 0.95, a: 1}
+    - _Zone1Color: {r: 1, g: 0.059999965, b: 0.72, a: 1}
+    - _Zone1Size: {r: 0.83, g: 0.34, b: 0, a: 0}
+    - _Zone2Color: {r: 1, g: 0.42, b: 0.84, a: 1}
+    - _Zone2Size: {r: 0.83, g: 0.44, b: 0, a: 0}
+    - _Zone3Color: {r: 1, g: 0.55, b: 0.88, a: 1}
+    - _Zone3Size: {r: 0.95, g: 0.69, b: 0, a: 0}
+    - _Zone4Color: {r: 0.49991098, g: 0.70628804, b: 0.7735849, a: 1}
+    - _Zone4Size: {r: 1, g: 0.81, b: 0, a: 0}
+  m_BuildTextureStacks: []
+  m_AllowLocking: 1

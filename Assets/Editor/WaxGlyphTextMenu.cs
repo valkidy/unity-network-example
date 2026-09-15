@@ -6,7 +6,7 @@ namespace NetworkExample.UnityDemo.EditorTools
 {
     internal static class WaxGlyphTextMenu
     {
-        private const string MaterialPath = "Assets/Resources/Test/WaxCandyV7/Materials/WaxCandyGlyph.mat";
+        private const string MaterialPath = "Assets/Resources/Text3D/WaxCandy/Materials/WaxCandyGlyph.mat";
 
         [MenuItem("GameObject/3D Object/Wax Glyph Text", false, 10)]
         private static void CreateWaxGlyphText(MenuCommand command)
