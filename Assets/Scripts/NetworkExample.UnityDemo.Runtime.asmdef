@@ -3,13 +3,14 @@
   "rootNamespace": "NetworkExample.UnityDemo",
   "references": [
     "NetworkExample.Kernel",
+    "Unity.Burst",
     "Unity.InputSystem",
     "Unity.RenderPipelines.Universal.Runtime",
     "UnityEngine.UI"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],
-  "allowUnsafeCode": false,
+  "allowUnsafeCode": true,
   "overrideReferences": false,
   "precompiledReferences": [],
   "autoReferenced": true,
