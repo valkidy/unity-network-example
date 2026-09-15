@@ -17,6 +17,10 @@ namespace NetworkExample.UnityDemo.Text3D
     /// <see cref="capHeightInBox"/> of the box height, shrinking any glyph that would
     /// still leave the box. Assets come from <see cref="WaxGlyphLibrary"/>, so blocks that
     /// show the same character share them. Builds run in Play Mode only.
+    ///
+    /// Glyph outlines run +X to the right as seen looking toward +Z, so an unturned glyph
+    /// reads from its -Z side. That is the side a thrower sees, because the kernel yaws a
+    /// spawned block so its +Z follows the throw direction.
     /// </remarks>
     [DisallowMultipleComponent]
     public sealed class WaxGlyphBlock : MonoBehaviour
@@ -52,10 +56,10 @@ namespace NetworkExample.UnityDemo.Text3D
         [SerializeField]
         private float boxMargin = 0.03f;
 
-        [Tooltip("Turns the glyph to face -Z. The kernel yaws a spawned entity so +Z follows the event direction, " +
-                 "which for a thrown bottle points away from the thrower.")]
+        [Tooltip("Turns the glyph around so it reads from +Z. Unturned it reads from -Z, where the thrower stands: " +
+                 "the kernel yaws a spawned entity so +Z follows the throw direction.")]
         [SerializeField]
-        private bool faceBackward = true;
+        private bool faceBackward;
 
         [Tooltip("Builds every character in the set in the background the first time a block asks, so later blocks appear at once.")]
         [SerializeField]

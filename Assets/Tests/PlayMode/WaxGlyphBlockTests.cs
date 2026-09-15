@@ -33,6 +33,10 @@ namespace NetworkExample.UnityDemo.Tests.PlayMode
                 int expected = GlyphCharacterSet.Parse(WaxGlyphBlock.DefaultCharacterSet).Pick(seed);
                 Assert.That(firstBlock.Codepoint, Is.EqualTo(expected));
                 Assert.That(
+                    firstBlock.GlyphObject.transform.localRotation,
+                    Is.EqualTo(Quaternion.identity),
+                    "an unturned glyph reads from -Z, the side the thrower stands on");
+                Assert.That(
                     secondBlock.GlyphObject.GetComponent<MeshFilter>().sharedMesh,
                     Is.SameAs(firstBlock.GlyphObject.GetComponent<MeshFilter>().sharedMesh),
                     "blocks showing the same character share its mesh");
