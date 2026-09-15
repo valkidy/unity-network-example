@@ -75,6 +75,23 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
+        public void Pick_NetIds_GiveTheCharactersEveryClientShows()
+        {
+            // Every client picks a glyph block's character from its net id alone, so these are the
+            // characters all of them show for net ids 1 to 20. A platform, scripting backend or change
+            // that picks differently fails here rather than showing players different characters.
+            GlyphCharacterSet set = GlyphCharacterSet.Parse(WaxGlyphBlock.DefaultCharacterSet);
+            var picked = new StringBuilder();
+            for (uint netId = 1; netId <= 20; netId++)
+            {
+                picked.Append(char.ConvertFromUtf32(set.Pick(netId)));
+            }
+
+            Assert.That(picked.ToString(), Is.EqualTo("pQDwuQxgY0lp5OrBfKcY"));
+            Assert.That(set.Pick(4000000000u), Is.EqualTo('I'), "a net id near the top of the range");
+        }
+
+        [Test]
         public void Pick_ConsecutiveNetIds_AreStableAndSpreadAcrossTheSet()
         {
             GlyphCharacterSet set = GlyphCharacterSet.Parse(WaxGlyphBlock.DefaultCharacterSet);

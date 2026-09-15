@@ -1,4 +1,6 @@
 using System.Collections;
+using NetworkExample.Kernel;
+using NetworkExample.UnityDemo.Rendering;
 using NetworkExample.UnityDemo.Text3D;
 using NUnit.Framework;
 using UnityEngine;
@@ -8,6 +10,97 @@ namespace NetworkExample.UnityDemo.Tests.PlayMode
 {
     public sealed class WaxGlyphBlockTests
     {
+        private const uint GlyphBlockTemplateId = 209;
+
+        [UnityTest]
+        public IEnumerator TwoClients_SameNetIds_ShowTheSameCharacters()
+        {
+            // Two independent presentation stacks stand in for two clients. They receive the same
+            // glyph blocks in opposite orders, as a client that joined later or saw them spawn in a
+            // different order would, and must still show the same character on every net id,
+            // because the character comes from the net id alone. The melt flow may differ; this
+            // does not look at it.
+            uint[] netIds = { 7, 42, 1001, 65536, 4000000000u };
+            var template = new GameObject("GlyphBlockTemplate");
+            template.SetActive(false);
+            template.AddComponent<WaxGlyphBlock>();
+            var catalog = ScriptableObject.CreateInstance<NetworkPrefabCatalog>();
+            catalog.Configure(null, null);
+            catalog.ConfigureProps(new[] { new NetworkPrefabCatalog.PropPrefabBinding(GlyphBlockTemplateId, template) });
+            var clientA = new PresentationClient("A", catalog);
+            var clientB = new PresentationClient("B", catalog);
+            try
+            {
+                var inOrder = new RenderEntityState[netIds.Length];
+                var reversed = new RenderEntityState[netIds.Length];
+                for (int i = 0; i < netIds.Length; i++)
+                {
+                    inOrder[i] = GlyphBlockState(netIds[i]);
+                    reversed[netIds.Length - 1 - i] = GlyphBlockState(netIds[i]);
+                }
+
+                clientA.Apply(inOrder);
+                clientB.Apply(reversed);
+                yield return null;
+
+                GlyphCharacterSet set = GlyphCharacterSet.Parse(WaxGlyphBlock.DefaultCharacterSet);
+                foreach (uint netId in netIds)
+                {
+                    int shownByA = clientA.CodepointOf(netId);
+                    int shownByB = clientB.CodepointOf(netId);
+                    Assert.That(shownByB, Is.EqualTo(shownByA), $"net id {netId}: both clients show one character");
+                    Assert.That(shownByA, Is.EqualTo(set.Pick(netId)), $"net id {netId}: the character its net id picks");
+                }
+            }
+            finally
+            {
+                clientA.Dispose();
+                clientB.Dispose();
+                Object.Destroy(template);
+                Object.Destroy(catalog);
+                WaxGlyphLibrary.Clear();
+            }
+        }
+
+        private static RenderEntityState GlyphBlockState(uint netId) => new RenderEntityState
+        {
+            net_id = netId,
+            entity_type = KernelEntityType.Prop,
+            template_id = GlyphBlockTemplateId,
+            rotation = new KernelQuat(0f, 0f, 0f, 1f),
+        };
+
+        // The client-side path a replicated glyph block takes: render state applier, prefab
+        // registry and entity registry, as ClientRunner and HostModeRunner wire them.
+        private sealed class PresentationClient : System.IDisposable
+        {
+            private readonly GameObject root;
+            private readonly NetworkEntityRegistry entities;
+            private readonly NetworkRenderStateApplier applier;
+
+            public PresentationClient(string name, NetworkPrefabCatalog catalog)
+            {
+                root = new GameObject($"Client {name}");
+                entities = root.AddComponent<NetworkEntityRegistry>();
+                var prefabs = root.AddComponent<NetworkPrefabRegistry>();
+                prefabs.Configure(catalog);
+                applier = root.AddComponent<NetworkRenderStateApplier>();
+                applier.Configure(entities, prefabs, root.transform);
+            }
+
+            public void Apply(RenderEntityState[] states) => applier.Apply(states, states.Length);
+
+            public int CodepointOf(uint netId)
+            {
+                Assert.That(entities.TryGetByNetId(netId, out GameObject visual), Is.True, $"no visual for net id {netId}");
+                WaxGlyphBlock block = visual.GetComponent<WaxGlyphBlock>();
+                Assert.That(block, Is.Not.Null, $"net id {netId} is not a glyph block");
+                return block.Codepoint;
+            }
+
+            public void Dispose() => Object.Destroy(root);
+        }
+
         [UnityTest]
         public IEnumerator AssignSeed_BuildsThePickedGlyphInsideTheBoxAndSharesIt()
         {
