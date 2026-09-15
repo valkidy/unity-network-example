@@ -48,9 +48,9 @@ MonoBehaviour:
   characterSet: '[a-zA-Z0-9]'
   fontPath: Fonts/ComicRelief-Bold.ttf
   templateMaterial: {fileID: 2100000, guid: 92493fdfd3e594cecb980c8643bc1827, type: 2}
-  boxSize: {x: 1, y: 1, z: 0.2}
+  boxSize: {x: 2, y: 2, z: 0.4}
   capHeightInBox: 0.8
-  boxMargin: 0.03
+  boxMargin: 0.06
   buildPedestal: 1
   faceBackward: 0
   prewarmCharacterSet: 1
@@ -74,5 +74,5 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 1, y: 1, z: 0.2}
-  m_Center: {x: 0, y: 0.5, z: 0}
+  m_Size: {x: 2, y: 2, z: 0.4}
+  m_Center: {x: 0, y: 1, z: 0}
