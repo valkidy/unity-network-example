@@ -67,6 +67,8 @@ MonoBehaviour:
     prefab: {fileID: 4721865093316482051, guid: e41b7c9a3d5f4e28a6c1b0d9f7e3a852, type: 3}
   - itemTemplateId: 3007
     prefab: {fileID: 2639555752078317490, guid: 0fe89d0f04d9d4ab4a36142c2033fcad, type: 3}
+  - itemTemplateId: 208
+    prefab: {fileID: 6380588347404663203, guid: 1cb19959111434659ad118a9baf70391, type: 3}
   playerActorFallback: {fileID: 5418530430038130503, guid: de79842971be048fa964e98474aabcc0, type: 3}
   agentActorFallback: {fileID: 4504865450583175258, guid: 0a4d6988b1c564e2192e01fd0a50a6a5, type: 3}
   projectileFallback: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
