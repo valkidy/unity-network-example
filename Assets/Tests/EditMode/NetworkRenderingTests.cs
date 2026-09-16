@@ -1472,6 +1472,140 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             return view;
         }
 
+        [Test]
+        public void BreakableProp_Destroyed_BreaksIntoItsPiecesWhereItStood()
+        {
+            NetworkPropShatter shatter = ConfigureShatter();
+            BreakableProp(107, null);
+
+            applier.ApplyEntityLifecycleEvents(
+                new[] { Despawn(107, KernelEntityType.Prop, KernelDespawnReason.Destroyed) },
+                1);
+
+            Assert.That(shatter.LiveBurstCount, Is.EqualTo(1));
+            NetworkShatterView burst =
+                rootObject.GetComponentInChildren<NetworkShatterView>(true);
+            // Where the prop was being drawn on the frame it went away. The
+            // despawn carries no position, so anything else would be a guess.
+            Assert.That(burst.transform.position, Is.EqualTo(new Vector3(4f, 0f, -2f)));
+        }
+
+        [Test]
+        public void BreakableProp_BreaksIntoTheModelItsArtNames()
+        {
+            NetworkPropShatter shatter = ConfigureShatter();
+            BreakableProp(107, ShatterModel("Wreckage", 4));
+
+            applier.ApplyEntityLifecycleEvents(
+                new[] { Despawn(107, KernelEntityType.Prop, KernelDespawnReason.Destroyed) },
+                1);
+
+            // The default model the effect holds has two pieces; this prop asked
+            // for its own, and got it.
+            Assert.That(
+                rootObject.GetComponentInChildren<NetworkShatterView>(true).PieceCount,
+                Is.EqualTo(4));
+            Assert.That(shatter.LiveBurstCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void BreakableProp_LeavingRange_BreaksNothing()
+        {
+            NetworkPropShatter shatter = ConfigureShatter();
+            BreakableProp(107, null);
+
+            // A nest that walked out of the client's bubble is still standing
+            // where it stood. Breaking it here would report a kill nobody made.
+            applier.ApplyEntityLifecycleEvents(
+                new[] { Despawn(107, KernelEntityType.Prop, KernelDespawnReason.OutOfRange) },
+                1);
+
+            Assert.That(shatter.LiveBurstCount, Is.Zero);
+        }
+
+        [Test]
+        public void PropWhoseArtIsNotBreakable_BreaksNothing()
+        {
+            NetworkPropShatter shatter = ConfigureShatter();
+            applier.Apply(new[] { Prop(108) }, 1);
+
+            // Every item on the ground is a prop, and picking one up destroys
+            // it. Only art that says it breaks does.
+            applier.ApplyEntityLifecycleEvents(
+                new[] { Despawn(108, KernelEntityType.Prop, KernelDespawnReason.Destroyed) },
+                1);
+
+            Assert.That(shatter.LiveBurstCount, Is.Zero);
+        }
+
+        [Test]
+        public void DestroyedActor_BreaksNothing()
+        {
+            NetworkPropShatter shatter = ConfigureShatter();
+            applier.Apply(new[] { Actor(105, alive: true) }, 1);
+
+            applier.ApplyEntityLifecycleEvents(
+                new[] { Despawn(105, KernelEntityType.Actor, KernelDespawnReason.Destroyed) },
+                1);
+
+            Assert.That(shatter.LiveBurstCount, Is.Zero);
+        }
+
+        [Test]
+        public void DestroyedBreakablePropWithNoShatterBound_IsHarmless()
+        {
+            BreakableProp(107, null);
+
+            // The debris is optional wiring, like the splatters: a session
+            // without it still despawns the nest, it just blinks out.
+            Assert.DoesNotThrow(() => applier.ApplyEntityLifecycleEvents(
+                new[] { Despawn(107, KernelEntityType.Prop, KernelDespawnReason.Destroyed) },
+                1));
+        }
+
+        /// <summary>
+        /// A prop standing at (4, 0, -2) whose art says it breaks.
+        /// </summary>
+        private void BreakableProp(uint netId, GameObject model)
+        {
+            applier.Apply(new[] { Prop(netId) }, 1);
+            Assert.That(entityRegistry.TryGetByNetId(netId, out GameObject visual), Is.True);
+            visual.AddComponent<NetworkBreakableProp>().Configure(model);
+        }
+
+        private static RenderEntityState Prop(uint netId)
+        {
+            return State(netId, KernelEntityType.Prop, new KernelVec3(4f, 0f, -2f));
+        }
+
+        private NetworkPropShatter ConfigureShatter()
+        {
+            NetworkPropShatter shatter = gameObject.AddComponent<NetworkPropShatter>();
+            shatter.Configure(rootObject.transform, ShatterModel("Rubble", 2));
+            applier.ConfigureShatter(shatter);
+            return shatter;
+        }
+
+        /// <summary>
+        /// A stand-in for a baked model: a node carrying <paramref name="pieces"/>
+        /// renderers.
+        /// </summary>
+        private GameObject ShatterModel(string name, int pieces)
+        {
+            var root = new GameObject(name);
+            root.transform.SetParent(rootObject.transform);
+            var node = new GameObject("geometry");
+            node.transform.SetParent(root.transform, false);
+            for (int index = 0; index < pieces; ++index)
+            {
+                GameObject piece = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                piece.transform.SetParent(node.transform, false);
+                piece.transform.localPosition = new Vector3(0f, 1f + index, 0f);
+            }
+
+            return root;
+        }
+
         private static KernelEntityLifecycleEvent Despawn(
             uint netId,
             KernelEntityType entityType,

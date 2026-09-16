@@ -62,6 +62,7 @@ namespace NetworkExample.UnityDemo.Host
         private NetworkDebugView debugView;
         private NetworkHitscanTracers hitscanTracers;
         private NetworkHitSplatters hitSplatters;
+        private NetworkPropShatter propShatter;
         private ThirdPersonFollowCamera followCamera;
         private AimReticleView aimReticleView;
         private readonly NetworkPresentationClock presentationClock = new NetworkPresentationClock();
@@ -309,12 +310,20 @@ namespace NetworkExample.UnityDemo.Host
                 hitSplatters = gameObject.AddComponent<NetworkHitSplatters>();
             }
 
+            propShatter = GetComponent<NetworkPropShatter>();
+            if (propShatter == null)
+            {
+                propShatter = gameObject.AddComponent<NetworkPropShatter>();
+            }
+
             Transform entityRoot = NetworkDemoScene.EnsureEntityRoot("Network Entities");
             renderStateApplier.Configure(entityRegistry, prefabRegistry, entityRoot);
             hitscanTracers.Configure(prefabRegistry, entityRoot);
             renderStateApplier.ConfigureTracers(hitscanTracers);
             hitSplatters.Configure(entityRoot);
             renderStateApplier.ConfigureSplatters(hitSplatters);
+            propShatter.Configure(entityRoot);
+            renderStateApplier.ConfigureShatter(propShatter);
         }
 
         private void UpdateCameraTarget(uint localPlayerNetId)

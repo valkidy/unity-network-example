@@ -99,6 +99,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 4069119073640804533}
+  - component: {fileID: 152564217280292260}
   m_Layer: 0
   m_Name: tower
   m_TagString: Untagged
@@ -122,3 +123,16 @@ Transform:
   - {fileID: 9009350275221477018}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &152564217280292260
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6380588347404663203}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a82da838feb6f45629400f702021dfd7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: NetworkExample.UnityDemo.Runtime::NetworkExample.UnityDemo.Rendering.NetworkBreakableProp
+  shatteredModel: {fileID: 7615356102543544140, guid: 6320f52b494a7493faa3052cff71d025, type: 3}

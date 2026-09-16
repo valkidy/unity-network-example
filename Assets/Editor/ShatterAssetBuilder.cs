@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
+using NetworkExample.UnityDemo.Rendering;
 using NetworkExample.UnityDemo.Shatter;
 using UnityEditor;
 using UnityEngine;
@@ -110,6 +111,7 @@ namespace NetworkExample.UnityDemo.EditorTools
                 filter,
                 chunkSet);
 
+            BindBreakable(sourcePrefabPath, shattered);
             ReportBake(
                 sourceMesh,
                 parts.Count,
@@ -119,6 +121,50 @@ namespace NetworkExample.UnityDemo.EditorTools
                 chunkSetPath,
                 shatteredPrefabPath);
             return shattered;
+        }
+
+        /// <summary>
+        /// Tells the model what it breaks into.
+        /// </summary>
+        /// <remarks>
+        /// Bound here, by the builder that cut the pieces, because this is the
+        /// one moment both halves are in hand: a rebake that produced different
+        /// pieces cannot leave the prop pointing at the old ones, and nothing
+        /// else in the client has to be told that a nest is breakable.
+        /// </remarks>
+        private static void BindBreakable(string sourcePrefabPath, GameObject shattered)
+        {
+            if (shattered == null)
+            {
+                return;
+            }
+
+            var sourceAsset = AssetDatabase.LoadAssetAtPath<GameObject>(sourcePrefabPath);
+            NetworkBreakableProp bound = sourceAsset == null
+                ? null
+                : sourceAsset.GetComponent<NetworkBreakableProp>();
+            if (bound != null && bound.ShatteredModel == shattered)
+            {
+                return;
+            }
+
+            GameObject contents = PrefabUtility.LoadPrefabContents(sourcePrefabPath);
+            try
+            {
+                NetworkBreakableProp breakable =
+                    contents.GetComponent<NetworkBreakableProp>();
+                if (breakable == null)
+                {
+                    breakable = contents.AddComponent<NetworkBreakableProp>();
+                }
+
+                breakable.Configure(shattered);
+                PrefabUtility.SaveAsPrefabAsset(contents, sourcePrefabPath);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
         }
 
         /// <summary>

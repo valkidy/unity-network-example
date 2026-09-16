@@ -35,6 +35,12 @@ namespace NetworkExample.UnityDemo.Rendering
 
         [SerializeField]
         [Tooltip(
+            "Breaks a destroyed prop into the pieces its art was baked into. " +
+            "Optional: without it a nest still comes down, it just blinks out.")]
+        private NetworkPropShatter propShatter;
+
+        [SerializeField]
+        [Tooltip(
             "Logs every signal that could mean an actor died -- the replicated " +
             "dead flag turning on, the death presentation event, and the " +
             "despawn that follows -- so a death that leaves no mark on the " +
@@ -80,6 +86,11 @@ namespace NetworkExample.UnityDemo.Rendering
         public void ConfigureSplatters(NetworkHitSplatters splatters)
         {
             hitSplatters = splatters;
+        }
+
+        public void ConfigureShatter(NetworkPropShatter shatter)
+        {
+            propShatter = shatter;
         }
 
         public void Apply(RenderEntityState[] states, int count)
@@ -411,6 +422,21 @@ namespace NetworkExample.UnityDemo.Rendering
                 Vector3 lastPosition = hadVisual
                     ? despawning.transform.position
                     : Vector3.zero;
+                Quaternion lastRotation = hadVisual
+                    ? despawning.transform.rotation
+                    : Quaternion.identity;
+                // Asked of the art while the art still exists, and kept as plain
+                // values rather than as the component. The despawn carries no
+                // template id, so whether this prop is the kind that breaks --
+                // and what it breaks into -- is only knowable from the thing
+                // standing there, and that thing is about to be destroyed: a
+                // reference to a component on it reads as null immediately
+                // afterwards, which is how this first failed to break anything.
+                NetworkBreakableProp breakable = hadVisual
+                    ? despawning.GetComponentInChildren<NetworkBreakableProp>(true)
+                    : null;
+                bool breaks = breakable != null;
+                GameObject brokenModel = breaks ? breakable.ShatteredModel : null;
 
                 LogDeathSignal(
                     "despawn (" + lifecycleEvent.reason + ")",
@@ -437,6 +463,15 @@ namespace NetworkExample.UnityDemo.Rendering
                     if (hadVisual && settledWhileAlive && IsKill(lifecycleEvent))
                     {
                         TrySplatAt(lastPosition);
+                    }
+
+                    if (breaks && IsBroken(lifecycleEvent))
+                    {
+                        TryShatter(
+                            brokenModel,
+                            lastPosition,
+                            lastRotation,
+                            lifecycleEvent.net_id);
                     }
                 }
             }
@@ -503,6 +538,56 @@ namespace NetworkExample.UnityDemo.Rendering
             }
 
             hitSplatters.TrySplat(position);
+        }
+
+        /// <summary>
+        /// Breaks a destroyed prop apart where it stood, if anything is drawing
+        /// debris.
+        /// </summary>
+        /// <remarks>
+        /// The pose is the one the prop was being drawn in on the frame it went
+        /// away, which is why it is read before the registry drops the visual and
+        /// not from the event -- the event carries no position at all.
+        ///
+        /// The net id is the seed. Nothing about the debris is replicated, and
+        /// nothing needs to be: every client that has seen this entity knows its
+        /// net id, so every client throws the same pieces the same way.
+        /// </remarks>
+        private void TryShatter(
+            GameObject model,
+            Vector3 position,
+            Quaternion rotation,
+            uint netId)
+        {
+            if (propShatter == null)
+            {
+                return;
+            }
+
+            propShatter.TryShatter(model, position, rotation, netId);
+        }
+
+        /// <summary>
+        /// Whether a despawn is a prop being broken rather than one merely going
+        /// away.
+        /// </summary>
+        /// <remarks>
+        /// The reason is the whole signal, and it has to be: the server applies
+        /// damage and removes what it killed inside one tick, before the snapshot
+        /// that tick publishes, so no client ever sees a frame of a prop at zero
+        /// hp. The dead flag an actor carries has no equivalent here.
+        ///
+        /// Destroyed therefore means "deliberately removed", which for a nest is
+        /// only ever a nest that was brought down -- it has no lifetime and is
+        /// not something a player can pick up. A prop removed for a reason of the
+        /// server's own, clearing the world at the end of a round, would break
+        /// apart as well. Leaving range or being evicted for capacity report
+        /// themselves and are left alone.
+        /// </remarks>
+        private static bool IsBroken(KernelEntityLifecycleEvent lifecycleEvent)
+        {
+            return lifecycleEvent.entity_type == KernelEntityType.Prop &&
+                lifecycleEvent.reason == KernelDespawnReason.Destroyed;
         }
 
         /// <summary>
