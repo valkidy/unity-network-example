@@ -176,6 +176,72 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             Assert.That(keptWhole, Is.True, "The small part is passed through untouched.");
         }
 
+        [Test]
+        public void IsClosed_TellsACubeFromACubeWithAFaceMissing()
+        {
+            Assert.That(CubeIsland(2f).IsClosed(), Is.True);
+
+            ShatterGeometry open = Cube(2f);
+            open.Triangles.RemoveRange(open.Triangles.Count - 6, 6);
+            Assert.That(open.ToIsland(Vector3.zero).IsClosed(), Is.False);
+        }
+
+        [Test]
+        public void Fracture_HandsClosedBigPartsToTheCutter_AndNothingElse()
+        {
+            ShatterGeometry open = Cube(4f);
+            open.Triangles.RemoveRange(open.Triangles.Count - 6, 6);
+            var parts = new List<MeshIsland>
+            {
+                CubeIsland(4f),
+                open.ToIsland(new Vector3(10f, 0f, 0f)),
+                CubeIsland(1f),
+            };
+            var offered = new List<MeshIsland>();
+
+            List<MeshIsland> pieces = MeshIslandFracturer.Fracture(
+                parts,
+                3f,
+                1.2f,
+                1,
+                (part, seed) =>
+                {
+                    offered.Add(part);
+                    return MeshIslandFracturer.Fracture(part, 4, seed, out _);
+                },
+                out int partsCut,
+                out int partsCutByCutter,
+                out _);
+
+            // The open cube is too big as well, but a boolean cutter cannot tell
+            // its inside from its outside; it is cut into cells instead.
+            Assert.That(offered.Count, Is.EqualTo(1));
+            Assert.That(offered[0], Is.SameAs(parts[0]));
+            Assert.That(partsCut, Is.EqualTo(2));
+            Assert.That(partsCutByCutter, Is.EqualTo(1));
+            Assert.That(pieces.Count, Is.GreaterThan(3));
+        }
+
+        [Test]
+        public void Fracture_CutsAPartTheCutterDeclined_IntoCellsAfterAll()
+        {
+            var parts = new List<MeshIsland> { CubeIsland(4f) };
+
+            List<MeshIsland> pieces = MeshIslandFracturer.Fracture(
+                parts,
+                3f,
+                1.2f,
+                1,
+                (part, seed) => new List<MeshIsland> { part },
+                out int partsCut,
+                out int partsCutByCutter,
+                out _);
+
+            Assert.That(partsCutByCutter, Is.Zero);
+            Assert.That(partsCut, Is.EqualTo(1));
+            Assert.That(pieces.Count, Is.GreaterThan(1));
+        }
+
         private static bool Same(List<MeshIsland> first, List<MeshIsland> other)
         {
             if (first.Count != other.Count)

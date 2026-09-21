@@ -3,7 +3,7 @@
 // the "interior" material.
 //
 //   blast_cut in.obj out.obj voronoi <cells> <seed>
-//   blast_cut in.obj out.obj slice <x> <y> <z> <noiseAmplitude> <noiseFrequency> <seed>
+//   blast_cut in.obj out.obj slice <x> <y> <z> <noiseAmplitude> <noiseFrequency> <seed> [samplingInterval]
 
 #include "NvBlastExtAuthoring.h"
 #include "NvBlastExtAuthoringFractureTool.h"
@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iomanip>
 #include <random>
 #include <sstream>
 #include <string>
@@ -94,7 +95,7 @@ int main(int argc, char** argv)
     {
         std::fprintf(stderr,
             "usage: blast_cut in.obj out.obj voronoi <cells> <seed>\n"
-            "       blast_cut in.obj out.obj slice <x> <y> <z> <noiseAmplitude> <noiseFrequency> <seed>\n");
+            "       blast_cut in.obj out.obj slice <x> <y> <z> <noiseAmplitude> <noiseFrequency> <seed> [samplingInterval]\n");
         return 2;
     }
 
@@ -147,7 +148,10 @@ int main(int argc, char** argv)
         conf.noise.amplitude = static_cast<float>(std::atof(argv[7]));
         conf.noise.frequency = static_cast<float>(std::atof(argv[8]));
         conf.noise.octaveNumber = 3;
-        conf.noise.samplingInterval = { 0.1f, 0.1f, 0.1f };
+        // The grid the noisy cut surface is sampled on, in the input's units. It
+        // is what the cut faces' triangle count scales with.
+        const float sampling = argc >= 11 ? static_cast<float>(std::atof(argv[10])) : 0.1f;
+        conf.noise.samplingInterval = { sampling, sampling, sampling };
         rng.seed(std::atoi(argv[9]));
         std::printf("slice: %d x %d x %d, noise %.3f @ %.3f\n", conf.x_slices, conf.y_slices, conf.z_slices,
             conf.noise.amplitude, conf.noise.frequency);
@@ -169,6 +173,9 @@ int main(int argc, char** argv)
     std::printf("fractured in %.2f s\n", secondsSince(start));
 
     std::ofstream out(argv[2]);
+    // Nine significant digits round-trip a float; the stream's default six
+    // would move every vertex by up to a tenth of a millimetre at tower scale.
+    out << std::setprecision(9);
     out << "mtllib blast_cut.mtl\n";
     size_t written = 0;
     size_t leaves = 0;

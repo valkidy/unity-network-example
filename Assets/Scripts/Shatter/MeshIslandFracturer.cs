@@ -28,6 +28,13 @@ namespace NetworkExample.UnityDemo.Shatter
     public static class MeshIslandFracturer
     {
         /// <summary>
+        /// Cuts one closed part some other way than voronoi cells. Returns the
+        /// pieces, or fewer than two to decline, in which case the part is cut
+        /// into cells after all.
+        /// </summary>
+        public delegate List<MeshIsland> ClosedPartCutter(MeshIsland part, int seed);
+
+        /// <summary>
         /// Parts reaching further than this across are cut down. The tower's
         /// biggest parts are its body and the ground it stands on; everything
         /// else it is modelled in is already debris-sized.
@@ -80,7 +87,38 @@ namespace NetworkExample.UnityDemo.Shatter
             out int partsCut,
             out int unclosedCuts)
         {
+            return Fracture(
+                parts,
+                cutAboveExtent,
+                targetPieceExtent,
+                seed,
+                null,
+                out partsCut,
+                out _,
+                out unclosedCuts);
+        }
+
+        /// <param name="closedPartCutter">
+        /// Takes the parts that are both too big and closed, and cuts them its
+        /// own way -- Blast, in the bake. Null cuts everything into voronoi
+        /// cells. A part with a rim is never offered: a cutter that works by
+        /// boolean operations cannot tell the inside of an open surface from the
+        /// outside, and the voronoi clip leaves such a cut open rather than
+        /// guessing.
+        /// </param>
+        /// <param name="partsCutByCutter">How many of the cut parts the cutter took.</param>
+        public static List<MeshIsland> Fracture(
+            IReadOnlyList<MeshIsland> parts,
+            float cutAboveExtent,
+            float targetPieceExtent,
+            int seed,
+            ClosedPartCutter closedPartCutter,
+            out int partsCut,
+            out int partsCutByCutter,
+            out int unclosedCuts)
+        {
             partsCut = 0;
+            partsCutByCutter = 0;
             unclosedCuts = 0;
             var pieces = new List<MeshIsland>();
             if (parts == null)
@@ -97,6 +135,18 @@ namespace NetworkExample.UnityDemo.Shatter
                 {
                     pieces.Add(part);
                     continue;
+                }
+
+                if (closedPartCutter != null && part.IsClosed())
+                {
+                    List<MeshIsland> byCutter = closedPartCutter(part, SeedFor(seed, index));
+                    if (byCutter != null && byCutter.Count >= 2)
+                    {
+                        ++partsCut;
+                        ++partsCutByCutter;
+                        pieces.AddRange(byCutter);
+                        continue;
+                    }
                 }
 
                 int wanted = Mathf.Clamp(

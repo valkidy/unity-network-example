@@ -289,7 +289,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
                     "Shatter Assets if it has gone missing.");
                 Assert.That(
                     fallbackRoot.GetComponentInChildren<NetworkShatterView>(true).PieceCount,
-                    Is.EqualTo(123));
+                    Is.EqualTo(138));
             }
             finally
             {

@@ -34,11 +34,17 @@ namespace NetworkExample.UnityDemo.EditorTools
             "Assets/Resources/Props/tower/tower-shattered-chunks.asset";
         private const string TowerShatteredPrefabPath =
             "Assets/Resources/Props/tower/tower-shattered.prefab";
+        private const string TowerInteriorMaterialPath =
+            "Assets/Resources/Props/tower/tower-interior.mat";
 
         [MenuItem("Network Example/Presentation/Build Tower Shatter Assets")]
         public static void BuildTowerShatterAssets()
         {
-            Build(TowerPrefabPath, TowerChunkSetPath, TowerShatteredPrefabPath);
+            Build(
+                TowerPrefabPath,
+                TowerChunkSetPath,
+                TowerShatteredPrefabPath,
+                TowerInteriorMaterialPath);
         }
 
         /// <summary>
@@ -46,10 +52,16 @@ namespace NetworkExample.UnityDemo.EditorTools
         /// writes both assets. Returns the shattered prefab, or null when the
         /// source is not something this can split.
         /// </summary>
+        /// <param name="interiorMaterialPath">
+        /// The material the faces Blast makes are drawn with, created there the
+        /// first time it is needed and left alone after that, so it can be
+        /// painted without a rebake painting over it.
+        /// </param>
         public static GameObject Build(
             string sourcePrefabPath,
             string chunkSetPath,
-            string shatteredPrefabPath)
+            string shatteredPrefabPath,
+            string interiorMaterialPath)
         {
             GameObject sourcePrefab =
                 AssetDatabase.LoadAssetAtPath<GameObject>(sourcePrefabPath);
@@ -96,20 +108,35 @@ namespace NetworkExample.UnityDemo.EditorTools
                 return null;
             }
 
+            BlastCutter blast = BlastCutter.Find();
+            if (blast == null)
+            {
+                Debug.LogWarning(
+                    "blast_cut is not built, so closed parts are cut into voronoi cells " +
+                    "like the rest. Build it with Tools/BlastSpike/README.md for noisy " +
+                    "breaks; the bake this makes is not the one that is committed.");
+            }
+
             List<MeshIsland> pieces = MeshIslandFracturer.Fracture(
                 parts,
                 MeshIslandFracturer.DefaultCutAboveExtent,
                 MeshIslandFracturer.DefaultTargetPieceExtent,
                 MeshIslandFracturer.DefaultSeed,
+                blast != null ? blast.Cut : (MeshIslandFracturer.ClosedPartCutter)null,
                 out int partsCut,
+                out int partsCutByBlast,
                 out int unclosedCuts);
 
+            Material interior = NeedsInterior(pieces)
+                ? EnsureInteriorMaterial(interiorMaterialPath, filter.GetComponent<MeshRenderer>())
+                : null;
             ShatterChunkSet chunkSet = WriteChunkSet(chunkSetPath, sourceMesh, pieces);
             GameObject shattered = WritePrefab(
                 shatteredPrefabPath,
                 sourcePrefab.transform,
                 filter,
-                chunkSet);
+                chunkSet,
+                interior);
 
             BindBreakable(sourcePrefabPath, shattered);
             ReportBake(
@@ -117,6 +144,11 @@ namespace NetworkExample.UnityDemo.EditorTools
                 parts.Count,
                 pieces,
                 partsCut,
+                partsCutByBlast,
+                blast == null
+                    ? "not built"
+                    : blast.CutNoisy + " in noisy slices, " + blast.CutFlat + " in its voronoi cells, " +
+                        blast.Refused + " refused",
                 unclosedCuts,
                 chunkSetPath,
                 shatteredPrefabPath);
@@ -217,11 +249,49 @@ namespace NetworkExample.UnityDemo.EditorTools
             return chunkSet;
         }
 
+        private static bool NeedsInterior(List<MeshIsland> pieces)
+        {
+            for (int index = 0; index < pieces.Count; ++index)
+            {
+                if (pieces[index].InteriorTriangles.Length > 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// The material for faces a cut made, created the first time a bake
+        /// needs one: the model's own shader with no texture and the colour of
+        /// the inside of something broken.
+        /// </summary>
+        private static Material EnsureInteriorMaterial(string path, MeshRenderer sourceRenderer)
+        {
+            var existing = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (existing != null)
+            {
+                return existing;
+            }
+
+            Material template = sourceRenderer != null ? sourceRenderer.sharedMaterial : null;
+            var created = template != null
+                ? new Material(template)
+                : new Material(Shader.Find("Universal Render Pipeline/Lit"));
+            created.name = Path.GetFileNameWithoutExtension(path);
+            created.mainTexture = null;
+            created.color = new Color(0.36f, 0.21f, 0.12f);
+            AssetDatabase.CreateAsset(created, path);
+            return created;
+        }
+
         private static GameObject WritePrefab(
             string shatteredPrefabPath,
             Transform sourceRoot,
             MeshFilter sourceFilter,
-            ShatterChunkSet chunkSet)
+            ShatterChunkSet chunkSet,
+            Material interior)
         {
             var root = new GameObject(
                 Path.GetFileNameWithoutExtension(shatteredPrefabPath));
@@ -238,7 +308,9 @@ namespace NetworkExample.UnityDemo.EditorTools
                 var renderer = chunk.AddComponent<MeshRenderer>();
                 if (sourceRenderer != null)
                 {
-                    renderer.sharedMaterials = sourceRenderer.sharedMaterials;
+                    renderer.sharedMaterials = chunks[index].subMeshCount > 1 && interior != null
+                        ? new[] { sourceRenderer.sharedMaterial, interior }
+                        : sourceRenderer.sharedMaterials;
                     renderer.shadowCastingMode = sourceRenderer.shadowCastingMode;
                     renderer.receiveShadows = sourceRenderer.receiveShadows;
                     renderer.lightProbeUsage = sourceRenderer.lightProbeUsage;
@@ -289,6 +361,8 @@ namespace NetworkExample.UnityDemo.EditorTools
             int partCount,
             List<MeshIsland> pieces,
             int partsCut,
+            int partsCutByBlast,
+            string blastSummary,
             int unclosedCuts,
             string chunkSetPath,
             string shatteredPrefabPath)
@@ -309,7 +383,8 @@ namespace NetworkExample.UnityDemo.EditorTools
             baked.SetMinMax(min, max);
             Debug.Log(
                 "Shattered " + sourceMesh.name + ": " + partCount + " modelled parts, " +
-                partsCut + " of them cut down, " + pieces.Count + " pieces.\n" +
+                partsCut + " of them cut down (" + partsCutByBlast + " by Blast: " + blastSummary +
+                "), " + pieces.Count + " pieces.\n" +
                 triangles + " triangles against the model\'s " + sourceTriangles +
                 " (+" + (triangles - sourceTriangles) + " for the cut faces), " +
                 "largest piece " + pieces[0].TriangleCount + " triangles, smallest " +
