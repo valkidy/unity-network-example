@@ -16,9 +16,22 @@ namespace NetworkExample.UnityDemo.LocalAgent
         public int preferredWeaponId = 0;
         [Tooltip("Only Agent actors with one of these template IDs are hostile. Empty means follow only.")]
         public uint[] enemyTemplateIds = Array.Empty<uint>();
+
+        [Header("Exploration (needs the catalog's navigation mesh)")]
+        public bool enableExploration = true;
+        [Tooltip("With a player to follow, explore only within this distance of them; go back " +
+            "to them beyond it. Without one, the whole navigation mesh is explored.")]
+        [Min(0f)] public float leashRadius = 15f;
+        [Tooltip("Side of the square cells the walkable area is split into for exploration.")]
+        [Min(0.5f)] public float explorationCellSize = 4f;
+        [Tooltip("Cells whose centre is this close count as seen. No line-of-sight test.")]
+        [Min(0f)] public float sightRadius = 6f;
+        [Min(0.1f)] public float waypointReachDistance = 0.75f;
+        [Tooltip("Input ticks without 0.5 m of progress before a target is set aside (30 Hz by default).")]
+        [Min(1)] public int stuckSteps = 45;
     }
 
-    public enum LocalAgentState { Idle, Following, Combat }
+    public enum LocalAgentState { Idle, Following, Combat, Exploring }
 
     /// <summary>Device-independent command; Move is world X/Z, AimDirection is world space.</summary>
     public struct LocalAgentCommand
@@ -45,6 +58,15 @@ namespace NetworkExample.UnityDemo.LocalAgent
         private bool firePressedLastStep;
         private KernelLocalWeaponState reloadWeapon;
         private uint reloadTarget;
+        private LocalAgentExplorer explorer;
+
+        /// <summary>
+        /// The walkable area to explore. Null (the default) disables exploration,
+        /// and the agent only follows and fights.
+        /// </summary>
+        public DetourNavMeshQuery NavMesh { get; set; }
+        /// <summary>The explorer in use, for inspection; null until exploration first runs.</summary>
+        public LocalAgentExplorer Explorer => explorer;
 
         public void Reset()
         {
@@ -53,6 +75,7 @@ namespace NetworkExample.UnityDemo.LocalAgent
             following = reloadRequested = reloadPressedLastStep = firePressedLastStep = false;
             reloadWeapon = default;
             reloadTarget = 0;
+            explorer?.ClearPath(); // cells already seen stay seen
         }
 
         /// <param name="holdTrigger">The active weapon's fire action is hold-mode.
@@ -157,19 +180,63 @@ namespace NetworkExample.UnityDemo.LocalAgent
 
             AttackTargetId = 0;
             reloadRequested = false;
-            State = followIndex < 0 ? LocalAgentState.Idle : LocalAgentState.Following;
-            if (followIndex < 0) return default;
-            Vector3 delta = Position(states[followIndex]) - position;
+            LocalAgentExplorer activeExplorer = ExplorerFor(settings);
+            if (followIndex < 0)
+            {
+                following = false;
+                if (activeExplorer == null)
+                {
+                    State = LocalAgentState.Idle;
+                    return default;
+                }
+                return Explore(activeExplorer, settings, position, null, 0f);
+            }
+
+            Vector3 followPosition = Position(states[followIndex]);
+            Vector3 delta = followPosition - position;
             Vector2 planar = new Vector2(delta.x, delta.z);
             float stop = NonNegative(settings.followStopDistance, 3f);
-            float start = Mathf.Max(stop, NonNegative(settings.followStartDistance, 4f));
+            // An exploring agent roams the leash and only comes back beyond it.
+            float leash = Mathf.Max(stop, NonNegative(settings.leashRadius, 15f));
+            float start = activeExplorer != null ? leash
+                : Mathf.Max(stop, NonNegative(settings.followStartDistance, 4f));
             if (planar.sqrMagnitude <= stop * stop) following = false;
             else if (planar.sqrMagnitude > start * start) following = true;
+            if (activeExplorer != null && !following)
+                return Explore(activeExplorer, settings, position, followPosition, leash);
+
+            activeExplorer?.ClearPath();
+            State = LocalAgentState.Following;
             return new LocalAgentCommand
             {
                 Move = following ? planar.normalized : Vector2.zero,
                 AimDirection = planar.sqrMagnitude > 0.000001f
                     ? new Vector3(planar.x, 0f, planar.y).normalized : Vector3.forward,
+            };
+        }
+
+        private LocalAgentExplorer ExplorerFor(LocalAgentSettings settings)
+        {
+            if (!settings.enableExploration || NavMesh == null) return null;
+            float cellSize = Mathf.Max(0.5f, Finite(settings.explorationCellSize, 4f));
+            if (explorer == null || explorer.Query != NavMesh || explorer.CellSize != cellSize)
+                explorer = new LocalAgentExplorer(NavMesh, cellSize);
+            explorer.StuckSteps = Mathf.Max(1, settings.stuckSteps);
+            explorer.WaypointReachDistance = Mathf.Max(0.1f, Finite(settings.waypointReachDistance, 0.75f));
+            return explorer;
+        }
+
+        private LocalAgentCommand Explore(LocalAgentExplorer activeExplorer, LocalAgentSettings settings,
+            Vector3 position, Vector3? anchor, float leash)
+        {
+            State = LocalAgentState.Exploring;
+            activeExplorer.MarkSeen(position, NonNegative(settings.sightRadius, 6f));
+            Vector2 move = activeExplorer.Step(position, anchor, leash);
+            return new LocalAgentCommand
+            {
+                Move = move,
+                AimDirection = move.sqrMagnitude > 0.000001f
+                    ? new Vector3(move.x, 0f, move.y) : Vector3.forward,
             };
         }
 

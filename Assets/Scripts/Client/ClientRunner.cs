@@ -989,12 +989,13 @@ namespace NetworkExample.UnityDemo.Client
 
         /// <summary>
         /// Loads the navigation mesh the server's patrols use, so the local agent
-        /// plans over the same walkable area. Without it the agent can only walk
-        /// straight at things.
+        /// explores the same walkable area. Without it the agent follows and
+        /// fights but does not explore.
         /// </summary>
         private void ConfigureAgentNavMesh(byte[] bundleBytes, string entryPath)
         {
             agentNavMesh = null;
+            localAgent.NavMesh = null;
             if (!NetworkGameplayCatalogBundle.TryReadNavigationMesh(
                     bundleBytes, entryPath, out byte[] navMeshBytes, out string diagnostic) ||
                 !DetourNavMesh.TryParse(navMeshBytes, out DetourNavMesh mesh, out diagnostic))
@@ -1007,6 +1008,7 @@ namespace NetworkExample.UnityDemo.Client
             }
 
             agentNavMesh = new DetourNavMeshQuery(mesh);
+            localAgent.NavMesh = agentNavMesh;
         }
 
         private static string FormatCatalogSyncResult(GameplayCatalogSyncResult result)

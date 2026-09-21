@@ -31,8 +31,16 @@ Navigation: `ClientRunner.AgentNavMesh` holds the synchronized catalog's navigat
 `navigation_mesh.entry_path` artifact the server's patrols use), parsed by `DetourNavMesh` and
 queried with `DetourNavMeshQuery` (polygon lookup, nearest walkable point, A* plus funnel paths,
 area-weighted random points). Only single-tile Detour v7 meshes without off-mesh connections are
-read. The mesh is static terrain: props, nests and actors are not in it. The agent does not use it
-yet.
+read. The mesh is static terrain: props, nests and actors are not in it.
+
+Exploration (`enableExploration`, on by default, needs the navigation mesh): `LocalAgentExplorer`
+splits the walkable area into `explorationCellSize` cells, marks cells within `sightRadius` as seen
+(no line-of-sight test) and walks a navmesh path to the nearest unseen cell. Priority is combat,
+then following, then exploring. With a player to follow the agent explores within `leashRadius`
+of them and walks back once farther than that, until within `followStopDistance`; alone it explores
+the whole mesh. A target it has no route to, or makes no 0.5 m progress towards for `stuckSteps`
+input ticks, is set aside; once everything in the area is seen or set aside the area is forgotten
+and exploration starts over. Without the mesh the agent follows and fights as before.
 
 What a client actually receives (verified against a dedicated server):
 - Snapshots carry health only for Player actors. Enemies arrive with hp = 0 and

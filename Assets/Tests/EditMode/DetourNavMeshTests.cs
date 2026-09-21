@@ -20,7 +20,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             return bundle;
         }
 
-        private static byte[] Artifact(string name)
+        internal static byte[] Artifact(string name)
         {
             using (var archive = new ZipArchive(new MemoryStream(Bundle(), false), ZipArchiveMode.Read))
             using (Stream entry = archive.GetEntry("mesh_assets/recast/" + name + ".navmesh").Open())
@@ -38,8 +38,8 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             return mesh;
         }
 
-        private static DetourNavMeshQuery Plane() => new DetourNavMeshQuery(Parse(Artifact("plane_200x200")));
-        private static DetourNavMeshQuery Undulating() => new DetourNavMeshQuery(Parse(Artifact("undulating")));
+        internal static DetourNavMeshQuery Plane() => new DetourNavMeshQuery(Parse(Artifact("plane_200x200")));
+        internal static DetourNavMeshQuery Undulating() => new DetourNavMeshQuery(Parse(Artifact("undulating")));
 
         private static void AssertRejected(byte[] artifact, string expected)
         {
