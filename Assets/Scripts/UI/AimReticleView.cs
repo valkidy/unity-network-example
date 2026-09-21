@@ -69,6 +69,12 @@ namespace NetworkExample.UnityDemo.UI
             EnsureBuilt();
         }
 
+        public void SetVisible(bool visible)
+        {
+            EnsureBuilt();
+            root.gameObject.SetActive(visible);
+        }
+
         private void OnEnable()
         {
             EnsureBuilt();

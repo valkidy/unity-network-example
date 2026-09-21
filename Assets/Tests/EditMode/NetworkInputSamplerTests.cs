@@ -42,6 +42,35 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
+        public void ExplicitInputDoesNotPollDevicesAndHandoffPreservesSequenceAndActionIds()
+        {
+            SetKey(Key.Space);
+            var fire = sampler.SampleExplicit(Vector2.right, Vector3.left, true, true, false);
+            var release = sampler.SampleExplicit(Vector2.zero, Vector3.forward, false, false, false);
+            Assert.That(release.input_seq, Is.EqualTo(fire.input_seq + 1));
+            Assert.That(release.action_input.action_instance_id, Is.EqualTo(fire.action_intent.action_instance_id));
+            Assert.That(release.action_input.held, Is.Zero);
+            Assert.That(release.move.x, Is.Zero);
+            Assert.That(release.buttons, Is.Zero);
+            Assert.That(sampler.OutstandingActionCount, Is.EqualTo(1));
+            var manual = sampler.Sample();
+            Assert.That(manual.input_seq, Is.EqualTo(release.input_seq + 1));
+            Assert.That(manual.action_intent.action_instance_id, Is.GreaterThan(fire.action_intent.action_instance_id));
+        }
+
+        [Test]
+        public void ExplicitReloadReleasesFireAndIsEdgeTriggered()
+        {
+            var fire = sampler.SampleExplicit(Vector2.zero, Vector3.forward, true, true, false);
+            var reload = sampler.SampleExplicit(Vector2.zero, Vector3.forward, true, false, true);
+            Assert.That(reload.action_input.action_instance_id, Is.EqualTo(fire.action_intent.action_instance_id));
+            Assert.That(reload.action_input.held, Is.Zero);
+            Assert.That(reload.action_intent.binding_id, Is.EqualTo(KernelActionBinding.Reload));
+            var held = sampler.SampleExplicit(Vector2.zero, Vector3.forward, true, false, true);
+            Assert.That(held.action_intent.action_instance_id, Is.Zero);
+        }
+
+        [Test]
         public void Sample_WithNoInput_UsesActiveSlotWeaponId()
         {
             KernelPlayerInput input = sampler.Sample();

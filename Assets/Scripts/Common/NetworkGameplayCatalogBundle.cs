@@ -483,6 +483,132 @@ namespace NetworkExample.UnityDemo.Common
             }
         }
 
+        /// <summary>
+        /// Resolves every weapon id to the trigger mode of its fire action.
+        /// </summary>
+        /// <remarks>
+        /// A press action fires once per press and ignores the trigger after
+        /// that, so anything that fires on the player's behalf has to let go and
+        /// press again. A hold action keeps firing while held. The client never
+        /// hears when a press action has finished, so the catalog is the only
+        /// place that says which kind a weapon is.
+        /// </remarks>
+        public static bool TryReadWeaponFireTriggerModes(
+            byte[] bundleBytes,
+            string entryPath,
+            out Dictionary<byte, KernelActionTriggerMode> byWeaponId,
+            out string diagnostic)
+        {
+            byWeaponId = null;
+            diagnostic = null;
+            if (bundleBytes == null || bundleBytes.Length == 0)
+            {
+                diagnostic = "Gameplay catalog bundle is empty.";
+                return false;
+            }
+
+            try
+            {
+                using (var stream = new MemoryStream(bundleBytes, false))
+                using (var archive = new ZipArchive(stream, ZipArchiveMode.Read, false))
+                {
+                    if (!TryReadTextEntry(
+                            archive,
+                            entryPath,
+                            out string catalogYaml,
+                            out diagnostic))
+                    {
+                        return false;
+                    }
+
+                    if (!TryReadTopLevelScalar(
+                            catalogYaml,
+                            "weapon_template_dir",
+                            out string weaponDirectory) ||
+                        !TryReadTopLevelScalar(
+                            catalogYaml,
+                            "action_template_dir",
+                            out string actionDirectory))
+                    {
+                        diagnostic =
+                            "Gameplay catalog does not declare weapon_template_dir and " +
+                            "action_template_dir together.";
+                        return false;
+                    }
+
+                    var modesByActionName =
+                        new Dictionary<string, KernelActionTriggerMode>(StringComparer.Ordinal);
+                    foreach (string actionYaml in ReadYamlEntries(archive, actionDirectory))
+                    {
+                        if (TryReadTopLevelScalar(actionYaml, "name", out string name) &&
+                            TryReadTopLevelScalar(actionYaml, "trigger_mode", out string mode))
+                        {
+                            if (mode == "press")
+                            {
+                                modesByActionName[name] = KernelActionTriggerMode.Press;
+                            }
+                            else if (mode == "hold")
+                            {
+                                modesByActionName[name] = KernelActionTriggerMode.Hold;
+                            }
+                        }
+                    }
+
+                    var found = new Dictionary<byte, KernelActionTriggerMode>();
+                    foreach (string weaponYaml in ReadYamlEntries(archive, weaponDirectory))
+                    {
+                        if (TryReadTopLevelScalar(weaponYaml, "id", out string idText) &&
+                            byte.TryParse(
+                                idText,
+                                NumberStyles.None,
+                                CultureInfo.InvariantCulture,
+                                out byte weaponId) &&
+                            TryReadTopLevelScalar(
+                                weaponYaml,
+                                "fire_action_template",
+                                out string fireActionName) &&
+                            modesByActionName.TryGetValue(
+                                fireActionName,
+                                out KernelActionTriggerMode triggerMode))
+                        {
+                            found[weaponId] = triggerMode;
+                        }
+                    }
+
+                    byWeaponId = found;
+                    return true;
+                }
+            }
+            catch (Exception exception)
+            {
+                diagnostic =
+                    "Gameplay catalog weapon trigger mode read failed: " + exception.Message;
+                return false;
+            }
+        }
+
+        private static IEnumerable<string> ReadYamlEntries(
+            ZipArchive archive,
+            string directoryName)
+        {
+            string directory =
+                NormalizeArchivePath(Unquote(directoryName)).TrimEnd('/') + "/";
+            if (directory.Length <= 1)
+            {
+                yield break;
+            }
+
+            foreach (ZipArchiveEntry entry in archive.Entries)
+            {
+                string path = entry.FullName.Replace('\\', '/');
+                if (path.StartsWith(directory, StringComparison.Ordinal) &&
+                    path.EndsWith(".yaml", StringComparison.Ordinal))
+                {
+                    yield return ReadEntryText(entry);
+                }
+            }
+        }
+
         public static bool TryLoadSynchronizedBundle(
             string cacheDirectory,
             string serverAddress,

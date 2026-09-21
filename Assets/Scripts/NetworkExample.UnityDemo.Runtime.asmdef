@@ -6,7 +6,8 @@
     "Unity.Burst",
     "Unity.InputSystem",
     "Unity.RenderPipelines.Universal.Runtime",
-    "UnityEngine.UI"
+    "UnityEngine.UI",
+    "NetworkExample.UnityDemo.LocalAgent"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],

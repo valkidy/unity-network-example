@@ -168,6 +168,27 @@ namespace NetworkExample.UnityDemo.Input
             return true;
         }
 
+        public bool TryGetWeaponIdForSlot(int slot, out byte weaponId)
+        {
+            bool valid = slot >= 0 && slot < weaponSlotCount;
+            weaponId = valid ? weaponIdsBySlot[slot] : (byte)0;
+            return valid;
+        }
+
+        /// <summary>Selects the loadout slot holding <paramref name="weaponId"/>.</summary>
+        public bool TrySelectWeaponId(byte weaponId)
+        {
+            for (int slot = 0; slot < weaponSlotCount; ++slot)
+            {
+                if (weaponIdsBySlot[slot] == weaponId)
+                {
+                    return TrySelectWeaponSlot(slot);
+                }
+            }
+
+            return false;
+        }
+
         private void Awake()
         {
             EnsureActionsCreated();
@@ -305,7 +326,18 @@ namespace NetworkExample.UnityDemo.Input
             Vector2 move = TransformMoveToWorld(rawMove);
 
             UpdateSelectedWeapon();
-            bool isFirePressed = IsFirePressed();
+            return SampleExplicit(move, GetAimDirection(move), isAiming,
+                IsFirePressed(), IsActionPressed(reloadAction));
+        }
+
+        /// <summary>Uses the same sequence and action bookkeeping without polling any device.</summary>
+        public KernelPlayerInput SampleExplicit(Vector2 move, Vector3 aimDirection,
+            bool aiming, bool isFirePressed, bool isReloadPressed)
+        {
+            move = Vector2.ClampMagnitude(move, 1f);
+            aimDirection = aimDirection.sqrMagnitude > 0.000001f
+                ? aimDirection.normalized : Vector3.forward;
+            isAiming = aiming;
             bool fireTriggered = isFirePressed && !wasFirePressed;
             bool fireReleased = !isFirePressed && wasFirePressed;
             wasFirePressed = isFirePressed;
@@ -324,7 +356,6 @@ namespace NetworkExample.UnityDemo.Input
             {
                 restartHeldFire = false;
             }
-            bool isReloadPressed = IsActionPressed(reloadAction);
             bool reloadTriggered = isReloadPressed && !wasReloadPressed;
             wasReloadPressed = isReloadPressed;
 
@@ -372,8 +403,6 @@ namespace NetworkExample.UnityDemo.Input
                     AllocateActionInstanceId(KernelActionBinding.Reload),
                     KernelActionBinding.Reload);
             }
-
-            Vector3 aimDirection = GetAimDirection(move);
 
             inputSequence++;
 

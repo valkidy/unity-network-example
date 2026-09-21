@@ -1,0 +1,6 @@
+{
+  "name": "NetworkExample.UnityDemo.LocalAgent",
+  "rootNamespace": "NetworkExample.UnityDemo.LocalAgent",
+  "references": ["NetworkExample.Kernel"],
+  "autoReferenced": true
+}

@@ -543,6 +543,15 @@ MonoBehaviour:
   inputSubmissionRateHz: 30
   logLegReach: 0
   logSkeletonPoseProvenance: 0
+  enableLocalAgent: 1
+  localAgentSettings:
+    followStartDistance: 8
+    followStopDistance: 3
+    threatRange: 50
+    muzzleHeight: 0.5
+    targetHeight: 0.5
+    preferredWeaponId: 0
+    enemyTemplateIds: 0200000015000000160000001700000018000000190000001a0000001c0000001d0000001e0000001f00000020000000
 --- !u!4 &543450652889433851
 Transform:
   m_ObjectHideFlags: 0

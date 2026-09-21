@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Security.Cryptography;
+using NetworkExample.Kernel;
 using NetworkExample.UnityDemo.Common;
 using NUnit.Framework;
 using UnityEngine;
@@ -51,6 +52,27 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             // Rocket, shotgun, grenade launcher, rifle -- number keys 1 to 4.
             Assert.That(weaponIds, Is.EqualTo(new byte[] { 3, 1, 7, 0 }));
             Assert.That(activeWeaponSlot, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void TryReadWeaponFireTriggerModes_ResolvesEachWeaponThroughItsFireAction()
+        {
+            Assert.That(
+                NetworkGameplayCatalogBundle.TryLoadDefault(
+                    out byte[] bundleBytes,
+                    out string entryPath),
+                Is.True);
+
+            bool loaded = NetworkGameplayCatalogBundle.TryReadWeaponFireTriggerModes(
+                bundleBytes,
+                entryPath,
+                out Dictionary<byte, KernelActionTriggerMode> modes,
+                out string diagnostic);
+
+            Assert.That(loaded, Is.True, diagnostic);
+            Assert.That(modes[0], Is.EqualTo(KernelActionTriggerMode.Hold));  // rifle
+            Assert.That(modes[1], Is.EqualTo(KernelActionTriggerMode.Press)); // shotgun
+            Assert.That(modes[3], Is.EqualTo(KernelActionTriggerMode.Press)); // rocket
         }
 
         [Test]

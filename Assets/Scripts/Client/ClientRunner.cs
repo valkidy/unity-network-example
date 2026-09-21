@@ -6,6 +6,7 @@ using NetworkExample.Kernel.Client;
 using NetworkExample.UnityDemo.CameraSystem;
 using NetworkExample.UnityDemo.Common;
 using NetworkExample.UnityDemo.Input;
+using NetworkExample.UnityDemo.LocalAgent;
 using NetworkExample.UnityDemo.UI;
 using NetworkExample.UnityDemo.Items;
 using NetworkExample.UnityDemo.Rendering;
@@ -89,6 +90,26 @@ namespace NetworkExample.UnityDemo.Client
             "commented out; re-enable it there if pose provenance is in question again.")]
         private bool logSkeletonPoseProvenance = true;
 
+        [Header("Local Agent")]
+        [SerializeField]
+        private bool enableLocalAgent;
+
+        [SerializeField]
+        private LocalAgentSettings localAgentSettings = new LocalAgentSettings();
+
+        private readonly LocalAgentController localAgent = new LocalAgentController();
+        private bool agentMode;
+        private bool pendingInputHandoff;
+        private int manualWeaponSlot = -1;
+        private RenderEntityState[] agentObservations;
+        private int agentObservationCount;
+        private float agentObservationTime;
+        private Dictionary<byte, KernelActionTriggerMode> weaponFireTriggerModes;
+        public LocalAgentState AgentState => localAgent.State;
+        public uint AgentFollowTargetId => localAgent.FollowTargetId;
+        public uint AgentAttackTargetId => localAgent.AttackTargetId;
+        public bool EnableLocalAgent { get => enableLocalAgent; set => enableLocalAgent = value; }
+
         private NetworkClient client;
         private KernelEvent[] events;
         private RenderEntityState[] renderStates;
@@ -134,6 +155,7 @@ namespace NetworkExample.UnityDemo.Client
                 Mathf.Max(1f, inputSubmissionRateHz));
             events = new KernelEvent[Mathf.Max(1, maxEvents)];
             renderStates = new RenderEntityState[Mathf.Max(1, maxRenderStates)];
+            agentObservations = new RenderEntityState[renderStates.Length];
             fireStallDiagnostic = new NetworkFireStallDiagnostic(fireStallSeconds);
             lifecycleEvents = new KernelEntityLifecycleEvent[Mathf.Max(1, maxEvents)];
             localActionResults = new KernelLocalActionResult[Mathf.Max(1, maxActionEvents)];
@@ -184,23 +206,26 @@ namespace NetworkExample.UnityDemo.Client
                 return;
             }
 
-            // Aim is polled every frame, not on the input submission clock, so the
-            // camera reacts at frame rate instead of at the slower submit cadence.
-            inputSampler.UpdateAimState();
-            if (followCamera != null)
+            UpdateInputMode();
+            // Human aim is polled at render rate. Agent aim comes only from its command.
+            if (!agentMode && !pendingInputHandoff)
             {
-                followCamera.SetAiming(inputSampler.IsAiming);
-                inputSampler.SetAimDirection(followCamera.AimDirection);
+                inputSampler.UpdateAimState();
+                if (followCamera != null)
+                    inputSampler.SetAimDirection(followCamera.AimDirection);
             }
+            if (followCamera != null)
+                followCamera.SetAiming(inputSampler.IsAiming);
 
             KernelActionIntent predictedIntent = default;
             if (client.IsReady &&
                 inputSampler.HasWeaponLoadout &&
                 inputSubmissionClock.ShouldSubmit(Time.unscaledDeltaTime))
             {
-                KernelPlayerInput input = inputSampler.Sample();
+                KernelPlayerInput input = SampleCurrentInput();
                 if (client.TrySubmitInput(input))
                 {
+                    pendingInputHandoff = false;
                     predictedIntent = input.action_intent;
                     renderStateApplier.BeginPredictedLocalAction(
                         client.LocalPlayerNetId,
@@ -214,6 +239,7 @@ namespace NetworkExample.UnityDemo.Client
             else if (!client.IsReady)
             {
                 inputSubmissionClock.Reset();
+                ClearAgentObservation();
             }
 
             uint eventCount = client.Update(Time.unscaledDeltaTime, events);
@@ -248,6 +274,7 @@ namespace NetworkExample.UnityDemo.Client
                 inputSampler.ResetSession();
                 itemPropController.ResetSession();
                 inputSubmissionClock.Reset();
+                ClearAgentObservation();
                 started = false;
                 return;
             }
@@ -293,7 +320,18 @@ namespace NetworkExample.UnityDemo.Client
             {
                 itemPropController.SetAimDirection(followCamera.AimDirection);
             }
-            itemPropController.ProcessInput(client, renderStates, safeRenderCount);
+            if (!agentMode && !pendingInputHandoff)
+                itemPropController.ProcessInput(client, renderStates, safeRenderCount);
+
+            // Retain this completed frame for the next input tick. Lifecycle events
+            // win over render samples from the same update.
+            Array.Copy(renderStates, agentObservations, safeRenderCount);
+            agentObservationCount = safeRenderCount;
+            agentObservationTime = Time.unscaledTime;
+            for (int i = 0; i < SafeCount(lifecycleEventCount, lifecycleEvents.Length); i++)
+                for (int j = 0; j < agentObservationCount; j++)
+                    if (agentObservations[j].net_id == lifecycleEvents[i].net_id)
+                        agentObservations[j].net_id = 0;
 
             if (debugView != null)
             {
@@ -320,6 +358,10 @@ namespace NetworkExample.UnityDemo.Client
 
         private void OnDisable()
         {
+            ClearAgentObservation();
+            agentMode = false;
+            pendingInputHandoff = false;
+            aimReticleView?.SetVisible(true);
             followCamera?.SetTarget(null);
             renderStateApplier?.Clear();
             inputSampler?.ResetSession();
@@ -338,6 +380,93 @@ namespace NetworkExample.UnityDemo.Client
             nextCatalogConfigureTime = 0f;
             presentationClock.Reset();
             inputSubmissionClock?.Reset();
+        }
+
+        private void UpdateInputMode()
+        {
+            if (agentMode == enableLocalAgent) return;
+            agentMode = enableLocalAgent;
+            pendingInputHandoff = true;
+            // Give the player back the weapon they had before the agent took over.
+            if (agentMode)
+                manualWeaponSlot = inputSampler.SelectedWeaponSlot;
+            else if (manualWeaponSlot >= 0)
+                inputSampler.TrySelectWeaponSlot(manualWeaponSlot);
+            localAgent.Reset();
+            aimReticleView?.SetVisible(!agentMode);
+            if (agentMode && (localAgentSettings == null ||
+                localAgentSettings.enemyTemplateIds == null ||
+                localAgentSettings.enemyTemplateIds.Length == 0))
+                Debug.LogWarning("Local Agent has no enemy template IDs; it will only follow players.");
+        }
+
+        private KernelPlayerInput SampleCurrentInput()
+        {
+            if (pendingInputHandoff)
+                return inputSampler.SampleExplicit(Vector2.zero, Vector3.forward, false, false, false);
+            if (!agentMode) return inputSampler.Sample();
+            SelectAgentWeapon();
+            bool hasWeapon = client.Kernel.TryGetLocalWeaponState(out KernelLocalWeaponState weapon);
+            if (hasWeapon)
+                weapon = ResolveAgentWeapon(weapon, inputSampler);
+            // The server fires whatever the input selects, so that decides the trigger.
+            bool holdTrigger = weaponFireTriggerModes != null &&
+                weaponFireTriggerModes.TryGetValue(inputSampler.SelectedWeaponId,
+                    out KernelActionTriggerMode triggerMode) &&
+                triggerMode == KernelActionTriggerMode.Hold;
+            LocalAgentCommand command = localAgent.Step(localAgentSettings, agentObservations,
+                agentObservationCount, client.LocalPlayerNetId, hasWeapon, weapon,
+                Time.unscaledTime - agentObservationTime, holdTrigger,
+                inputSampler.HeldFireActionInstanceId != 0);
+            return inputSampler.SampleExplicit(command.Move, command.AimDirection,
+                command.Aim, command.Fire, command.Reload);
+        }
+
+        /// <summary>
+        /// Fills in what a client's weapon state cannot say on its own.
+        /// </summary>
+        /// <remarks>
+        /// A client's kernel has no weapon component on the local player, so it
+        /// reports the snapshot's active slot but never sets WeaponIdValid; the
+        /// loadout turns the slot into a weapon. The server moves its active slot
+        /// only when an action commits, so right after the agent switches weapon
+        /// the snapshot still describes the old one. Its ammo says nothing about
+        /// the selected weapon then, and the agent fires rather than reloading
+        /// the wrong magazine; that first shot is what makes the server switch.
+        /// </remarks>
+        private static KernelLocalWeaponState ResolveAgentWeapon(
+            KernelLocalWeaponState weapon, NetworkInputSampler sampler)
+        {
+            if ((weapon.flags & KernelConstants.LocalWeaponStateFlagWeaponIdValid) == 0 &&
+                sampler.TryGetWeaponIdForSlot(weapon.active_weapon_slot, out byte slotWeapon))
+            {
+                weapon.weapon_id = slotWeapon;
+                weapon.flags |= KernelConstants.LocalWeaponStateFlagWeaponIdValid;
+            }
+            if ((weapon.flags & KernelConstants.LocalWeaponStateFlagWeaponIdValid) != 0 &&
+                weapon.weapon_id != sampler.SelectedWeaponId)
+            {
+                weapon.weapon_id = sampler.SelectedWeaponId;
+                weapon.flags &= unchecked((byte)~KernelConstants.LocalWeaponStateFlagReloading);
+                weapon.ammo = weapon.authoritative_ammo = 1;
+            }
+            return weapon;
+        }
+
+        // Applied every agent tick: the loadout arrives with the catalog and a
+        // session reset reselects the catalog's active slot.
+        private void SelectAgentWeapon()
+        {
+            int preferredWeapon = localAgentSettings != null ? localAgentSettings.preferredWeaponId : -1;
+            if (preferredWeapon >= 0 && preferredWeapon <= byte.MaxValue &&
+                inputSampler.SelectedWeaponId != preferredWeapon)
+                inputSampler.TrySelectWeaponId((byte)preferredWeapon);
+        }
+
+        private void ClearAgentObservation()
+        {
+            agentObservationCount = 0;
+            localAgent.Reset();
         }
 
         private void EnsureComponents()
@@ -796,6 +925,7 @@ namespace NetworkExample.UnityDemo.Client
             }
 
             ConfigureInstantWeaponTracers(bundleBytes, syncResult.Manifest.entry_path);
+            ConfigureWeaponFireTriggerModes(bundleBytes, syncResult.Manifest.entry_path);
             return true;
         }
 
@@ -830,6 +960,27 @@ namespace NetworkExample.UnityDemo.Client
             }
 
             hitscanTracers.ConfigureWeapons(weapons);
+        }
+
+        /// <summary>
+        /// Tells the local agent which weapons keep firing while held. Without it
+        /// every weapon is treated as press-to-fire, which still fires, only a
+        /// hold weapon at a lower rate.
+        /// </summary>
+        private void ConfigureWeaponFireTriggerModes(byte[] bundleBytes, string entryPath)
+        {
+            if (!NetworkGameplayCatalogBundle.TryReadWeaponFireTriggerModes(
+                    bundleBytes,
+                    entryPath,
+                    out weaponFireTriggerModes,
+                    out string diagnostic))
+            {
+                weaponFireTriggerModes = null;
+                Debug.LogWarning(
+                    "Client could not read the catalog's weapon trigger modes, so the " +
+                    "local agent re-presses fire for every weapon: " + diagnostic,
+                    this);
+            }
         }
 
         private static string FormatCatalogSyncResult(GameplayCatalogSyncResult result)

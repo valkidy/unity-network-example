@@ -5,7 +5,8 @@
     "NetworkExample.UnityDemo.Runtime",
     "NetworkExample.Kernel",
     "Unity.InputSystem",
-    "Unity.InputSystem.TestFramework"
+    "Unity.InputSystem.TestFramework",
+    "NetworkExample.UnityDemo.LocalAgent"
   ],
   "includePlatforms": [
     "Editor"
