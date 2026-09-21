@@ -27,6 +27,13 @@ Switching modes submits one neutral/release input before the new source takes ov
 commands are suppressed while enabled; inventory updates continue. The camera remains available
 for observation and the manual reticle is hidden. HostMode is not switched to AI.
 
+Navigation: `ClientRunner.AgentNavMesh` holds the synchronized catalog's navigation mesh (the
+`navigation_mesh.entry_path` artifact the server's patrols use), parsed by `DetourNavMesh` and
+queried with `DetourNavMeshQuery` (polygon lookup, nearest walkable point, A* plus funnel paths,
+area-weighted random points). Only single-tile Detour v7 meshes without off-mesh connections are
+read. The mesh is static terrain: props, nests and actors are not in it. The agent does not use it
+yet.
+
 What a client actually receives (verified against a dedicated server):
 - Snapshots carry health only for Player actors. Enemies arrive with hp = 0 and
   `VisualFlagHpUnknown`. The server sets `VisualFlagDead` from hp == 0 in the same tick for

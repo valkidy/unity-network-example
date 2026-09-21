@@ -587,6 +587,76 @@ namespace NetworkExample.UnityDemo.Common
             }
         }
 
+        /// <summary>
+        /// Reads the navigation mesh artifact the catalog's
+        /// <c>navigation_mesh.entry_path</c> names -- the same file the server's
+        /// patrols path over.
+        /// </summary>
+        public static bool TryReadNavigationMesh(
+            byte[] bundleBytes,
+            string entryPath,
+            out byte[] navMeshBytes,
+            out string diagnostic)
+        {
+            navMeshBytes = null;
+            diagnostic = null;
+            if (bundleBytes == null || bundleBytes.Length == 0)
+            {
+                diagnostic = "Gameplay catalog bundle is empty.";
+                return false;
+            }
+
+            try
+            {
+                using (var stream = new MemoryStream(bundleBytes, false))
+                using (var archive = new ZipArchive(stream, ZipArchiveMode.Read, false))
+                {
+                    if (!TryReadTextEntry(
+                            archive,
+                            entryPath,
+                            out string catalogYaml,
+                            out diagnostic))
+                    {
+                        return false;
+                    }
+
+                    if (!TryReadNestedScalar(
+                            catalogYaml,
+                            "navigation_mesh",
+                            "entry_path",
+                            out string navMeshPath))
+                    {
+                        diagnostic = "Gameplay catalog declares no navigation_mesh.entry_path.";
+                        return false;
+                    }
+
+                    string normalizedPath = NormalizeArchivePath(navMeshPath);
+                    ZipArchiveEntry entry = string.IsNullOrEmpty(normalizedPath)
+                        ? null
+                        : archive.GetEntry(normalizedPath);
+                    if (entry == null)
+                    {
+                        diagnostic =
+                            "Gameplay catalog navigation mesh was not found: " + navMeshPath;
+                        return false;
+                    }
+
+                    using (Stream entryStream = entry.Open())
+                    using (var copy = new MemoryStream())
+                    {
+                        entryStream.CopyTo(copy);
+                        navMeshBytes = copy.ToArray();
+                    }
+                    return true;
+                }
+            }
+            catch (Exception exception)
+            {
+                diagnostic = "Gameplay catalog navigation mesh read failed: " + exception.Message;
+                return false;
+            }
+        }
+
         private static IEnumerable<string> ReadYamlEntries(
             ZipArchive archive,
             string directoryName)

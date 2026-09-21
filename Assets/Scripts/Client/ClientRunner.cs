@@ -105,6 +105,9 @@ namespace NetworkExample.UnityDemo.Client
         private int agentObservationCount;
         private float agentObservationTime;
         private Dictionary<byte, KernelActionTriggerMode> weaponFireTriggerModes;
+        private DetourNavMeshQuery agentNavMesh;
+        /// <summary>The synchronized catalog's navigation mesh, or null when it could not be read.</summary>
+        public DetourNavMeshQuery AgentNavMesh => agentNavMesh;
         public LocalAgentState AgentState => localAgent.State;
         public uint AgentFollowTargetId => localAgent.FollowTargetId;
         public uint AgentAttackTargetId => localAgent.AttackTargetId;
@@ -926,6 +929,7 @@ namespace NetworkExample.UnityDemo.Client
 
             ConfigureInstantWeaponTracers(bundleBytes, syncResult.Manifest.entry_path);
             ConfigureWeaponFireTriggerModes(bundleBytes, syncResult.Manifest.entry_path);
+            ConfigureAgentNavMesh(bundleBytes, syncResult.Manifest.entry_path);
             return true;
         }
 
@@ -981,6 +985,28 @@ namespace NetworkExample.UnityDemo.Client
                     "local agent re-presses fire for every weapon: " + diagnostic,
                     this);
             }
+        }
+
+        /// <summary>
+        /// Loads the navigation mesh the server's patrols use, so the local agent
+        /// plans over the same walkable area. Without it the agent can only walk
+        /// straight at things.
+        /// </summary>
+        private void ConfigureAgentNavMesh(byte[] bundleBytes, string entryPath)
+        {
+            agentNavMesh = null;
+            if (!NetworkGameplayCatalogBundle.TryReadNavigationMesh(
+                    bundleBytes, entryPath, out byte[] navMeshBytes, out string diagnostic) ||
+                !DetourNavMesh.TryParse(navMeshBytes, out DetourNavMesh mesh, out diagnostic))
+            {
+                Debug.LogWarning(
+                    "Client could not load the catalog's navigation mesh for the local agent: " +
+                    diagnostic,
+                    this);
+                return;
+            }
+
+            agentNavMesh = new DetourNavMeshQuery(mesh);
         }
 
         private static string FormatCatalogSyncResult(GameplayCatalogSyncResult result)
