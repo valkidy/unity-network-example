@@ -1,0 +1,5 @@
+# Fetched by fetch_blast.sh, not vendored.
+/blast/
+# Build trees and everything the tool reads or writes.
+/build*/
+/data/
