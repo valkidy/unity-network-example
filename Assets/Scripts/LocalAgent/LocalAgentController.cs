@@ -32,6 +32,24 @@ namespace NetworkExample.UnityDemo.LocalAgent
         [Min(1)] public int stuckSteps = 45;
 
         [Header("Perception")]
+        [Tooltip("Omniscient reads every synchronized actor; Limited only what the agent can see.")]
+        public PerceptionMode perceptionMode = PerceptionMode.Omniscient;
+        [Tooltip("Sight tests per second in Limited mode. Actors in view are tracked in between.")]
+        [Min(0f)] public float perceptionHz = 10f;
+        [Min(0f)] public float eyeHeight = 1.6f;
+        [Tooltip("The synchronized range is about 44 m.")]
+        [Min(0f)] public float visionRange = 40f;
+        [Tooltip("Horizontal field of view around where the agent last aimed.")]
+        [Range(0f, 360f)] public float fovDegrees = 110f;
+        [Tooltip("Actors this close are noticed without being looked at or in sight.")]
+        [Min(0f)] public float closeAwarenessRadius = 2.5f;
+        [Tooltip("Sight lines go to these heights above a target's feet; either one clear is enough.")]
+        public float headSampleHeight = 1.5f;
+        public float footSampleHeight = 0.5f;
+        [Tooltip("Seconds an actor must stay in sight before the agent reacts to it.")]
+        [Min(0f)] public float reactionSeconds = 0.25f;
+        [Tooltip("Seconds an actor out of sight is remembered.")]
+        [Min(0f)] public float memorySeconds = 8f;
         [Tooltip("Unity physics layers that block sight: the terrain. Props and actors " +
             "block it through the kernel's collider shapes.")]
         public LayerMask sightBlockingLayers = 1; // Default, the terrain's layer

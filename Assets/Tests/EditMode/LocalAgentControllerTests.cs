@@ -220,6 +220,34 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
+        public void LimitedPerceptionShootsOnlyAnEnemyItHasSeenLongEnough()
+        {
+            settings.perceptionMode = PerceptionMode.Limited;
+            settings.perceptionHz = 0f;
+            LocalAgentCommand At(float time, params RenderEntityState[] states)
+            {
+                perception.Update(settings, time, states, states.Length, 1, controller.LastAimDirection);
+                return controller.Step(settings, perception, true, weapon, 0f);
+            }
+            Assert.That(controller.LastAimDirection, Is.EqualTo(Vector3.forward), "facing +z");
+            var behind = Actor(3, 0, KernelActorType.Agent); behind.position = new KernelVec3(0, 0, -5);
+            Assert.That(At(0f, Actor(1, 0), behind).Fire, Is.False);
+            Assert.That(controller.State, Is.Not.EqualTo(LocalAgentState.Combat), "the enemy behind is not seen");
+
+            var ahead = Actor(3, 0, KernelActorType.Agent); ahead.position = new KernelVec3(0, 0, 5);
+            Assert.That(At(1f, Actor(1, 0), ahead).Fire, Is.False, "seen, not yet reacted to");
+            Assert.That(At(1.1f, Actor(1, 0), ahead).Fire, Is.False);
+            var command = At(1.3f, Actor(1, 0), ahead);
+            Assert.That(command.Fire, Is.True);
+            Assert.That(controller.State, Is.EqualTo(LocalAgentState.Combat));
+            Assert.That(command.AimDirection, Is.EqualTo(Vector3.forward));
+
+            // Out of sight it is remembered, but not shot at.
+            Assert.That(At(1.5f, Actor(1, 0), behind).Fire, Is.False);
+            Assert.That(perception.Actors[0].Confirmed && !perception.Actors[0].VisibleNow, Is.True);
+        }
+
+        [Test]
         public void UnknownWeaponDoesNotFireOrReloadAndCountBoundsAreRespected()
         {
             var states = new[] { Actor(1, 0), Actor(2, 5, KernelActorType.Agent) };

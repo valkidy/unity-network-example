@@ -23,10 +23,8 @@ unknown weapon is treated as press-mode, which fires every weapon (hold ones at 
 The controller lives in its own assembly depending only on Unity and Kernel. ClientRunner supplies
 completed render observations to `LocalAgentPerception`, and the controller decides only from what
 that perceives (`PerceivedActor`: last known position, visible, confirmed, known dead) plus the
-agent's own position and weapon state. The perception is currently omniscient: every living actor
-is perceived visible and confirmed where it is, so behaviour matches reading the render states
-directly. Only visible, confirmed enemies are shot at. Commands go through the same input sequence and
-action bookkeeping as manual input. It uses the existing submission clock (30 Hz by default).
+agent's own position and weapon state. Only visible, confirmed enemies are shot at. Commands go
+through the same input sequence and action bookkeeping as manual input. It uses the existing submission clock (30 Hz by default).
 Switching modes submits one neutral/release input before the new source takes over. Manual item
 commands are suppressed while enabled; inventory updates continue. The camera remains available
 for observation and the manual reticle is hidden. HostMode is not switched to AI.
@@ -46,6 +44,20 @@ the whole mesh. A target it has no route to, or makes no 0.5 m progress towards 
 input ticks, is set aside; once everything in the area is seen or set aside the area is forgotten
 and exploration starts over. Without the mesh the agent follows and fights as before.
 
+Perception (`perceptionMode`, Omniscient by default):
+- Omniscient: every living actor is perceived visible and confirmed where it is, which is what the
+  agent read before perception existed.
+- Limited: an actor is seen when it is within `visionRange` (40 m) of the eye (`eyeHeight`, 1.6 m)
+  and `fovDegrees` (110) of where the agent last aimed (its walking direction while exploring), and a
+  sight line reaches its head or feet (`headSampleHeight` 1.5 m, `footSampleHeight` 0.5 m); or when it
+  is within `closeAwarenessRadius` (2.5 m). Sight lines are blocked by the kernel's Hit colliders
+  (actors, props; `KernelColliderShapeSource`, shared with the debug view) and by Unity colliders on
+  `sightBlockingLayers` (the terrain). Sight is tested `perceptionHz` (10) times a second; an actor
+  in view is tracked where it is in between. It is confirmed after `reactionSeconds` (0.25 s) in
+  sight, stays confirmed while remembered, and is forgotten `memorySeconds` (8 s) after it was last
+  seen. Only a death that is seen is known; Stale records are never seen. The agent does not yet go
+  looking for what it remembers, and exploration still marks cells seen by distance alone.
+
 What a client actually receives (verified against a dedicated server):
 - Snapshots carry health only for Player actors. Enemies arrive with hp = 0 and
   `VisualFlagHpUnknown`. The server sets `VisualFlagDead` from hp == 0 in the same tick for
@@ -56,8 +68,8 @@ What a client actually receives (verified against a dedicated server):
   slot, which moves only when an action commits. The runner maps the slot through the loadout and,
   while the server still reports another weapon than the selected one, ignores that weapon's ammo.
 
-Limitations: synchronized entities can be off screen or behind walls. There is no visibility test,
-pathfinding, obstacle avoidance, ballistic lead, weapon selection, or item interaction. Server
+Limitations: in Omniscient mode synchronized entities can be off screen or behind walls. There is no
+obstacle avoidance, ballistic lead, weapon selection, or item interaction. Server
 collision and combat rules still decide hits. A wall may block following, and a hidden nearby enemy
 may keep the agent in combat. Missing/stale/dead local actors and observations older than 0.5 s yield
 neutral commands. No server AI knowledge or network protocol changes are involved.

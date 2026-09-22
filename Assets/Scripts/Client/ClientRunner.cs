@@ -341,7 +341,8 @@ namespace NetworkExample.UnityDemo.Client
                 for (int j = 0; j < agentObservationCount; j++)
                     if (agentObservations[j].net_id == lifecycleEvents[i].net_id)
                         agentObservations[j].net_id = 0;
-            if (agentMode)
+            if (agentMode && localAgentSettings != null &&
+                localAgentSettings.perceptionMode == PerceptionMode.Limited)
                 CaptureAgentSight();
 
             if (debugView != null)
@@ -427,7 +428,8 @@ namespace NetworkExample.UnityDemo.Client
                     out KernelActionTriggerMode triggerMode) &&
                 triggerMode == KernelActionTriggerMode.Hold;
             localAgentPerception.Update(localAgentSettings, agentObservationTime,
-                agentObservations, agentObservationCount, client.LocalPlayerNetId);
+                agentObservations, agentObservationCount, client.LocalPlayerNetId,
+                localAgent.LastAimDirection, agentLineOfSight);
             LocalAgentCommand command = localAgent.Step(localAgentSettings, localAgentPerception,
                 hasWeapon, weapon, Time.unscaledTime - agentObservationTime, holdTrigger,
                 inputSampler.HeldFireActionInstanceId != 0);
