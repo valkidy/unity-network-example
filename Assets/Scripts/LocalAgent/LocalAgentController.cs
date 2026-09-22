@@ -56,8 +56,11 @@ namespace NetworkExample.UnityDemo.LocalAgent
         [Tooltip("Unity physics layers that block sight: the terrain. Props and actors " +
             "block it through the kernel's collider shapes.")]
         public LayerMask sightBlockingLayers = 1; // Default, the terrain's layer
-        [Tooltip("Seconds the agent takes to look all around where a remembered enemy was.")]
+        [Tooltip("Seconds the agent takes to look all around: where a remembered enemy was, " +
+            "when hit, and while exploring.")]
         [Min(0.1f)] public float investigateScanSeconds = 1f;
+        [Tooltip("Limited only: seconds of exploring between look-arounds, taken while walking. 0 never looks around.")]
+        [Min(0f)] public float exploreLookAroundSeconds = 4f;
         [Tooltip("Limited only: random aim error when the agent starts aiming at a target, in degrees.")]
         [Min(0f)] public float aimErrorStartDegrees = 6f;
         [Tooltip("Limited only: the aim error once the agent has aimed at the same target for aimSettleSeconds.")]
@@ -108,6 +111,10 @@ namespace NetworkExample.UnityDemo.LocalAgent
         private float handledDamageTime = float.NegativeInfinity;
         private float aimingSince;
         private float fireReadyAt = float.NegativeInfinity;
+        private float lastExploreTime = float.NegativeInfinity;
+        private float nextLookAround = float.NaN;
+        private float lookAroundStart = float.NaN;
+        private float lookAroundFromDegrees;
         // Memories already investigated, by the time they were last perceived:
         // seeing the enemy again, or being hit by it, makes it worth another look.
         private readonly Dictionary<uint, float> investigated = new Dictionary<uint, float>();
@@ -134,6 +141,8 @@ namespace NetworkExample.UnityDemo.LocalAgent
             damageScan = false;
             handledDamageTime = float.NegativeInfinity;
             fireReadyAt = float.NegativeInfinity;
+            lastExploreTime = float.NegativeInfinity;
+            nextLookAround = lookAroundStart = float.NaN;
         }
 
         /// <param name="perception">What the agent perceives, updated from the
@@ -355,12 +364,39 @@ namespace NetworkExample.UnityDemo.LocalAgent
             else
                 activeExplorer.MarkSeen(position, NonNegative(settings.sightRadius, 6f));
             Vector2 move = activeExplorer.Step(position, anchor, leash);
-            return new LocalAgentCommand
+            Vector3 aim = move.sqrMagnitude > 0.000001f ? new Vector3(move.x, 0f, move.y) : Vector3.forward;
+            if (settings.perceptionMode == PerceptionMode.Limited)
+                aim = LookAroundWhileExploring(settings, perception.Time, aim);
+            return new LocalAgentCommand { Move = move, AimDirection = aim };
+        }
+
+        /// <summary>
+        /// Every exploreLookAroundSeconds of exploring, turns the aim a full circle
+        /// in investigateScanSeconds while the agent keeps walking; otherwise it
+        /// looks where it walks. Coming back to exploring starts the wait over.
+        /// </summary>
+        private Vector3 LookAroundWhileExploring(LocalAgentSettings settings, float time, Vector3 walkAim)
+        {
+            float interval = NonNegative(settings.exploreLookAroundSeconds, 4f);
+            bool resumed = time - lastExploreTime > 0.5f; // it did something else in between
+            lastExploreTime = time;
+            if (!(interval > 0f)) return walkAim;
+            if (resumed || float.IsNaN(nextLookAround))
             {
-                Move = move,
-                AimDirection = move.sqrMagnitude > 0.000001f
-                    ? new Vector3(move.x, 0f, move.y) : Vector3.forward,
-            };
+                nextLookAround = time + interval;
+                lookAroundStart = float.NaN;
+            }
+            if (float.IsNaN(lookAroundStart))
+            {
+                if (time < nextLookAround) return walkAim;
+                lookAroundStart = time;
+                lookAroundFromDegrees = Yaw(walkAim);
+            }
+            float progress = (time - lookAroundStart) / Mathf.Max(0.1f, Finite(settings.investigateScanSeconds, 1f));
+            if (progress < 1f) return CircleAim(lookAroundFromDegrees, progress);
+            lookAroundStart = float.NaN;
+            nextLookAround = time + interval;
+            return walkAim;
         }
 
         /// <summary>
@@ -430,14 +466,21 @@ namespace NetworkExample.UnityDemo.LocalAgent
             if (float.IsNaN(scanStart))
             {
                 scanStart = perception.Time;
-                scanFromDegrees = Mathf.Atan2(LastAimDirection.x, LastAimDirection.z) * Mathf.Rad2Deg;
+                scanFromDegrees = Yaw(LastAimDirection);
             }
             float scanSeconds = Mathf.Max(0.1f, Finite(settings.investigateScanSeconds, 1f));
             float progress = (perception.Time - scanStart) / scanSeconds;
             if (!(progress < 1f)) return false;
-            float yaw = (scanFromDegrees + 360f * Mathf.Max(0f, progress)) * Mathf.Deg2Rad;
-            command.AimDirection = new Vector3(Mathf.Sin(yaw), 0f, Mathf.Cos(yaw));
+            command.AimDirection = CircleAim(scanFromDegrees, progress);
             return true;
+        }
+
+        private static float Yaw(Vector3 direction) => Mathf.Atan2(direction.x, direction.z) * Mathf.Rad2Deg;
+        // The aim a fraction of the way round a full turn that started at fromDegrees.
+        private static Vector3 CircleAim(float fromDegrees, float progress)
+        {
+            float yaw = (fromDegrees + 360f * Mathf.Max(0f, progress)) * Mathf.Deg2Rad;
+            return new Vector3(Mathf.Sin(yaw), 0f, Mathf.Cos(yaw));
         }
 
         /// <summary>

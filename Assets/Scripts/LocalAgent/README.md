@@ -39,7 +39,9 @@ Exploration (`enableExploration`, on by default, needs the navigation mesh): `Lo
 splits the walkable area into `explorationCellSize` cells, marks cells within `sightRadius` as seen
 and walks a navmesh path (`LocalAgentPathFollower`) to the nearest unseen cell. With Limited
 perception a cell must also be in view with a clear sight line to 1 m above it; at most
-`explorationSightChecks` cells are tested per input tick. Priority is combat, then investigating,
+`explorationSightChecks` cells are tested per input tick. With Limited perception the agent also looks
+all around every `exploreLookAroundSeconds` (4 s) of exploring, turning its aim a full circle in
+`investigateScanSeconds` (1 s) while it keeps walking; otherwise it looks where it walks. Priority is combat, then investigating,
 then following, then exploring. With a player to follow the agent explores within `leashRadius`
 of them and walks back once farther than that, until within `followStopDistance`; alone it explores
 the whole mesh. A target it has no route to, or makes no 0.5 m progress towards for `stuckSteps`

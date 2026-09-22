@@ -342,5 +342,45 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             Assert.That(controller.InvestigateTargetId, Is.Zero);
             Assert.That(perception.Actors.Count, Is.EqualTo(1), "still remembered, not searched again");
         }
+        [Test]
+        public void LimitedExplorationLooksAroundEveryFewSecondsWithoutStopping()
+        {
+            (int lookArounds, float maxTurn, bool alwaysWalking) Explore(PerceptionMode mode, float interval)
+            {
+                var settings = new LocalAgentSettings { perceptionMode = mode, perceptionHz = 0f,
+                    exploreLookAroundSeconds = interval, investigateScanSeconds = 1f };
+                var controller = new LocalAgentController { NavMesh = DetourNavMeshTests.Plane() };
+                var perception = new LocalAgentPerception();
+                Vector3 position = Vector3.zero;
+                int lookArounds = 0;
+                float turn = 0f, maxTurn = 0f;
+                bool looking = false, alwaysWalking = true;
+                Vector3 lastAim = Vector3.forward;
+                for (int i = 0; i < 100; i++) // 10 s at 10 steps a second
+                {
+                    var self = Actor(1, 0); self.position = new KernelVec3(position.x, position.y, position.z);
+                    perception.Update(settings, i * 0.1f, new[] { self }, 1, 1, controller.LastAimDirection);
+                    LocalAgentCommand command = controller.Step(settings, perception, true, default, 0f);
+                    Assert.That(controller.State, Is.EqualTo(LocalAgentState.Exploring));
+                    alwaysWalking &= command.Move.sqrMagnitude > 0.5f;
+                    bool off = Vector3.Angle(command.AimDirection, new Vector3(command.Move.x, 0f, command.Move.y)) > 0.01f;
+                    if (off && !looking) { lookArounds++; turn = 0f; }
+                    if (off) turn += Vector3.Angle(lastAim, command.AimDirection);
+                    maxTurn = Mathf.Max(maxTurn, turn);
+                    looking = off;
+                    lastAim = command.AimDirection;
+                    position = Walk(controller.NavMesh, position, command.Move);
+                }
+                return (lookArounds, maxTurn, alwaysWalking);
+            }
+
+            var limited = Explore(PerceptionMode.Limited, 2f);
+            // Looks at 2 s, 5 s and 8 s: each turn takes 1 s and the wait restarts after it.
+            Assert.That(limited.lookArounds, Is.EqualTo(3));
+            Assert.That(limited.maxTurn, Is.GreaterThan(300f), "nearly a full circle");
+            Assert.That(limited.alwaysWalking, Is.True, "it keeps walking while it looks");
+            Assert.That(Explore(PerceptionMode.Limited, 0f).lookArounds, Is.Zero, "0 turns it off");
+            Assert.That(Explore(PerceptionMode.Omniscient, 2f).lookArounds, Is.Zero, "omniscient looks where it walks");
+        }
     }
 }
