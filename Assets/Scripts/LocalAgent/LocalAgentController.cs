@@ -58,6 +58,11 @@ namespace NetworkExample.UnityDemo.LocalAgent
         public LayerMask sightBlockingLayers = 1; // Default, the terrain's layer
         [Tooltip("Seconds the agent takes to look all around where a remembered enemy was.")]
         [Min(0.1f)] public float investigateScanSeconds = 1f;
+        [Tooltip("Limited only: random aim error when the agent starts aiming at a target, in degrees.")]
+        [Min(0f)] public float aimErrorStartDegrees = 6f;
+        [Tooltip("Limited only: the aim error once the agent has aimed at the same target for aimSettleSeconds.")]
+        [Min(0f)] public float aimErrorSettledDegrees = 1.5f;
+        [Min(0f)] public float aimSettleSeconds = 1f;
     }
 
     public enum LocalAgentState { Idle, Following, Combat, Exploring, Investigating }
@@ -83,6 +88,8 @@ namespace NetworkExample.UnityDemo.LocalAgent
         public uint AttackTargetId { get; private set; }
         /// <summary>The remembered enemy whose last known position is being checked, or 0.</summary>
         public uint InvestigateTargetId { get; private set; }
+        /// <summary>Draws the aim error; replace it with a seeded one for repeatable runs.</summary>
+        public System.Random Random { get; set; } = new System.Random();
         /// <summary>The last non-zero aim the agent sent: where it is looking.</summary>
         public Vector3 LastAimDirection { get; private set; } = Vector3.forward;
         private bool following;
@@ -99,6 +106,8 @@ namespace NetworkExample.UnityDemo.LocalAgent
         private float scanFromDegrees;
         private bool damageScan;
         private float handledDamageTime = float.NegativeInfinity;
+        private float aimingSince;
+        private float fireReadyAt = float.NegativeInfinity;
         // Memories already investigated, by the time they were last perceived:
         // seeing the enemy again, or being hit by it, makes it worth another look.
         private readonly Dictionary<uint, float> investigated = new Dictionary<uint, float>();
@@ -124,6 +133,7 @@ namespace NetworkExample.UnityDemo.LocalAgent
             investigated.Clear();
             damageScan = false;
             handledDamageTime = float.NegativeInfinity;
+            fireReadyAt = float.NegativeInfinity;
         }
 
         /// <param name="perception">What the agent perceives, updated from the
@@ -161,7 +171,7 @@ namespace NetworkExample.UnityDemo.LocalAgent
 
             IReadOnlyList<PerceivedActor> actors = perception.Actors;
             Vector3 position = perception.SelfPosition;
-            int followIndex = -1, nearestPlayer = -1, enemyIndex = -1, rememberedIndex = -1;
+            int followIndex = -1, nearestPlayer = -1, enemyIndex = -1, rememberedIndex = -1, currentIndex = -1;
             float playerDistance = float.PositiveInfinity;
             float enemyDistance = float.PositiveInfinity;
             float rememberedDistance = float.PositiveInfinity;
@@ -185,6 +195,7 @@ namespace NetworkExample.UnityDemo.LocalAgent
                     // Only a threat in sight, that the agent has had time to react to, is shot at.
                     if (candidate.VisibleNow && candidate.InSight)
                     {
+                        if (candidate.NetId == AttackTargetId) currentIndex = i;
                         if (Better(actors, i, enemyIndex, distance, enemyDistance))
                         { enemyIndex = i; enemyDistance = distance; }
                     }
@@ -203,17 +214,30 @@ namespace NetworkExample.UnityDemo.LocalAgent
                 following = false;
             }
 
+            bool limited = settings.perceptionMode == PerceptionMode.Limited;
+            // A person keeps shooting at the enemy they are on while it stays in sight.
+            if (limited && currentIndex >= 0) enemyIndex = currentIndex;
             if (enemyIndex >= 0)
             {
                 StopInvestigating();
                 damageScan = false;
                 State = LocalAgentState.Combat;
                 following = false;
-                AttackTargetId = actors[enemyIndex].NetId;
+                uint target = actors[enemyIndex].NetId;
+                if (target != AttackTargetId)
+                {
+                    // Turning to another target takes a new reaction; the first one
+                    // was already reacted to when perception confirmed it.
+                    fireReadyAt = limited && AttackTargetId != 0
+                        ? perception.Time + NonNegative(settings.reactionSeconds, 0.25f) : float.NegativeInfinity;
+                    aimingSince = perception.Time;
+                    AttackTargetId = target;
+                }
                 Vector3 offset = actors[enemyIndex].LastKnownPosition - position + Vector3.up *
                     (Finite(settings.targetHeight, 0.5f) - Finite(settings.muzzleHeight, 0.5f));
-                LocalAgentCommand command = new LocalAgentCommand
-                { Aim = true, AimDirection = offset.sqrMagnitude > 0.000001f ? offset.normalized : Vector3.forward };
+                Vector3 aim = offset.sqrMagnitude > 0.000001f ? offset.normalized : Vector3.forward;
+                if (limited) aim = WithAimError(settings, aim, perception.Time - aimingSince);
+                LocalAgentCommand command = new LocalAgentCommand { Aim = true, AimDirection = aim };
                 bool validWeapon = hasWeaponState &&
                     (weapon.flags & KernelConstants.LocalWeaponStateFlagWeaponIdValid) != 0;
                 if (!validWeapon) return command;
@@ -229,6 +253,7 @@ namespace NetworkExample.UnityDemo.LocalAgent
                 if (weapon.ammo > 0)
                 {
                     reloadRequested = false;
+                    if (perception.Time < fireReadyAt - 1e-4f) return command; // still turning onto it
                     // A press action fires once per press, and a refused hold action
                     // needs a fresh press too, so release for one step between them.
                     command.Fire = !fireWasPressed || holdTrigger && fireActionLive;
@@ -413,6 +438,29 @@ namespace NetworkExample.UnityDemo.LocalAgent
             float yaw = (scanFromDegrees + 360f * Mathf.Max(0f, progress)) * Mathf.Deg2Rad;
             command.AimDirection = new Vector3(Mathf.Sin(yaw), 0f, Mathf.Cos(yaw));
             return true;
+        }
+
+        /// <summary>
+        /// Turns the aim by a random angle within the current error, which shrinks
+        /// from aimErrorStartDegrees to aimErrorSettledDegrees over aimSettleSeconds
+        /// of aiming at the same target.
+        /// </summary>
+        private Vector3 WithAimError(LocalAgentSettings settings, Vector3 direction, float aimedSeconds)
+        {
+            float settle = NonNegative(settings.aimSettleSeconds, 1f);
+            float settled = settle > 0f ? Mathf.Clamp01(aimedSeconds / settle) : 1f;
+            float error = Mathf.Lerp(NonNegative(settings.aimErrorStartDegrees, 6f),
+                NonNegative(settings.aimErrorSettledDegrees, 1.5f), settled) * Mathf.Deg2Rad;
+            if (!(error > 0f) || Random == null) return direction;
+            // Uniform over the disc of that radius, around the aim.
+            float angle = (float)(Random.NextDouble() * 2.0 * Math.PI);
+            float radius = error * Mathf.Sqrt((float)Random.NextDouble());
+            Vector3 right = Vector3.Cross(Vector3.up, direction);
+            if (right.sqrMagnitude < 1e-6f) right = Vector3.right;
+            right.Normalize();
+            Vector3 up = Vector3.Cross(direction, right);
+            return (direction + right * Mathf.Tan(radius * Mathf.Cos(angle)) +
+                up * Mathf.Tan(radius * Mathf.Sin(angle))).normalized;
         }
 
         private void StopInvestigating()

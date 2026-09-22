@@ -71,6 +71,12 @@ Perception (`perceptionMode`, Omniscient by default):
   (1 s); a route it cannot walk or makes no progress on ends in the same look-around. Seeing the
   enemy switches to combat. A memory already searched is left alone until the enemy is seen again
   or blamed for damage. Omniscient perception sees every enemy, so it never investigates.
+- Aiming (Limited only): the agent stays on the enemy it is shooting while that enemy is in sight,
+  instead of switching to whichever is nearest. Switching to another target waits `reactionSeconds`
+  before firing (the first target of a fight was already reacted to). Each aim is off by a random
+  angle within a limit that shrinks from `aimErrorStartDegrees` (6) to `aimErrorSettledDegrees` (1.5)
+  over `aimSettleSeconds` (1 s) on the same target; `LocalAgentController.Random` can be seeded.
+  Omniscient aims exactly at the nearest enemy, as before.
 
 What a client actually receives (verified against a dedicated server):
 - Snapshots carry health only for Player actors. Enemies arrive with hp = 0 and

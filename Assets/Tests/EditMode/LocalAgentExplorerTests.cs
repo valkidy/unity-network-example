@@ -292,7 +292,8 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         public void InvestigatingWalksTheNavMeshToWhereTheEnemyWasThenLooksAround()
         {
             var settings = new LocalAgentSettings { perceptionMode = PerceptionMode.Limited, perceptionHz = 0f,
-                reactionSeconds = 0f, enemyTemplateIds = new uint[] { 100 }, investigateScanSeconds = 1f };
+                reactionSeconds = 0f, enemyTemplateIds = new uint[] { 100 }, investigateScanSeconds = 1f,
+                aimErrorStartDegrees = 0f, aimErrorSettledDegrees = 0f };
             var controller = new LocalAgentController { NavMesh = DetourNavMeshTests.Plane() };
             var perception = new LocalAgentPerception();
             var weapon = new KernelLocalWeaponState { ammo = 10, flags = KernelConstants.LocalWeaponStateFlagWeaponIdValid };

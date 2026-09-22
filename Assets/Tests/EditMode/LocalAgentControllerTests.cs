@@ -223,6 +223,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         public void LimitedPerceptionShootsOnlyAnEnemyItHasSeenLongEnough()
         {
             settings.perceptionMode = PerceptionMode.Limited;
+            settings.aimErrorStartDegrees = settings.aimErrorSettledDegrees = 0f; // exact aims below
             settings.perceptionHz = 0f;
             LocalAgentCommand At(float time, params RenderEntityState[] states)
             {
@@ -251,6 +252,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         public void ARememberedEnemyIsLookedForWhereItWasAndShotOnceSeenAgain()
         {
             settings.perceptionMode = PerceptionMode.Limited;
+            settings.aimErrorStartDegrees = settings.aimErrorSettledDegrees = 0f; // exact aims below
             settings.perceptionHz = 0f;
             settings.reactionSeconds = 0f;
             float time = 0f;
@@ -290,6 +292,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         public void TheLookAroundStartsWhereTheAgentArrivesAndEndsAfterAFullTurn()
         {
             settings.perceptionMode = PerceptionMode.Limited;
+            settings.aimErrorStartDegrees = settings.aimErrorSettledDegrees = 0f; // exact aims below
             settings.perceptionHz = 0f;
             settings.reactionSeconds = 0f;
             settings.investigateScanSeconds = 1f;
@@ -342,6 +345,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         private void UseLimitedPerception()
         {
             settings.perceptionMode = PerceptionMode.Limited;
+            settings.aimErrorStartDegrees = settings.aimErrorSettledDegrees = 0f; // exact aims below
             settings.perceptionHz = 0f;
             settings.reactionSeconds = 0f;
             settings.investigateScanSeconds = 1f;
@@ -409,6 +413,95 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             LimitedTick(ref time, null, 1, self);
             Assert.That(controller.State, Is.EqualTo(LocalAgentState.Investigating));
             Assert.That(controller.InvestigateTargetId, Is.EqualTo(3), "blamed on the enemy it remembers");
+        }
+
+        [Test]
+        public void LimitedAimErrorShrinksWhileAimingAtTheSameTarget()
+        {
+            settings.perceptionMode = PerceptionMode.Limited;
+            settings.perceptionHz = 0f;
+            settings.reactionSeconds = 0f;
+            controller.Random = new System.Random(7);
+            float time = 0f;
+            var enemy = Actor(3, 0, KernelActorType.Agent); enemy.position = new KernelVec3(0, 0, 10);
+            float early = 0f, late = 0f;
+            for (int i = 0; i < 60; i++)
+            {
+                float error = Vector3.Angle(Vector3.forward, LimitedTick(ref time, null, 0, Actor(1, 0), enemy).AimDirection);
+                Assert.That(controller.State, Is.EqualTo(LocalAgentState.Combat));
+                float allowed = Mathf.Lerp(6f, 1.5f, Mathf.Clamp01((time - 0.25f) / 1f));
+                Assert.That(error, Is.LessThanOrEqualTo(allowed + 0.01f), $"step {i}");
+                if (i < 2) early = Mathf.Max(early, error);
+                if (i >= 4) late = Mathf.Max(late, error);
+            }
+            Assert.That(early, Is.GreaterThan(1.5f), "starts wide");
+            Assert.That(late, Is.LessThanOrEqualTo(1.51f), "settles after a second");
+            Assert.That(late, Is.GreaterThan(0f), "never perfect");
+
+            // The same seed aims the same way.
+            var other = new LocalAgentController { Random = new System.Random(7) };
+            var otherPerception = new LocalAgentPerception();
+            otherPerception.Update(settings, 0f, new[] { Actor(1, 0), enemy }, 2, 1, Vector3.forward);
+            controller.Reset(); controller.Random = new System.Random(7);
+            perception.Reset();
+            perception.Update(settings, 0f, new[] { Actor(1, 0), enemy }, 2, 1, Vector3.forward);
+            Assert.That(controller.Step(settings, perception, true, weapon, 0f).AimDirection,
+                Is.EqualTo(other.Step(settings, otherPerception, true, weapon, 0f).AimDirection));
+        }
+
+        [Test]
+        public void LimitedSwitchingTargetsTakesANewReactionAndSticksToTheCurrentOne()
+        {
+            settings.perceptionMode = PerceptionMode.Limited;
+            settings.perceptionHz = 0f;
+            settings.reactionSeconds = 0.25f;
+            settings.aimErrorStartDegrees = settings.aimErrorSettledDegrees = 0f;
+            float time = 0f;
+            LocalAgentCommand Tick(params RenderEntityState[] states)
+            {
+                perception.Update(settings, time, states, states.Length, 1, Vector3.forward);
+                time += 0.1f;
+                return controller.Step(settings, perception, true, weapon, 0f, holdTrigger: true, fireActionLive: true);
+            }
+            RenderEntityState At(uint id, float x, float z)
+            {
+                var a = Actor(id, x, KernelActorType.Agent); a.position = new KernelVec3(x, 0, z); return a;
+            }
+            // Both come into view; neither is confirmed yet.
+            Assert.That(Tick(Actor(1, 0), At(3, 0, 5), At(4, 1, 6)).Fire, Is.False);
+            Tick(Actor(1, 0), At(3, 0, 5), At(4, 1, 6));
+            Tick(Actor(1, 0), At(3, 0, 5), At(4, 1, 6));
+            Assert.That(Tick(Actor(1, 0), At(3, 0, 5), At(4, 1, 6)).Fire, Is.True, "the first target: no extra wait");
+            Assert.That(controller.AttackTargetId, Is.EqualTo(3));
+
+            // 4 comes nearer; the agent stays on 3 while it is in sight.
+            Assert.That(Tick(Actor(1, 0), At(3, 0, 5), At(4, 1, 3)).Fire, Is.True);
+            Assert.That(controller.AttackTargetId, Is.EqualTo(3));
+
+            // 3 goes down: turning onto 4 takes the reaction time again.
+            var dead = At(3, 0, 5); dead.visual_flags = KernelConstants.VisualFlagDead;
+            var command = Tick(Actor(1, 0), dead, At(4, 1, 3));
+            Assert.That(controller.AttackTargetId, Is.EqualTo(4));
+            Assert.That(command.Aim, Is.True);
+            Assert.That(Vector3.Angle(command.AimDirection, new Vector3(1, 0, 3)), Is.LessThan(0.01f), "aims at it meanwhile");
+            Assert.That(command.Fire, Is.False);
+            Assert.That(Tick(Actor(1, 0), dead, At(4, 1, 3)).Fire, Is.False);
+            Assert.That(Tick(Actor(1, 0), dead, At(4, 1, 3)).Fire, Is.False);
+            Assert.That(Tick(Actor(1, 0), dead, At(4, 1, 3)).Fire, Is.True);
+        }
+
+        [Test]
+        public void OmniscientAimsExactlyAndSwitchesToTheNearestAtOnce()
+        {
+            controller.Random = new System.Random(1);
+            var near = Actor(3, 5, KernelActorType.Agent);
+            Assert.That(Step(Actor(1, 0), near).AimDirection, Is.EqualTo(Vector3.right));
+            var nearer = Actor(4, 3, KernelActorType.Agent);
+            var command = Step(Actor(1, 0), near, nearer);
+            Assert.That(controller.AttackTargetId, Is.EqualTo(4));
+            Assert.That(command.AimDirection, Is.EqualTo(Vector3.right));
+            Assert.That(command.Fire, Is.False, "released between presses, not delayed");
+            Assert.That(Step(Actor(1, 0), near, nearer).Fire, Is.True);
         }
 
         [Test]
