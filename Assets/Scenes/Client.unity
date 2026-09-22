@@ -547,7 +547,7 @@ MonoBehaviour:
   localAgentSettings:
     followStartDistance: 8
     followStopDistance: 3
-    threatRange: 50
+    threatRange: 30
     muzzleHeight: 0.5
     targetHeight: 0.5
     preferredWeaponId: 0
