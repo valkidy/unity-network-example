@@ -25,8 +25,11 @@ namespace NetworkExample.UnityDemo.LocalAgent
         [Min(0f)] public float leashRadius = 15f;
         [Tooltip("Side of the square cells the walkable area is split into for exploration.")]
         [Min(0.5f)] public float explorationCellSize = 4f;
-        [Tooltip("Cells whose centre is this close count as seen. No line-of-sight test.")]
+        [Tooltip("Cells whose centre is this close count as seen; with Limited perception, " +
+            "only those the agent can also see.")]
         [Min(0f)] public float sightRadius = 6f;
+        [Tooltip("With Limited perception, cells tested for sight per input tick at most.")]
+        [Min(0)] public int explorationSightChecks = 16;
         [Min(0.1f)] public float waypointReachDistance = 0.75f;
         [Tooltip("Input ticks without 0.5 m of progress before a target is set aside (30 Hz by default).")]
         [Min(1)] public int stuckSteps = 45;
@@ -53,9 +56,11 @@ namespace NetworkExample.UnityDemo.LocalAgent
         [Tooltip("Unity physics layers that block sight: the terrain. Props and actors " +
             "block it through the kernel's collider shapes.")]
         public LayerMask sightBlockingLayers = 1; // Default, the terrain's layer
+        [Tooltip("Seconds the agent takes to look all around where a remembered enemy was.")]
+        [Min(0.1f)] public float investigateScanSeconds = 1f;
     }
 
-    public enum LocalAgentState { Idle, Following, Combat, Exploring }
+    public enum LocalAgentState { Idle, Following, Combat, Exploring, Investigating }
 
     /// <summary>Device-independent command; Move is world X/Z, AimDirection is world space.</summary>
     public struct LocalAgentCommand
@@ -76,6 +81,8 @@ namespace NetworkExample.UnityDemo.LocalAgent
         public LocalAgentState State { get; private set; }
         public uint FollowTargetId { get; private set; }
         public uint AttackTargetId { get; private set; }
+        /// <summary>The remembered enemy whose last known position is being checked, or 0.</summary>
+        public uint InvestigateTargetId { get; private set; }
         /// <summary>The last non-zero aim the agent sent: where it is looking.</summary>
         public Vector3 LastAimDirection { get; private set; } = Vector3.forward;
         private bool following;
@@ -85,6 +92,15 @@ namespace NetworkExample.UnityDemo.LocalAgent
         private KernelLocalWeaponState reloadWeapon;
         private uint reloadTarget;
         private LocalAgentExplorer explorer;
+        private LocalAgentPathFollower investigationPath;
+        private Vector3 investigateGoal;
+        private bool investigatePlanned;
+        private float scanStart = float.NaN;
+        private float scanFromDegrees;
+        // Memories already investigated, by the time they were last seen: seeing
+        // the enemy again makes it worth investigating again.
+        private readonly Dictionary<uint, float> investigated = new Dictionary<uint, float>();
+        private readonly List<uint> forgottenInvestigations = new List<uint>();
 
         /// <summary>
         /// The walkable area to explore. Null (the default) disables exploration,
@@ -102,6 +118,8 @@ namespace NetworkExample.UnityDemo.LocalAgent
             reloadWeapon = default;
             reloadTarget = 0;
             explorer?.ClearPath(); // cells already seen stay seen
+            StopInvestigating();
+            investigated.Clear();
         }
 
         /// <param name="perception">What the agent perceives, updated from the
@@ -139,9 +157,10 @@ namespace NetworkExample.UnityDemo.LocalAgent
 
             IReadOnlyList<PerceivedActor> actors = perception.Actors;
             Vector3 position = perception.SelfPosition;
-            int followIndex = -1, nearestPlayer = -1, enemyIndex = -1;
+            int followIndex = -1, nearestPlayer = -1, enemyIndex = -1, rememberedIndex = -1;
             float playerDistance = float.PositiveInfinity;
             float enemyDistance = float.PositiveInfinity;
+            float rememberedDistance = float.PositiveInfinity;
             float range = NonNegative(settings.threatRange, 15f);
             for (int i = 0; i < actors.Count; i++)
             {
@@ -156,13 +175,23 @@ namespace NetworkExample.UnityDemo.LocalAgent
                     if (Better(actors, i, nearestPlayer, distance, playerDistance))
                     { nearestPlayer = i; playerDistance = distance; }
                 }
-                // Only a threat the agent can see, and has had time to react to, is shot at.
-                else if (candidate.ActorType == KernelActorType.Agent &&
-                    candidate.VisibleNow && candidate.Confirmed &&
-                    IsEnemy(settings, candidate.TemplateId) && distance <= range * range &&
-                    Better(actors, i, enemyIndex, distance, enemyDistance))
-                { enemyIndex = i; enemyDistance = distance; }
+                else if (candidate.ActorType == KernelActorType.Agent && candidate.Confirmed &&
+                    IsEnemy(settings, candidate.TemplateId) && distance <= range * range)
+                {
+                    // Only a threat the agent can see, and has had time to react to, is shot at.
+                    if (candidate.VisibleNow)
+                    {
+                        if (Better(actors, i, enemyIndex, distance, enemyDistance))
+                        { enemyIndex = i; enemyDistance = distance; }
+                    }
+                    // One out of sight is looked for, the most recently seen first.
+                    else if (!(investigated.TryGetValue(candidate.NetId, out float seenAt) &&
+                        candidate.LastSeenTime <= seenAt) &&
+                        MoreRecent(actors, i, rememberedIndex, distance, rememberedDistance))
+                    { rememberedIndex = i; rememberedDistance = distance; }
+                }
             }
+            ForgetInvestigationsOf(actors);
             if (followIndex < 0)
             {
                 followIndex = nearestPlayer;
@@ -172,6 +201,7 @@ namespace NetworkExample.UnityDemo.LocalAgent
 
             if (enemyIndex >= 0)
             {
+                StopInvestigating();
                 State = LocalAgentState.Combat;
                 following = false;
                 AttackTargetId = actors[enemyIndex].NetId;
@@ -213,6 +243,14 @@ namespace NetworkExample.UnityDemo.LocalAgent
             AttackTargetId = 0;
             reloadRequested = false;
             LocalAgentExplorer activeExplorer = ExplorerFor(settings);
+            if (rememberedIndex >= 0 &&
+                TryInvestigate(settings, perception, actors[rememberedIndex], position, out LocalAgentCommand search))
+            {
+                following = false;
+                activeExplorer?.ClearPath();
+                return search;
+            }
+            if (rememberedIndex < 0) StopInvestigating();
             if (followIndex < 0)
             {
                 following = false;
@@ -221,7 +259,7 @@ namespace NetworkExample.UnityDemo.LocalAgent
                     State = LocalAgentState.Idle;
                     return default;
                 }
-                return Explore(activeExplorer, settings, position, null, 0f);
+                return Explore(activeExplorer, settings, perception, position, null, 0f);
             }
 
             Vector3 followPosition = actors[followIndex].LastKnownPosition;
@@ -235,7 +273,7 @@ namespace NetworkExample.UnityDemo.LocalAgent
             if (planar.sqrMagnitude <= stop * stop) following = false;
             else if (planar.sqrMagnitude > start * start) following = true;
             if (activeExplorer != null && !following)
-                return Explore(activeExplorer, settings, position, followPosition, leash);
+                return Explore(activeExplorer, settings, perception, position, followPosition, leash);
 
             activeExplorer?.ClearPath();
             State = LocalAgentState.Following;
@@ -259,10 +297,14 @@ namespace NetworkExample.UnityDemo.LocalAgent
         }
 
         private LocalAgentCommand Explore(LocalAgentExplorer activeExplorer, LocalAgentSettings settings,
-            Vector3 position, Vector3? anchor, float leash)
+            LocalAgentPerception perception, Vector3 position, Vector3? anchor, float leash)
         {
             State = LocalAgentState.Exploring;
-            activeExplorer.MarkSeen(position, NonNegative(settings.sightRadius, 6f));
+            if (settings.perceptionMode == PerceptionMode.Limited)
+                activeExplorer.MarkSeen(position, NonNegative(settings.sightRadius, 6f),
+                    perception.PointVisibility, Mathf.Max(0, settings.explorationSightChecks));
+            else
+                activeExplorer.MarkSeen(position, NonNegative(settings.sightRadius, 6f));
             Vector2 move = activeExplorer.Step(position, anchor, leash);
             return new LocalAgentCommand
             {
@@ -272,6 +314,104 @@ namespace NetworkExample.UnityDemo.LocalAgent
             };
         }
 
+        /// <summary>
+        /// Walks to where a remembered enemy was last seen, facing that spot, then
+        /// looks all around. False once the look-around is done (or the memory is
+        /// gone), so the agent goes on with what it was doing.
+        /// </summary>
+        private bool TryInvestigate(LocalAgentSettings settings, LocalAgentPerception perception,
+            PerceivedActor target, Vector3 position, out LocalAgentCommand command)
+        {
+            command = default;
+            if (target.NetId != InvestigateTargetId || target.LastKnownPosition != investigateGoal)
+            {
+                StopInvestigating();
+                InvestigateTargetId = target.NetId;
+                investigateGoal = target.LastKnownPosition;
+            }
+            State = LocalAgentState.Investigating;
+            Vector3 toGoal = investigateGoal - position;
+            var planar = new Vector2(toGoal.x, toGoal.z);
+            float reach = Mathf.Max(0.1f, Finite(settings.waypointReachDistance, 0.75f));
+
+            if (float.IsNaN(scanStart))
+            {
+                Vector2 move = Vector2.zero;
+                bool arrived = planar.magnitude <= reach;
+                if (!arrived && NavMesh != null)
+                {
+                    LocalAgentPathFollower path = PathFor(settings);
+                    if (!investigatePlanned)
+                    {
+                        investigatePlanned = true;
+                        path.TryPlan(position, investigateGoal);
+                    }
+                    // No route, arrived, or stuck: look around from here.
+                    arrived = path.Step(position, out move) != PathProgress.Walking;
+                }
+                else if (!arrived)
+                    move = planar.normalized;
+                if (!arrived)
+                {
+                    command.Move = move;
+                    command.AimDirection = planar.sqrMagnitude > 0.000001f
+                        ? new Vector3(planar.x, 0f, planar.y).normalized
+                        : new Vector3(move.x, 0f, move.y);
+                    return true;
+                }
+                scanStart = perception.Time;
+                scanFromDegrees = Mathf.Atan2(LastAimDirection.x, LastAimDirection.z) * Mathf.Rad2Deg;
+            }
+
+            float scanSeconds = Mathf.Max(0.1f, Finite(settings.investigateScanSeconds, 1f));
+            float progress = (perception.Time - scanStart) / scanSeconds;
+            if (!(progress < 1f))
+            {
+                investigated[target.NetId] = target.LastSeenTime;
+                StopInvestigating();
+                return false;
+            }
+            float yaw = (scanFromDegrees + 360f * Mathf.Max(0f, progress)) * Mathf.Deg2Rad;
+            command.AimDirection = new Vector3(Mathf.Sin(yaw), 0f, Mathf.Cos(yaw));
+            return true;
+        }
+
+        private void StopInvestigating()
+        {
+            InvestigateTargetId = 0;
+            investigatePlanned = false;
+            scanStart = float.NaN;
+            investigationPath?.Clear();
+        }
+
+        private LocalAgentPathFollower PathFor(LocalAgentSettings settings)
+        {
+            if (investigationPath == null || investigationPath.Query != NavMesh)
+                investigationPath = new LocalAgentPathFollower(NavMesh);
+            investigationPath.StuckSteps = Mathf.Max(1, settings.stuckSteps);
+            investigationPath.WaypointReachDistance = Mathf.Max(0.1f, Finite(settings.waypointReachDistance, 0.75f));
+            return investigationPath;
+        }
+
+        // Drops investigations of enemies the agent no longer remembers.
+        private void ForgetInvestigationsOf(IReadOnlyList<PerceivedActor> actors)
+        {
+            if (investigated.Count == 0) return;
+            forgottenInvestigations.Clear();
+            foreach (uint netId in investigated.Keys)
+            {
+                bool remembered = false;
+                for (int i = 0; i < actors.Count && !remembered; i++) remembered = actors[i].NetId == netId;
+                if (!remembered) forgottenInvestigations.Add(netId);
+            }
+            foreach (uint netId in forgottenInvestigations) investigated.Remove(netId);
+        }
+
+        private static bool MoreRecent(IReadOnlyList<PerceivedActor> actors, int index, int previous,
+            float distance, float bestDistance) => previous < 0 ||
+            actors[index].LastSeenTime > actors[previous].LastSeenTime ||
+            actors[index].LastSeenTime == actors[previous].LastSeenTime &&
+            Better(actors, index, previous, distance, bestDistance);
         private static bool Better(IReadOnlyList<PerceivedActor> actors, int index, int previous,
             float distance, float bestDistance) => previous < 0 || distance < bestDistance ||
             distance == bestDistance && actors[index].NetId < actors[previous].NetId;

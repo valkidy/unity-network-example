@@ -12,17 +12,17 @@ namespace NetworkExample.UnityDemo.LocalAgent
     /// <remarks>
     /// Nearest-unseen is what makes this frontier exploration rather than a random
     /// walk: the seen region grows around the agent, so its nearest unseen cell is
-    /// always on that region's edge. "Seen" is a sight radius with no line-of-sight
-    /// test. A target the agent cannot reach -- no navmesh route, or no progress
-    /// for <see cref="StuckSteps"/> steps because something the navmesh does not
-    /// know about is in the way -- is set aside until the area is explored, at
+    /// always on that region's edge. "Seen" is a sight radius, optionally narrowed
+    /// to what the agent can see. A target the agent cannot reach -- no navmesh
+    /// route, or no progress for <see cref="StuckSteps"/> steps because something
+    /// the navmesh does not know about is in the way -- is set aside until the area
+    /// is explored, at
     /// which point the area is forgotten and exploration starts over, so the agent
     /// keeps patrolling instead of stopping. Steps are the agent's input ticks.
     /// </remarks>
     public sealed class LocalAgentExplorer
     {
         private const int MaxPlanAttemptsPerStep = 8;
-        private const float ProgressDistance = 0.5f;
 
         private readonly DetourNavMeshQuery query;
         private readonly float cellSize;
@@ -33,14 +33,12 @@ namespace NetworkExample.UnityDemo.LocalAgent
         private readonly bool[] walkable;
         private readonly bool[] seen;
         private readonly bool[] setAside;
-        private readonly List<Vector3> corners = new List<Vector3>();
-        private int cornerIndex;
-        private Vector3 progressAnchor;
-        private int stepsWithoutProgress;
+        private readonly LocalAgentPathFollower follower;
 
         public LocalAgentExplorer(DetourNavMeshQuery query, float cellSize)
         {
             this.query = query ?? throw new ArgumentNullException(nameof(query));
+            follower = new LocalAgentPathFollower(query);
             this.cellSize = Mathf.Max(0.5f, float.IsFinite(cellSize) ? cellSize : 4f);
             DetourNavMesh mesh = query.Mesh;
             origin = mesh.BoundsMin;
@@ -72,12 +70,16 @@ namespace NetworkExample.UnityDemo.LocalAgent
         /// <summary>The cell being walked to, or -1.</summary>
         public int TargetCell { get; private set; } = -1;
         public Vector3 TargetPoint => TargetCell >= 0 ? cellPoints[TargetCell] : Vector3.zero;
-        public IReadOnlyList<Vector3> Path => corners;
+        public IReadOnlyList<Vector3> Path => follower.Path;
         public int SetAsideCount { get; private set; }
         public int ForgottenCount { get; private set; }
 
-        public int StuckSteps { get; set; } = 45;
-        public float WaypointReachDistance { get; set; } = 0.75f;
+        public int StuckSteps { get => follower.StuckSteps; set => follower.StuckSteps = value; }
+        public float WaypointReachDistance
+        {
+            get => follower.WaypointReachDistance;
+            set => follower.WaypointReachDistance = value;
+        }
 
         public bool IsSeen(int cell) => seen[cell];
         public bool IsWalkable(int cell) => walkable[cell];
@@ -90,8 +92,17 @@ namespace NetworkExample.UnityDemo.LocalAgent
         }
 
         /// <summary>Marks every walkable cell whose centre is within <paramref name="radius"/>.</summary>
-        public void MarkSeen(Vector3 position, float radius)
+        public void MarkSeen(Vector3 position, float radius) => MarkSeen(position, radius, null, 0);
+
+        /// <summary>
+        /// Marks walkable cells whose centre is within <paramref name="radius"/> and,
+        /// with <paramref name="visible"/>, can be seen. At most
+        /// <paramref name="maxChecks"/> unseen cells are tested per call; the rest
+        /// wait for the next one.
+        /// </summary>
+        public void MarkSeen(Vector3 position, float radius, Func<Vector3, bool> visible, int maxChecks)
         {
+            int checks = 0;
             radius = Mathf.Max(0f, radius);
             int reach = Mathf.CeilToInt(radius / cellSize) + 1;
             int centerColumn = Mathf.FloorToInt((position.x - origin.x) / cellSize);
@@ -100,8 +111,9 @@ namespace NetworkExample.UnityDemo.LocalAgent
             for (int column = Mathf.Max(0, centerColumn - reach); column <= Mathf.Min(columns - 1, centerColumn + reach); column++)
             {
                 int cell = row * columns + column;
-                if (walkable[cell] && DistanceXZ(cellPoints[cell], position) <= radius)
-                    MarkCellSeen(cell);
+                if (!walkable[cell] || seen[cell] || DistanceXZ(cellPoints[cell], position) > radius) continue;
+                if (visible != null && (checks++ >= maxChecks || !visible(cellPoints[cell]))) continue;
+                MarkCellSeen(cell);
             }
         }
 
@@ -109,9 +121,7 @@ namespace NetworkExample.UnityDemo.LocalAgent
         public void ClearPath()
         {
             TargetCell = -1;
-            corners.Clear();
-            cornerIndex = 0;
-            stepsWithoutProgress = 0;
+            follower.Clear();
         }
 
         /// <summary>
@@ -126,33 +136,23 @@ namespace NetworkExample.UnityDemo.LocalAgent
 
             if (TargetCell >= 0)
             {
-                if (DistanceXZ(position, progressAnchor) >= ProgressDistance)
+                switch (follower.Step(position, out Vector2 direction))
                 {
-                    progressAnchor = position;
-                    stepsWithoutProgress = 0;
+                    case PathProgress.Walking:
+                        return direction;
+                    case PathProgress.Stuck:
+                        SetAside(TargetCell);
+                        break;
+                    case PathProgress.Arrived:
+                        MarkCellSeen(TargetCell);
+                        break;
                 }
-                else if (++stepsWithoutProgress >= Mathf.Max(1, StuckSteps))
-                {
-                    SetAside(TargetCell);
-                    ClearPath();
-                }
-            }
-
-            while (TargetCell >= 0 && cornerIndex < corners.Count &&
-                DistanceXZ(position, corners[cornerIndex]) <= WaypointReachDistance)
-                cornerIndex++;
-            if (TargetCell >= 0 && cornerIndex >= corners.Count)
-            {
-                MarkCellSeen(TargetCell);
                 ClearPath();
             }
 
-            if (TargetCell < 0 && !TryChooseTarget(position, anchor, leash))
+            if (!TryChooseTarget(position, anchor, leash))
                 return Vector2.zero;
-
-            Vector3 next = corners[cornerIndex];
-            var direction = new Vector2(next.x - position.x, next.z - position.z);
-            return direction.sqrMagnitude > 1e-8f ? direction.normalized : Vector2.zero;
+            return follower.Direction(position);
         }
 
         private void MarkCellSeen(int cell)
@@ -188,12 +188,9 @@ namespace NetworkExample.UnityDemo.LocalAgent
                     if (anyInArea) Forget(anchor, leash);
                     return false;
                 }
-                if (query.FindPath(position, cellPoints[best], corners) && corners.Count >= 2)
+                if (follower.TryPlan(position, cellPoints[best]))
                 {
                     TargetCell = best;
-                    cornerIndex = 1;
-                    progressAnchor = position;
-                    stepsWithoutProgress = 0;
                     return true;
                 }
                 SetAside(best);

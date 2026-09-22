@@ -248,6 +248,84 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
+        public void ARememberedEnemyIsLookedForWhereItWasAndShotOnceSeenAgain()
+        {
+            settings.perceptionMode = PerceptionMode.Limited;
+            settings.perceptionHz = 0f;
+            settings.reactionSeconds = 0f;
+            float time = 0f;
+            LocalAgentCommand Tick(params RenderEntityState[] states)
+            {
+                perception.Update(settings, time, states, states.Length, 1, controller.LastAimDirection);
+                time += 0.1f;
+                return controller.Step(settings, perception, true, weapon, 0f);
+            }
+            var enemy = Actor(3, 0, KernelActorType.Agent); enemy.position = new KernelVec3(0, 0, 10);
+            Assert.That(Tick(Actor(1, 0), enemy).Fire, Is.True);
+
+            // Out of the sync: walk straight at where it was (no navmesh), looking there.
+            var search = Tick(Actor(1, 0));
+            Assert.That(controller.State, Is.EqualTo(LocalAgentState.Investigating));
+            Assert.That(controller.InvestigateTargetId, Is.EqualTo(3));
+            Assert.That(controller.AttackTargetId, Is.Zero);
+            Assert.That(search.Move, Is.EqualTo(Vector2.up));
+            Assert.That(search.AimDirection, Is.EqualTo(Vector3.forward));
+            Assert.That(search.Fire || search.Aim, Is.False);
+
+            // Back in sight: fight again.
+            Assert.That(Tick(Actor(1, 0), enemy).Fire, Is.True);
+            Assert.That(controller.State, Is.EqualTo(LocalAgentState.Combat));
+            Assert.That(controller.InvestigateTargetId, Is.Zero);
+
+            // Out of range, dead or unknown enemies are not looked for.
+            var far = Actor(4, 0, KernelActorType.Agent); far.position = new KernelVec3(0, 0, 20);
+            controller.Reset();
+            perception.Reset();
+            Tick(Actor(1, 0), far);
+            Tick(Actor(1, 0));
+            Assert.That(controller.State, Is.Not.EqualTo(LocalAgentState.Investigating), "beyond threatRange");
+        }
+
+        [Test]
+        public void TheLookAroundStartsWhereTheAgentArrivesAndEndsAfterAFullTurn()
+        {
+            settings.perceptionMode = PerceptionMode.Limited;
+            settings.perceptionHz = 0f;
+            settings.reactionSeconds = 0f;
+            settings.investigateScanSeconds = 1f;
+            float time = 0f;
+            var self = Actor(1, 0);
+            LocalAgentCommand Tick(params RenderEntityState[] others)
+            {
+                var states = new RenderEntityState[others.Length + 1];
+                states[0] = self;
+                others.CopyTo(states, 1);
+                perception.Update(settings, time, states, states.Length, 1, controller.LastAimDirection);
+                time += 0.25f;
+                return controller.Step(settings, perception, true, weapon, 0f);
+            }
+            var enemy = Actor(3, 0, KernelActorType.Agent); enemy.position = new KernelVec3(0, 0, 10);
+            Tick(enemy);
+            self.position = new KernelVec3(0, 0, 9.5f); // it walked there
+            var first = Tick();
+            Assert.That(first.Move, Is.EqualTo(Vector2.zero), "within reach: look around");
+            Assert.That(first.AimDirection, Is.EqualTo(Vector3.forward), "from where it was facing");
+            Assert.That(Vector3.Angle(Tick().AimDirection, Vector3.right), Is.LessThan(0.01f), "a quarter turn a quarter second later");
+            Assert.That(Vector3.Angle(Tick().AimDirection, Vector3.back), Is.LessThan(0.01f));
+            Assert.That(Vector3.Angle(Tick().AimDirection, Vector3.left), Is.LessThan(0.01f));
+            Assert.That(controller.State, Is.EqualTo(LocalAgentState.Investigating));
+            Tick();
+            Assert.That(controller.State, Is.EqualTo(LocalAgentState.Idle), "done: no one to follow, no navmesh");
+            Tick();
+            Assert.That(controller.State, Is.EqualTo(LocalAgentState.Idle), "the same memory is not searched again");
+
+            // Seen again later, it is worth another look.
+            Tick(enemy);
+            Tick();
+            Assert.That(controller.State, Is.EqualTo(LocalAgentState.Investigating));
+        }
+
+        [Test]
         public void UnknownWeaponDoesNotFireOrReloadAndCountBoundsAreRespected()
         {
             var states = new[] { Actor(1, 0), Actor(2, 5, KernelActorType.Agent) };

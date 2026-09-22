@@ -37,7 +37,9 @@ read. The mesh is static terrain: props, nests and actors are not in it.
 
 Exploration (`enableExploration`, on by default, needs the navigation mesh): `LocalAgentExplorer`
 splits the walkable area into `explorationCellSize` cells, marks cells within `sightRadius` as seen
-(no line-of-sight test) and walks a navmesh path to the nearest unseen cell. Priority is combat,
+and walks a navmesh path (`LocalAgentPathFollower`) to the nearest unseen cell. With Limited
+perception a cell must also be in view with a clear sight line to 1 m above it; at most
+`explorationSightChecks` cells are tested per input tick. Priority is combat, then investigating,
 then following, then exploring. With a player to follow the agent explores within `leashRadius`
 of them and walks back once farther than that, until within `followStopDistance`; alone it explores
 the whole mesh. A target it has no route to, or makes no 0.5 m progress towards for `stuckSteps`
@@ -55,8 +57,13 @@ Perception (`perceptionMode`, Omniscient by default):
   `sightBlockingLayers` (the terrain). Sight is tested `perceptionHz` (10) times a second; an actor
   in view is tracked where it is in between. It is confirmed after `reactionSeconds` (0.25 s) in
   sight, stays confirmed while remembered, and is forgotten `memorySeconds` (8 s) after it was last
-  seen. Only a death that is seen is known; Stale records are never seen. The agent does not yet go
-  looking for what it remembers, and exploration still marks cells seen by distance alone.
+  seen. Only a death that is seen is known; Stale records are never seen.
+- Investigating: a remembered, confirmed enemy within `threatRange` that is out of sight is looked
+  for, the most recently seen first. The agent walks a navmesh path (straight without the mesh) to
+  its last known position facing that spot, then turns a full circle in `investigateScanSeconds`
+  (1 s); a route it cannot walk or makes no progress on ends in the same look-around. Seeing the
+  enemy switches to combat. A memory already searched is left alone until the enemy is seen again.
+  Omniscient perception sees every enemy, so it never investigates.
 
 What a client actually receives (verified against a dedicated server):
 - Snapshots carry health only for Player actors. Enemies arrive with hp = 0 and

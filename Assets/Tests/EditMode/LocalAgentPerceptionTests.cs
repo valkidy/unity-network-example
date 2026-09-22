@@ -243,6 +243,33 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
+        public void PointsAreSeenInViewWithOneSightLineToAMetreAboveThem()
+        {
+            var perception = new LocalAgentPerception();
+            Assert.That(perception.CanSeePoint(Vector3.zero), Is.True, "no settings yet: nothing to limit");
+            LocalAgentSettings limited = Limited();
+            var sight = new FakeSight();
+            var self = new[] { At(1, 0, 0, KernelActorType.Player) };
+            perception.Update(limited, 0f, self, 1, 1, Vector3.forward, sight);
+            Assert.That(perception.PointVisibility(new Vector3(0, 0, 10)), Is.True);
+            Assert.That(sight.Calls.Count, Is.EqualTo(1));
+            Assert.That(sight.Calls[0].target, Is.EqualTo(new Vector3(0, 1, 10)));
+            Assert.That((sight.Calls[0].a, sight.Calls[0].b), Is.EqualTo((1u, 0u)));
+            Assert.That(perception.CanSeePoint(new Vector3(0, 0, -10)), Is.False, "behind");
+            Assert.That(perception.CanSeePoint(new Vector3(0, 0, -2)), Is.True, "close by");
+            sight.Clear = (eye, target) => false;
+            Assert.That(perception.CanSeePoint(new Vector3(0, 0, 10)), Is.False);
+            Assert.That(sight.Calls.Count, Is.EqualTo(2), "one sight line per point");
+
+            perception.Update(limited, 1f, new[] { At(1, 0, 0) }, 1, 1, Vector3.forward, sight);
+            Assert.That(perception.CanSeePoint(new Vector3(0, 0, 10)), Is.False, "no local player");
+            limited.perceptionMode = PerceptionMode.Omniscient;
+            perception.Update(limited, 2f, self, 1, 1, Vector3.forward, sight);
+            Assert.That(perception.CanSeePoint(new Vector3(0, 0, -10)), Is.True);
+            Assert.That(perception.Time, Is.EqualTo(2f));
+        }
+
+        [Test]
         public void ChangingModeOrPlayerForgetsEverything()
         {
             LocalAgentSettings limited = Limited();

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using NetworkExample.Kernel;
 using UnityEngine;
@@ -57,13 +58,22 @@ namespace NetworkExample.UnityDemo.LocalAgent
         private readonly HashSet<uint> sensed = new HashSet<uint>();
         private PerceptionMode mode;
         private float lastSenseTime = float.NegativeInfinity;
+        private LocalAgentSettings settings;
+        private Vector3 facing;
+        private ILineOfSight sight;
+
+        public LocalAgentPerception() => PointVisibility = CanSeePoint;
 
         public bool HasSelf { get; private set; }
         public uint LocalPlayerId { get; private set; }
         public Vector3 SelfPosition { get; private set; }
         public IReadOnlyList<PerceivedActor> Actors => actors;
-        /// <summary>Sight tests (feet and head each count) in the last sensing pass.</summary>
+        /// <summary>The time of the last update.</summary>
+        public float Time { get; private set; }
+        /// <summary>Sight lines tested since the last sensing pass, actors' and points'.</summary>
         public int LastSightTests { get; private set; }
+        /// <summary><see cref="CanSeePoint"/>, allocated once.</summary>
+        public Func<Vector3, bool> PointVisibility { get; }
 
         public void Reset()
         {
@@ -84,6 +94,10 @@ namespace NetworkExample.UnityDemo.LocalAgent
         {
             actors.Clear();
             HasSelf = false;
+            this.settings = settings;
+            this.facing = facing;
+            this.sight = sight;
+            Time = time;
             if (settings == null || states == null || localPlayerId == 0 || !float.IsFinite(time))
             {
                 LocalPlayerId = localPlayerId;
@@ -105,7 +119,7 @@ namespace NetworkExample.UnityDemo.LocalAgent
                 SelfPosition = Position(state);
             }
             if (mode == PerceptionMode.Omniscient) PerceiveEverything(states, count, time);
-            else if (HasSelf) PerceiveLimited(settings, states, count, time, facing, sight);
+            else if (HasSelf) PerceiveLimited(states, count, time);
         }
 
         private void PerceiveEverything(RenderEntityState[] states, int count, float time)
@@ -129,8 +143,7 @@ namespace NetworkExample.UnityDemo.LocalAgent
             }
         }
 
-        private void PerceiveLimited(LocalAgentSettings settings, RenderEntityState[] states, int count,
-            float time, Vector3 facing, ILineOfSight sight)
+        private void PerceiveLimited(RenderEntityState[] states, int count, float time)
         {
             float hz = NonNegative(settings.perceptionHz, 10f);
             bool sense = hz <= 0f || time - lastSenseTime >= 1f / hz - 1e-4f;
@@ -145,7 +158,8 @@ namespace NetworkExample.UnityDemo.LocalAgent
                 RenderEntityState state = states[i];
                 if (!IsObservable(state) || state.net_id == LocalPlayerId) continue;
                 bool known = memory.TryGetValue(state.net_id, out Memory entry);
-                bool visible = sense ? CanSee(settings, state, facing, sight)
+                bool visible = sense ? CanSee(Position(state), state.net_id,
+                        Finite(settings.headSampleHeight, 1.5f), Finite(settings.footSampleHeight, 0.5f))
                     // Between sight tests, whatever was in view is tracked where it is.
                     : known && entry.Actor.VisibleNow;
                 if (!visible) continue;
@@ -184,9 +198,20 @@ namespace NetworkExample.UnityDemo.LocalAgent
             }
         }
 
-        private bool CanSee(LocalAgentSettings settings, RenderEntityState state, Vector3 facing, ILineOfSight sight)
+        /// <summary>
+        /// Whether the agent can see a spot on the ground, as of the last update:
+        /// in view and a sight line reaches 1 m above it, or close by. Always
+        /// true when omniscient; false without a local player.
+        /// </summary>
+        public bool CanSeePoint(Vector3 point)
         {
-            Vector3 target = Position(state);
+            if (settings == null || mode == PerceptionMode.Omniscient) return true;
+            return HasSelf && CanSee(point, 0, 1f, float.NaN);
+        }
+
+        // A NaN second height tests one sight line only.
+        private bool CanSee(Vector3 target, uint targetNetId, float firstHeight, float secondHeight)
+        {
             Vector3 offset = target - SelfPosition;
             float close = NonNegative(settings.closeAwarenessRadius, 2.5f);
             if (new Vector2(offset.x, offset.z).sqrMagnitude <= close * close) return true;
@@ -203,11 +228,10 @@ namespace NetworkExample.UnityDemo.LocalAgent
 
             if (sight == null) return true;
             LastSightTests++;
-            if (sight.IsClear(eye, target + Vector3.up * Finite(settings.headSampleHeight, 1.5f),
-                LocalPlayerId, state.net_id)) return true;
+            if (sight.IsClear(eye, target + Vector3.up * firstHeight, LocalPlayerId, targetNetId)) return true;
+            if (float.IsNaN(secondHeight)) return false;
             LastSightTests++;
-            return sight.IsClear(eye, target + Vector3.up * Finite(settings.footSampleHeight, 0.5f),
-                LocalPlayerId, state.net_id);
+            return sight.IsClear(eye, target + Vector3.up * secondHeight, LocalPlayerId, targetNetId);
         }
 
         // hp is not consulted: snapshots carry it only for players, and the server sets
