@@ -270,6 +270,83 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
+        public void OnlyDamageToTheGivenActorIsCounted()
+        {
+            var events = new[]
+            {
+                new KernelEvent { type = KernelEventType.DamageApplied, net_id = 1, code = 35 },
+                new KernelEvent { type = KernelEventType.DamageApplied, net_id = 6, code = 45 },
+                new KernelEvent { type = KernelEventType.HitConfirmed, net_id = 1 },
+                new KernelEvent { type = KernelEventType.DamageApplied, net_id = 1, code = 40 },
+            };
+            Assert.That(LocalAgentPerception.CountDamage(events, 4, 1), Is.EqualTo(2));
+            Assert.That(LocalAgentPerception.CountDamage(events, 3, 1), Is.EqualTo(1), "only the first count");
+            Assert.That(LocalAgentPerception.CountDamage(events, 99, 1), Is.EqualTo(2));
+            Assert.That(LocalAgentPerception.CountDamage(events, 4, 0), Is.Zero);
+            Assert.That(LocalAgentPerception.CountDamage(null, 4, 1), Is.Zero);
+        }
+
+        [Test]
+        public void AnActorNoticedOnlyByBeingCloseIsNotInSight()
+        {
+            LocalAgentSettings limited = Limited();
+            var perception = new LocalAgentPerception();
+            var wall = new FakeSight { Clear = (eye, target) => false };
+            var self = At(1, 0, 0, KernelActorType.Player);
+            perception.Update(limited, 0f, new[] { self, At(2, 0, -2) }, 2, 1, Vector3.forward, wall);
+            PerceivedActor behindWall = Find(perception, 2).Value;
+            Assert.That(behindWall.VisibleNow, Is.True, "noticed");
+            Assert.That(behindWall.InSight, Is.False, "but not in sight");
+
+            perception.Update(limited, 1f, new[] { self, At(2, 0, -2) }, 2, 1, Vector3.forward, new FakeSight());
+            Assert.That(Find(perception, 2).Value.InSight, Is.True, "close and clear");
+            perception.Update(limited, 2f, new[] { self }, 1, 1, Vector3.forward, new FakeSight());
+            Assert.That(Find(perception, 2).Value.InSight, Is.False, "gone");
+
+            limited.perceptionMode = PerceptionMode.Omniscient;
+            perception.Update(limited, 3f, new[] { self, At(2, 0, -2) }, 2, 1, Vector3.forward, wall);
+            Assert.That(Find(perception, 2).Value.InSight, Is.True);
+        }
+
+        [Test]
+        public void DamageIsBlamedOnTheNearestRememberedEnemyOutOfSight()
+        {
+            LocalAgentSettings limited = Limited();
+            limited.enemyTemplateIds = new uint[] { 100 };
+            var perception = new LocalAgentPerception();
+            var self = At(1, 0, 0, KernelActorType.Player);
+            var friend = At(4, 0, 3); friend.template_id = 27;
+            // Seen ahead, then they drop out of the sync.
+            perception.Update(limited, 0f, new[] { self, At(2, 0, 20), At(3, 0, 10), friend }, 4, 1, Vector3.forward);
+            perception.Update(limited, 1f, new[] { self }, 1, 1, Vector3.forward, null, damageTaken: 1);
+            PerceivedActor blamed = Find(perception, 3).Value;
+            Assert.That(blamed.LastKind, Is.EqualTo(StimulusKind.Damaged));
+            Assert.That(blamed.LastStimulusTime, Is.EqualTo(1f));
+            Assert.That(blamed.LastSeenTime, Is.EqualTo(0f));
+            Assert.That(Find(perception, 2).Value.LastKind, Is.EqualTo(StimulusKind.Seen), "the nearer one is blamed");
+            Assert.That(Find(perception, 4).Value.LastKind, Is.EqualTo(StimulusKind.Seen), "not an enemy");
+            Assert.That(perception.LastDamagedTime, Is.EqualTo(1f));
+            Assert.That(perception.UnexplainedDamageTime, Is.EqualTo(float.NegativeInfinity));
+
+            perception.Update(limited, 8.5f, new[] { self }, 1, 1, Vector3.forward);
+            Assert.That(Find(perception, 3).HasValue, Is.True, "being hit keeps it in mind");
+            Assert.That(Find(perception, 2).HasValue, Is.False);
+            perception.Update(limited, 9.5f, new[] { self }, 1, 1, Vector3.forward);
+            Assert.That(Find(perception, 3).HasValue, Is.False);
+
+            // No one to blame, or only enemies in sight (the agent is already fighting those).
+            perception.Update(limited, 10f, new[] { self }, 1, 1, Vector3.forward, null, damageTaken: 2);
+            Assert.That(perception.UnexplainedDamageTime, Is.EqualTo(10f));
+            perception.Update(limited, 11f, new[] { self, At(3, 0, 10) }, 2, 1, Vector3.forward, null, damageTaken: 1);
+            Assert.That(perception.UnexplainedDamageTime, Is.EqualTo(11f));
+            Assert.That(Find(perception, 3).Value.LastKind, Is.EqualTo(StimulusKind.Seen));
+
+            limited.perceptionMode = PerceptionMode.Omniscient;
+            perception.Update(limited, 12f, new[] { self }, 1, 1, Vector3.forward, null, damageTaken: 1);
+            Assert.That(perception.LastDamagedTime, Is.EqualTo(float.NegativeInfinity), "omniscient ignores damage");
+        }
+
+        [Test]
         public void ChangingModeOrPlayerForgetsEverything()
         {
             LocalAgentSettings limited = Limited();

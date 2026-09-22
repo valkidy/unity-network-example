@@ -23,7 +23,7 @@ unknown weapon is treated as press-mode, which fires every weapon (hold ones at 
 The controller lives in its own assembly depending only on Unity and Kernel. ClientRunner supplies
 completed render observations to `LocalAgentPerception`, and the controller decides only from what
 that perceives (`PerceivedActor`: last known position, visible, confirmed, known dead) plus the
-agent's own position and weapon state. Only visible, confirmed enemies are shot at. Commands go
+agent's own position and weapon state. Only confirmed enemies in sight are shot at. Commands go
 through the same input sequence and action bookkeeping as manual input. It uses the existing submission clock (30 Hz by default).
 Switching modes submits one neutral/release input before the new source takes over. Manual item
 commands are suppressed while enabled; inventory updates continue. The camera remains available
@@ -51,19 +51,26 @@ Perception (`perceptionMode`, Omniscient by default):
   agent read before perception existed.
 - Limited: an actor is seen when it is within `visionRange` (40 m) of the eye (`eyeHeight`, 1.6 m)
   and `fovDegrees` (110) of where the agent last aimed (its walking direction while exploring), and a
-  sight line reaches its head or feet (`headSampleHeight` 1.5 m, `footSampleHeight` 0.5 m); or when it
-  is within `closeAwarenessRadius` (2.5 m). Sight lines are blocked by the kernel's Hit colliders
-  (actors, props; `KernelColliderShapeSource`, shared with the debug view) and by Unity colliders on
-  `sightBlockingLayers` (the terrain). Sight is tested `perceptionHz` (10) times a second; an actor
-  in view is tracked where it is in between. It is confirmed after `reactionSeconds` (0.25 s) in
-  sight, stays confirmed while remembered, and is forgotten `memorySeconds` (8 s) after it was last
-  seen. Only a death that is seen is known; Stale records are never seen.
+  sight line reaches its head or feet (`headSampleHeight` 1.5 m, `footSampleHeight` 0.5 m). Within
+  `closeAwarenessRadius` (2.5 m) it is noticed regardless, but is in sight (`InSight`) only if a
+  sight line reaches it; one that is not is looked for rather than shot. Sight lines are blocked by
+  the kernel's Hit colliders (actors, props; `KernelColliderShapeSource`, shared with the debug view)
+  and by Unity colliders on `sightBlockingLayers` (the terrain). Sight is tested `perceptionHz` (10)
+  times a second; an actor in view is tracked where it is in between. It is confirmed after
+  `reactionSeconds` (0.25 s) in view, stays confirmed while remembered, and is forgotten
+  `memorySeconds` (8 s) after it was last perceived. Only a death that is seen is known; Stale
+  records are never seen.
+- Damage (Limited only): `ClientRunner` counts `DamageApplied` events for the local player between
+  input ticks. The event names no attacker, so the damage is put down to the nearest remembered
+  enemy out of sight, which is kept in memory and looked for again; with none, the agent turns a
+  full circle where it stands (`Investigating` with no target). Enemies in sight are already being
+  fought.
 - Investigating: a remembered, confirmed enemy within `threatRange` that is out of sight is looked
-  for, the most recently seen first. The agent walks a navmesh path (straight without the mesh) to
-  its last known position facing that spot, then turns a full circle in `investigateScanSeconds`
+  for, the most recently perceived first. The agent walks a navmesh path (straight without the mesh)
+  to its last known position facing that spot, then turns a full circle in `investigateScanSeconds`
   (1 s); a route it cannot walk or makes no progress on ends in the same look-around. Seeing the
-  enemy switches to combat. A memory already searched is left alone until the enemy is seen again.
-  Omniscient perception sees every enemy, so it never investigates.
+  enemy switches to combat. A memory already searched is left alone until the enemy is seen again
+  or blamed for damage. Omniscient perception sees every enemy, so it never investigates.
 
 What a client actually receives (verified against a dedicated server):
 - Snapshots carry health only for Player actors. Enemies arrive with hp = 0 and

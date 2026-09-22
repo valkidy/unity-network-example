@@ -325,6 +325,92 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             Assert.That(controller.State, Is.EqualTo(LocalAgentState.Investigating));
         }
 
+        private sealed class Wall : ILineOfSight
+        {
+            public bool Blocks = true;
+            public bool IsClear(Vector3 eye, Vector3 target, uint a, uint b) => !Blocks;
+        }
+
+        private LocalAgentCommand LimitedTick(ref float time, ILineOfSight sight, int damage,
+            params RenderEntityState[] states)
+        {
+            perception.Update(settings, time, states, states.Length, 1, controller.LastAimDirection, sight, damage);
+            time += 0.25f;
+            return controller.Step(settings, perception, true, weapon, 0f);
+        }
+
+        private void UseLimitedPerception()
+        {
+            settings.perceptionMode = PerceptionMode.Limited;
+            settings.perceptionHz = 0f;
+            settings.reactionSeconds = 0f;
+            settings.investigateScanSeconds = 1f;
+        }
+
+        [Test]
+        public void ACloseEnemyBehindAWallIsLookedForNotShot()
+        {
+            UseLimitedPerception();
+            float time = 0f;
+            var wall = new Wall();
+            var enemy = Actor(3, 2, KernelActorType.Agent);
+            var command = LimitedTick(ref time, wall, 0, Actor(1, 0), enemy);
+            Assert.That(command.Fire, Is.False);
+            Assert.That(controller.State, Is.EqualTo(LocalAgentState.Investigating));
+            Assert.That(controller.InvestigateTargetId, Is.EqualTo(3));
+            wall.Blocks = false;
+            Assert.That(LimitedTick(ref time, wall, 0, Actor(1, 0), enemy).Fire, Is.True, "in sight: shoot");
+            Assert.That(controller.State, Is.EqualTo(LocalAgentState.Combat));
+        }
+
+        [Test]
+        public void UnexplainedDamageMakesTheAgentLookAllAroundOnce()
+        {
+            UseLimitedPerception();
+            float time = 0f;
+            Assert.That(LimitedTick(ref time, null, 0, Actor(1, 0)).AimDirection, Is.EqualTo(Vector3.zero));
+            Assert.That(controller.State, Is.EqualTo(LocalAgentState.Idle));
+
+            var first = LimitedTick(ref time, null, 1, Actor(1, 0));
+            Assert.That(controller.State, Is.EqualTo(LocalAgentState.Investigating));
+            Assert.That(controller.InvestigateTargetId, Is.Zero);
+            Assert.That(first.Move, Is.EqualTo(Vector2.zero));
+            Assert.That(first.AimDirection, Is.EqualTo(Vector3.forward));
+            Assert.That(Vector3.Angle(LimitedTick(ref time, null, 0, Actor(1, 0)).AimDirection, Vector3.right), Is.LessThan(0.01f));
+            LimitedTick(ref time, null, 0, Actor(1, 0));
+            LimitedTick(ref time, null, 0, Actor(1, 0));
+            Assert.That(controller.State, Is.EqualTo(LocalAgentState.Investigating));
+            LimitedTick(ref time, null, 0, Actor(1, 0));
+            Assert.That(controller.State, Is.EqualTo(LocalAgentState.Idle), "one full turn");
+            LimitedTick(ref time, null, 0, Actor(1, 0));
+            Assert.That(controller.State, Is.EqualTo(LocalAgentState.Idle));
+
+            LimitedTick(ref time, null, 1, Actor(1, 0));
+            Assert.That(controller.State, Is.EqualTo(LocalAgentState.Investigating), "hit again");
+            // An enemy coming into sight wins over looking around. The last turn ended
+            // facing -x, so that is where this one starts.
+            var enemy = Actor(3, -5, KernelActorType.Agent);
+            Assert.That(LimitedTick(ref time, null, 0, Actor(1, 0), enemy).Fire, Is.True);
+            Assert.That(controller.State, Is.EqualTo(LocalAgentState.Combat));
+            LimitedTick(ref time, null, 0, Actor(1, 0), enemy);
+            Assert.That(controller.State, Is.EqualTo(LocalAgentState.Combat));
+        }
+
+        [Test]
+        public void BeingHitSendsTheAgentBackToLookForAnEnemyItAlreadySearchedFor()
+        {
+            UseLimitedPerception();
+            float time = 0f;
+            var self = Actor(1, 0);
+            var enemy = Actor(3, 0, KernelActorType.Agent); enemy.position = new KernelVec3(0, 0, 0.5f);
+            LimitedTick(ref time, null, 0, self, enemy); // seen, within reach of where it stands
+            for (int i = 0; i < 6; i++) LimitedTick(ref time, null, 0, self);
+            Assert.That(controller.State, Is.EqualTo(LocalAgentState.Idle), "searched, not found");
+            LimitedTick(ref time, null, 1, self);
+            Assert.That(controller.State, Is.EqualTo(LocalAgentState.Investigating));
+            Assert.That(controller.InvestigateTargetId, Is.EqualTo(3), "blamed on the enemy it remembers");
+        }
+
         [Test]
         public void UnknownWeaponDoesNotFireOrReloadAndCountBoundsAreRespected()
         {

@@ -97,8 +97,10 @@ namespace NetworkExample.UnityDemo.LocalAgent
         private bool investigatePlanned;
         private float scanStart = float.NaN;
         private float scanFromDegrees;
-        // Memories already investigated, by the time they were last seen: seeing
-        // the enemy again makes it worth investigating again.
+        private bool damageScan;
+        private float handledDamageTime = float.NegativeInfinity;
+        // Memories already investigated, by the time they were last perceived:
+        // seeing the enemy again, or being hit by it, makes it worth another look.
         private readonly Dictionary<uint, float> investigated = new Dictionary<uint, float>();
         private readonly List<uint> forgottenInvestigations = new List<uint>();
 
@@ -120,6 +122,8 @@ namespace NetworkExample.UnityDemo.LocalAgent
             explorer?.ClearPath(); // cells already seen stay seen
             StopInvestigating();
             investigated.Clear();
+            damageScan = false;
+            handledDamageTime = float.NegativeInfinity;
         }
 
         /// <param name="perception">What the agent perceives, updated from the
@@ -178,15 +182,15 @@ namespace NetworkExample.UnityDemo.LocalAgent
                 else if (candidate.ActorType == KernelActorType.Agent && candidate.Confirmed &&
                     IsEnemy(settings, candidate.TemplateId) && distance <= range * range)
                 {
-                    // Only a threat the agent can see, and has had time to react to, is shot at.
-                    if (candidate.VisibleNow)
+                    // Only a threat in sight, that the agent has had time to react to, is shot at.
+                    if (candidate.VisibleNow && candidate.InSight)
                     {
                         if (Better(actors, i, enemyIndex, distance, enemyDistance))
                         { enemyIndex = i; enemyDistance = distance; }
                     }
-                    // One out of sight is looked for, the most recently seen first.
-                    else if (!(investigated.TryGetValue(candidate.NetId, out float seenAt) &&
-                        candidate.LastSeenTime <= seenAt) &&
+                    // One out of sight is looked for, the most recently perceived first.
+                    else if (!(investigated.TryGetValue(candidate.NetId, out float perceivedAt) &&
+                        candidate.LastStimulusTime <= perceivedAt) &&
                         MoreRecent(actors, i, rememberedIndex, distance, rememberedDistance))
                     { rememberedIndex = i; rememberedDistance = distance; }
                 }
@@ -202,6 +206,7 @@ namespace NetworkExample.UnityDemo.LocalAgent
             if (enemyIndex >= 0)
             {
                 StopInvestigating();
+                damageScan = false;
                 State = LocalAgentState.Combat;
                 following = false;
                 AttackTargetId = actors[enemyIndex].NetId;
@@ -250,7 +255,26 @@ namespace NetworkExample.UnityDemo.LocalAgent
                 activeExplorer?.ClearPath();
                 return search;
             }
-            if (rememberedIndex < 0) StopInvestigating();
+            if (rememberedIndex < 0 && InvestigateTargetId != 0) StopInvestigating();
+            // Hit by something it cannot place: look all around where it stands.
+            if (perception.UnexplainedDamageTime > handledDamageTime)
+            {
+                handledDamageTime = perception.UnexplainedDamageTime;
+                if (!damageScan) StopInvestigating();
+                damageScan = true;
+            }
+            if (damageScan)
+            {
+                if (TryScan(settings, perception, out LocalAgentCommand look))
+                {
+                    State = LocalAgentState.Investigating;
+                    following = false;
+                    activeExplorer?.ClearPath();
+                    return look;
+                }
+                damageScan = false;
+                StopInvestigating();
+            }
             if (followIndex < 0)
             {
                 following = false;
@@ -323,7 +347,11 @@ namespace NetworkExample.UnityDemo.LocalAgent
             PerceivedActor target, Vector3 position, out LocalAgentCommand command)
         {
             command = default;
-            if (target.NetId != InvestigateTargetId || target.LastKnownPosition != investigateGoal)
+            damageScan = false;
+            // A target still being noticed moves its last known position a little every
+            // step; only a new target or a real move starts over.
+            if (target.NetId != InvestigateTargetId ||
+                (target.LastKnownPosition - investigateGoal).sqrMagnitude > 1f)
             {
                 StopInvestigating();
                 InvestigateTargetId = target.NetId;
@@ -359,18 +387,29 @@ namespace NetworkExample.UnityDemo.LocalAgent
                         : new Vector3(move.x, 0f, move.y);
                     return true;
                 }
+            }
+            if (TryScan(settings, perception, out command)) return true;
+            investigated[target.NetId] = target.LastStimulusTime;
+            StopInvestigating();
+            return false;
+        }
+
+        /// <summary>
+        /// Turns a full circle on the spot in investigateScanSeconds, starting
+        /// from where the agent looks; false once the circle is done.
+        /// </summary>
+        private bool TryScan(LocalAgentSettings settings, LocalAgentPerception perception,
+            out LocalAgentCommand command)
+        {
+            command = default;
+            if (float.IsNaN(scanStart))
+            {
                 scanStart = perception.Time;
                 scanFromDegrees = Mathf.Atan2(LastAimDirection.x, LastAimDirection.z) * Mathf.Rad2Deg;
             }
-
             float scanSeconds = Mathf.Max(0.1f, Finite(settings.investigateScanSeconds, 1f));
             float progress = (perception.Time - scanStart) / scanSeconds;
-            if (!(progress < 1f))
-            {
-                investigated[target.NetId] = target.LastSeenTime;
-                StopInvestigating();
-                return false;
-            }
+            if (!(progress < 1f)) return false;
             float yaw = (scanFromDegrees + 360f * Mathf.Max(0f, progress)) * Mathf.Deg2Rad;
             command.AimDirection = new Vector3(Mathf.Sin(yaw), 0f, Mathf.Cos(yaw));
             return true;

@@ -110,6 +110,9 @@ namespace NetworkExample.UnityDemo.Client
         private RenderEntityState[] agentObservations;
         private int agentObservationCount;
         private float agentObservationTime;
+        // Damage events to the local player since the agent last perceived; events
+        // arrive every frame, the agent perceives once per input tick.
+        private int agentDamageTaken;
         private Dictionary<byte, KernelActionTriggerMode> weaponFireTriggerModes;
         private DetourNavMeshQuery agentNavMesh;
         /// <summary>The synchronized catalog's navigation mesh, or null when it could not be read.</summary>
@@ -253,6 +256,9 @@ namespace NetworkExample.UnityDemo.Client
 
             uint eventCount = client.Update(Time.unscaledDeltaTime, events);
             WarnIfBufferFilled(eventCount, events.Length, "event");
+            if (agentMode)
+                agentDamageTaken += LocalAgentPerception.CountDamage(events,
+                    SafeCount(eventCount, events.Length), client.LocalPlayerNetId);
             LogDiagnosticEvents(eventCount);
             LogConnectionState();
             itemPropController.UpdateAuthoritativeState(client);
@@ -406,6 +412,7 @@ namespace NetworkExample.UnityDemo.Client
                 inputSampler.TrySelectWeaponSlot(manualWeaponSlot);
             localAgent.Reset();
             localAgentPerception.Reset();
+            agentDamageTaken = 0;
             aimReticleView?.SetVisible(!agentMode);
             if (agentMode && (localAgentSettings == null ||
                 localAgentSettings.enemyTemplateIds == null ||
@@ -429,7 +436,8 @@ namespace NetworkExample.UnityDemo.Client
                 triggerMode == KernelActionTriggerMode.Hold;
             localAgentPerception.Update(localAgentSettings, agentObservationTime,
                 agentObservations, agentObservationCount, client.LocalPlayerNetId,
-                localAgent.LastAimDirection, agentLineOfSight);
+                localAgent.LastAimDirection, agentLineOfSight, agentDamageTaken);
+            agentDamageTaken = 0;
             LocalAgentCommand command = localAgent.Step(localAgentSettings, localAgentPerception,
                 hasWeapon, weapon, Time.unscaledTime - agentObservationTime, holdTrigger,
                 inputSampler.HeldFireActionInstanceId != 0);
@@ -481,6 +489,7 @@ namespace NetworkExample.UnityDemo.Client
         private void ClearAgentObservation()
         {
             agentObservationCount = 0;
+            agentDamageTaken = 0;
             localAgent.Reset();
             localAgentPerception.Reset();
             agentColliderShapes.Clear();

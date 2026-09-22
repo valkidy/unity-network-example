@@ -20,6 +20,11 @@ namespace NetworkExample.UnityDemo.LocalAgent
         public float LastSeenTime;
         public float LastStimulusTime;
         public bool VisibleNow;
+        /// <summary>
+        /// A sight line reached it at the last sight test. False for an actor
+        /// noticed only by being close; the agent can shoot only what is in sight.
+        /// </summary>
+        public bool InSight;
         /// <summary>Visible for long enough to react to; kept until the actor is forgotten.</summary>
         public bool Confirmed;
         public bool KnownDead;
@@ -43,6 +48,10 @@ namespace NetworkExample.UnityDemo.LocalAgent
     /// confirmed while remembered, and is forgotten memorySeconds after it was
     /// last perceived. Stale records are never seen, and an actor is known dead
     /// only when it is seen dead.
+    ///
+    /// Damage to the agent (Limited only) names no attacker. It is put down to
+    /// the nearest remembered enemy out of sight, which is then perceived again
+    /// (kept in memory, marked Damaged); with no such enemy it is unexplained.
     /// </remarks>
     public sealed class LocalAgentPerception
     {
@@ -74,6 +83,21 @@ namespace NetworkExample.UnityDemo.LocalAgent
         public int LastSightTests { get; private set; }
         /// <summary><see cref="CanSeePoint"/>, allocated once.</summary>
         public Func<Vector3, bool> PointVisibility { get; }
+        /// <summary>When the agent was last damaged; negative infinity if never (always when omniscient).</summary>
+        public float LastDamagedTime { get; private set; } = float.NegativeInfinity;
+        /// <summary>When the agent was last damaged with no remembered enemy to blame.</summary>
+        public float UnexplainedDamageTime { get; private set; } = float.NegativeInfinity;
+
+        /// <summary>How many of the events are damage to <paramref name="netId"/>.</summary>
+        public static int CountDamage(KernelEvent[] events, int count, uint netId)
+        {
+            if (events == null || netId == 0) return 0;
+            int damage = 0;
+            count = Mathf.Clamp(count, 0, events.Length);
+            for (int i = 0; i < count; i++)
+                if (events[i].type == KernelEventType.DamageApplied && events[i].net_id == netId) damage++;
+            return damage;
+        }
 
         public void Reset()
         {
@@ -84,13 +108,15 @@ namespace NetworkExample.UnityDemo.LocalAgent
             SelfPosition = Vector3.zero;
             lastSenseTime = float.NegativeInfinity;
             LastSightTests = 0;
+            LastDamagedTime = UnexplainedDamageTime = float.NegativeInfinity;
         }
 
         /// <param name="facing">Where the agent looks; its horizontal part is used.</param>
         /// <param name="sight">Line-of-sight test for Limited mode; null means nothing blocks.</param>
+        /// <param name="damageTaken">Damage events to the agent since the last update.</param>
         public void Update(LocalAgentSettings settings, float time,
             RenderEntityState[] states, int count, uint localPlayerId,
-            Vector3 facing = default, ILineOfSight sight = null)
+            Vector3 facing = default, ILineOfSight sight = null, int damageTaken = 0)
         {
             actors.Clear();
             HasSelf = false;
@@ -119,7 +145,11 @@ namespace NetworkExample.UnityDemo.LocalAgent
                 SelfPosition = Position(state);
             }
             if (mode == PerceptionMode.Omniscient) PerceiveEverything(states, count, time);
-            else if (HasSelf) PerceiveLimited(states, count, time);
+            else if (HasSelf)
+            {
+                PerceiveLimited(states, count, time);
+                if (damageTaken > 0) PerceiveDamage(time);
+            }
         }
 
         private void PerceiveEverything(RenderEntityState[] states, int count, float time)
@@ -137,6 +167,7 @@ namespace NetworkExample.UnityDemo.LocalAgent
                     LastSeenTime = time,
                     LastStimulusTime = time,
                     VisibleNow = true,
+                    InSight = true,
                     Confirmed = true,
                     LastKind = StimulusKind.Seen,
                 });
@@ -158,11 +189,13 @@ namespace NetworkExample.UnityDemo.LocalAgent
                 RenderEntityState state = states[i];
                 if (!IsObservable(state) || state.net_id == LocalPlayerId) continue;
                 bool known = memory.TryGetValue(state.net_id, out Memory entry);
+                bool inSight = known && entry.Actor.InSight;
                 bool visible = sense ? CanSee(Position(state), state.net_id,
-                        Finite(settings.headSampleHeight, 1.5f), Finite(settings.footSampleHeight, 0.5f))
+                        Finite(settings.headSampleHeight, 1.5f), Finite(settings.footSampleHeight, 0.5f), true, out inSight)
                     // Between sight tests, whatever was in view is tracked where it is.
                     : known && entry.Actor.VisibleNow;
                 if (!visible) continue;
+                entry.Actor.InSight = inSight;
                 sensed.Add(state.net_id);
                 if (!known || !entry.Actor.VisibleNow) entry.VisibleSince = time;
                 entry.Actor.NetId = state.net_id;
@@ -191,7 +224,7 @@ namespace NetworkExample.UnityDemo.LocalAgent
                         memory.Remove(netId);
                         continue;
                     }
-                    entry.Actor.VisibleNow = false;
+                    entry.Actor.VisibleNow = entry.Actor.InSight = false;
                     memory[netId] = entry;
                 }
                 actors.Add(entry.Actor);
@@ -206,17 +239,25 @@ namespace NetworkExample.UnityDemo.LocalAgent
         public bool CanSeePoint(Vector3 point)
         {
             if (settings == null || mode == PerceptionMode.Omniscient) return true;
-            return HasSelf && CanSee(point, 0, 1f, float.NaN);
+            return HasSelf && CanSee(point, 0, 1f, float.NaN, false, out _);
         }
 
-        // A NaN second height tests one sight line only.
-        private bool CanSee(Vector3 target, uint targetNetId, float firstHeight, float secondHeight)
+        // Noticed: in view, or close. inSight: a sight line reaches it, which an
+        // actor noticed only by being close may lack; tested for close targets only
+        // when closeNeedsSight. A NaN second height tests one sight line only.
+        private bool CanSee(Vector3 target, uint targetNetId, float firstHeight, float secondHeight,
+            bool closeNeedsSight, out bool inSight)
         {
+            inSight = false;
             Vector3 offset = target - SelfPosition;
-            float close = NonNegative(settings.closeAwarenessRadius, 2.5f);
-            if (new Vector2(offset.x, offset.z).sqrMagnitude <= close * close) return true;
-
             Vector3 eye = SelfPosition + Vector3.up * Finite(settings.eyeHeight, 1.6f);
+            float close = NonNegative(settings.closeAwarenessRadius, 2.5f);
+            if (new Vector2(offset.x, offset.z).sqrMagnitude <= close * close)
+            {
+                inSight = closeNeedsSight && SightReaches(eye, target, targetNetId, firstHeight, secondHeight);
+                return true;
+            }
+
             float range = NonNegative(settings.visionRange, 40f);
             if ((target - eye).sqrMagnitude > range * range) return false;
             Vector2 look = new Vector2(facing.x, facing.z);
@@ -225,13 +266,47 @@ namespace NetworkExample.UnityDemo.LocalAgent
             if (toward.sqrMagnitude > 1e-6f &&
                 Vector2.Angle(look, toward) > Mathf.Clamp(Finite(settings.fovDegrees, 110f), 0f, 360f) * 0.5f)
                 return false;
+            inSight = SightReaches(eye, target, targetNetId, firstHeight, secondHeight);
+            return inSight;
+        }
 
+        private bool SightReaches(Vector3 eye, Vector3 target, uint targetNetId, float firstHeight, float secondHeight)
+        {
             if (sight == null) return true;
             LastSightTests++;
             if (sight.IsClear(eye, target + Vector3.up * firstHeight, LocalPlayerId, targetNetId)) return true;
             if (float.IsNaN(secondHeight)) return false;
             LastSightTests++;
             return sight.IsClear(eye, target + Vector3.up * secondHeight, LocalPlayerId, targetNetId);
+        }
+
+        // The event names no attacker: blame the nearest remembered enemy out of sight.
+        private void PerceiveDamage(float time)
+        {
+            LastDamagedTime = time;
+            int blamed = -1;
+            float nearest = float.PositiveInfinity;
+            for (int i = 0; i < actors.Count; i++)
+            {
+                PerceivedActor actor = actors[i];
+                if (actor.InSight || actor.KnownDead || actor.ActorType != KernelActorType.Agent ||
+                    settings.enemyTemplateIds == null || actor.TemplateId == 0 ||
+                    Array.IndexOf(settings.enemyTemplateIds, actor.TemplateId) < 0) continue;
+                float distance = (actor.LastKnownPosition - SelfPosition).sqrMagnitude;
+                if (distance < nearest) { nearest = distance; blamed = i; }
+            }
+            if (blamed < 0)
+            {
+                UnexplainedDamageTime = time;
+                return;
+            }
+            PerceivedActor attacker = actors[blamed];
+            attacker.LastStimulusTime = time;
+            attacker.LastKind = StimulusKind.Damaged;
+            actors[blamed] = attacker;
+            Memory entry = memory[attacker.NetId];
+            entry.Actor = attacker;
+            memory[attacker.NetId] = entry;
         }
 
         // hp is not consulted: snapshots carry it only for players, and the server sets
