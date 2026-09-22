@@ -99,6 +99,11 @@ namespace NetworkExample.UnityDemo.Client
 
         private readonly LocalAgentController localAgent = new LocalAgentController();
         private readonly LocalAgentPerception localAgentPerception = new LocalAgentPerception();
+        // Every collider of the observed frame: props and actors can hide what is behind
+        // them only through these, as the terrain is the scene's only Unity collider.
+        private readonly KernelColliderShapeSource agentColliderShapes =
+            new KernelColliderShapeSource(nameof(ClientRunner) + " agent sight");
+        private readonly ShapeLineOfSight agentLineOfSight = new ShapeLineOfSight();
         private bool agentMode;
         private bool pendingInputHandoff;
         private int manualWeaponSlot = -1;
@@ -336,6 +341,8 @@ namespace NetworkExample.UnityDemo.Client
                 for (int j = 0; j < agentObservationCount; j++)
                     if (agentObservations[j].net_id == lifecycleEvents[i].net_id)
                         agentObservations[j].net_id = 0;
+            if (agentMode)
+                CaptureAgentSight();
 
             if (debugView != null)
             {
@@ -474,7 +481,22 @@ namespace NetworkExample.UnityDemo.Client
             agentObservationCount = 0;
             localAgent.Reset();
             localAgentPerception.Reset();
+            agentColliderShapes.Clear();
+            agentLineOfSight.SetShapes(null, 0);
         }
+
+        // Taken with the observation, so the colliders match the positions the agent sees.
+        private void CaptureAgentSight()
+        {
+            agentColliderShapes.Capture(client.Kernel, agentObservations, agentObservationCount);
+            agentLineOfSight.SetShapes(agentColliderShapes.Shapes, agentColliderShapes.Count);
+            if (agentLineOfSight.TerrainBlocks == null)
+                agentLineOfSight.TerrainBlocks = TerrainBlocksSight;
+        }
+
+        private bool TerrainBlocksSight(Vector3 from, Vector3 to) =>
+            Physics.Linecast(from, to, localAgentSettings != null ? localAgentSettings.sightBlockingLayers : 1,
+                QueryTriggerInteraction.Ignore);
 
         private void EnsureComponents()
         {
@@ -934,6 +956,7 @@ namespace NetworkExample.UnityDemo.Client
             ConfigureInstantWeaponTracers(bundleBytes, syncResult.Manifest.entry_path);
             ConfigureWeaponFireTriggerModes(bundleBytes, syncResult.Manifest.entry_path);
             ConfigureAgentNavMesh(bundleBytes, syncResult.Manifest.entry_path);
+            agentColliderShapes.InvalidateCatalog();
             return true;
         }
 

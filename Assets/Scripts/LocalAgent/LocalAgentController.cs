@@ -30,6 +30,11 @@ namespace NetworkExample.UnityDemo.LocalAgent
         [Min(0.1f)] public float waypointReachDistance = 0.75f;
         [Tooltip("Input ticks without 0.5 m of progress before a target is set aside (30 Hz by default).")]
         [Min(1)] public int stuckSteps = 45;
+
+        [Header("Perception")]
+        [Tooltip("Unity physics layers that block sight: the terrain. Props and actors " +
+            "block it through the kernel's collider shapes.")]
+        public LayerMask sightBlockingLayers = 1; // Default, the terrain's layer
     }
 
     public enum LocalAgentState { Idle, Following, Combat, Exploring }

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Text;
 using NetworkExample.Kernel;
+using NetworkExample.UnityDemo.Common;
 using UnityEngine;
 
 namespace NetworkExample.UnityDemo.Rendering
@@ -14,11 +15,10 @@ namespace NetworkExample.UnityDemo.Rendering
     ///
     /// All geometry comes straight from the kernel ABI (package
     /// <c>com.network-example.kernel</c>). There is no <c>bundle.bytes</c> re-parsing.
-    /// Collider shapes come from <see cref="Kernel.Kernel.QueryColliderShapes"/>; for any
-    /// render entity the live query does not cover (e.g. static hit colliders the kernel
-    /// does not materialize on a client), the shape is reconstructed from the kernel's own
-    /// parsed catalog via <see cref="Kernel.Kernel.GetColliderBindings"/> +
-    /// <see cref="Kernel.Kernel.GetColliderTemplates"/> applied to the render transform.
+    /// Collider shapes come from <see cref="KernelColliderShapeSource"/>: the kernel's live
+    /// <see cref="Kernel.Kernel.QueryColliderShapes"/>, with any render entity it does not
+    /// cover rebuilt from the kernel's own parsed catalog at the render transform. The
+    /// local agent's line of sight reads the same source.
     /// Vision state comes from <see cref="Kernel.Kernel.QueryVisionState"/>.
     /// </summary>
     [DisallowMultipleComponent]
@@ -79,8 +79,6 @@ namespace NetworkExample.UnityDemo.Rendering
 
         private RenderEntityState[] renderStates;
         private int renderStateCount;
-        private KernelColliderShapeView[] colliderShapes;
-        private int colliderShapeCount;
         private KernelVisionStateView[] visionStates;
         private int visionStateCount;
         private KernelNetworkStats networkStats;
@@ -100,30 +98,13 @@ namespace NetworkExample.UnityDemo.Rendering
         private int skeletonStateCount;
         private bool hasSkeletonStates;
 
-        // Kernel catalog read-back (Request 4): collider templates by id and entity-type
-        // bindings. The catalog is static after load, so these are built once and reused.
-        private readonly Dictionary<uint, KernelColliderTemplateDefinition> colliderTemplates =
-            new Dictionary<uint, KernelColliderTemplateDefinition>();
-        private readonly Dictionary<ushort, KernelColliderBindingDefinition> colliderBindings =
-            new Dictionary<ushort, KernelColliderBindingDefinition>();
-
-        // Projectile templates by id. Projectiles have no entity-type collider binding (their
-        // collider is defined per projectile template, not per entity type), so the binding
-        // lookup never covers them. This map lets a projectile's collider be resolved through
-        // its context-dependent template_id -> collider_template_id.
-        private readonly Dictionary<uint, KernelProjectileTemplateDefinition> projectileTemplates =
-            new Dictionary<uint, KernelProjectileTemplateDefinition>();
-        private bool catalogLoaded;
+        // Live collider query completed with shapes rebuilt from the kernel's catalog
+        // (Request 4), which also serves the collider and projectile templates below.
+        private KernelColliderShapeSource colliderSource;
 
         // net_id -> world position for this frame's render states, so vision visibility/target
         // lines can be drawn without extra kernel queries.
         private readonly Dictionary<uint, Vector3> entityPositions = new Dictionary<uint, Vector3>();
-
-        // net_ids already covered by the live collider query, so catalog-reconstructed shapes
-        // are not drawn on top of them. Vision shape coverage is tracked separately so the
-        // vision overlay does not draw a second cone.
-        private readonly HashSet<uint> liveColliderNetIds = new HashSet<uint>();
-        private readonly HashSet<uint> liveVisionNetIds = new HashSet<uint>();
 
         public void SetEnabled(bool value)
         {
@@ -141,64 +122,15 @@ namespace NetworkExample.UnityDemo.Rendering
 
             if (kernel == null || !enableVisualDebug)
             {
-                colliderShapeCount = 0;
+                colliderSource?.Clear();
                 visionStateCount = 0;
                 hasNetworkStats = false;
                 return;
             }
 
             EnsureBuffers();
-            EnsureCatalog(kernel);
             CacheEntityPositions();
-
-            // Request 1 + 2: one query-all call returns every active collider the kernel has
-            // materialized (live projectile/beam/segment colliders, and on a server the
-            // player/enemy hit colliders too). The kernel reports the full count it found even
-            // when our buffer is too small, so growing once and re-querying captures them all
-            // instead of silently truncating.
-            uint colliderFound = kernel.QueryColliderShapes(null, colliderShapes);
-            if (colliderFound > (uint)colliderShapes.Length)
-            {
-                GrowColliderBuffer((int)colliderFound);
-                colliderFound = kernel.QueryColliderShapes(null, colliderShapes);
-            }
-            colliderShapeCount = colliderFound > (uint)colliderShapes.Length
-                ? colliderShapes.Length
-                : (int)colliderFound;
-
-            liveColliderNetIds.Clear();
-            liveVisionNetIds.Clear();
-            for (int index = 0; index < colliderShapeCount; ++index)
-            {
-                KernelColliderShapeView shape = colliderShapes[index];
-                liveColliderNetIds.Add(shape.entity_net_id);
-                if ((shape.purpose_flags & (uint)KernelColliderPurpose.Vision) != 0)
-                {
-                    liveVisionNetIds.Add(shape.entity_net_id);
-                }
-            }
-
-            // For every render entity the live query did not cover, reconstruct its collider
-            // from the kernel's parsed catalog (per-instance collider_template_id when present,
-            // otherwise the entity-type binding) applied to the render transform.
-            for (int index = 0; index < renderStateCount; ++index)
-            {
-                RenderEntityState state = states[index];
-                if (state.net_id != 0 && liveColliderNetIds.Contains(state.net_id))
-                {
-                    continue;
-                }
-
-                if (TryReconstructColliderShape(state, out KernelColliderShapeView shape))
-                {
-                    if (colliderShapeCount == colliderShapes.Length)
-                    {
-                        GrowColliderBuffer(colliderShapeCount + 1);
-                    }
-
-                    colliderShapes[colliderShapeCount++] = shape;
-                }
-            }
+            colliderSource.Capture(kernel, states, count);
 
             if (drawVision)
             {
@@ -224,10 +156,9 @@ namespace NetworkExample.UnityDemo.Rendering
 
         private void EnsureBuffers()
         {
-            int colliderCapacity = Mathf.Max(1, maxColliderShapes);
-            if (colliderShapes == null || colliderShapes.Length != colliderCapacity)
+            if (colliderSource == null)
             {
-                colliderShapes = new KernelColliderShapeView[colliderCapacity];
+                colliderSource = new KernelColliderShapeSource(nameof(NetworkDebugView), maxColliderShapes);
             }
 
             int visionCapacity = Mathf.Max(1, maxVisionAgents);
@@ -235,85 +166,6 @@ namespace NetworkExample.UnityDemo.Rendering
             {
                 visionStates = new KernelVisionStateView[visionCapacity];
             }
-        }
-
-        // Grows the collider shape buffer so it can hold at least <paramref name="required"/>
-        // entries, preserving the shapes captured so far. Doubling keeps repeated growth
-        // amortized, and the new capacity is written back to maxColliderShapes so EnsureBuffers
-        // does not shrink it on the next frame. A warning is logged whenever the cap changes.
-        private void GrowColliderBuffer(int required)
-        {
-            int oldCapacity = colliderShapes != null ? colliderShapes.Length : 0;
-            if (required <= oldCapacity)
-            {
-                return;
-            }
-
-            int newCapacity = Mathf.Max(required, oldCapacity * 2);
-            KernelColliderShapeView[] grown = new KernelColliderShapeView[newCapacity];
-            if (colliderShapeCount > 0 && colliderShapes != null)
-            {
-                System.Array.Copy(colliderShapes, grown, Mathf.Min(colliderShapeCount, oldCapacity));
-            }
-
-            colliderShapes = grown;
-            maxColliderShapes = newCapacity;
-
-            Debug.LogWarning(
-                $"[NetworkDebugView] Collider debug buffer grew from {oldCapacity} to {newCapacity} " +
-                $"(needed {required}) to avoid truncating collider shapes.");
-        }
-
-        // Request 4: read the loaded collider templates and entity-type bindings straight from
-        // the kernel instead of re-parsing the catalog bundle.
-        private void EnsureCatalog(NetworkExample.Kernel.Kernel kernel)
-        {
-            if (catalogLoaded)
-            {
-                return;
-            }
-
-            uint templateCount = kernel.GetColliderTemplates(null);
-            if (templateCount == 0)
-            {
-                // Catalog not loaded yet (or kernel not ready). Retry next frame.
-                return;
-            }
-
-            var templateBuffer = new KernelColliderTemplateDefinition[templateCount];
-            uint readTemplates = kernel.GetColliderTemplates(templateBuffer);
-            colliderTemplates.Clear();
-            for (int index = 0; index < readTemplates && index < templateBuffer.Length; ++index)
-            {
-                colliderTemplates[templateBuffer[index].template_id] = templateBuffer[index];
-            }
-
-            colliderBindings.Clear();
-            uint bindingCount = kernel.GetColliderBindings(null);
-            if (bindingCount > 0)
-            {
-                var bindingBuffer = new KernelColliderBindingDefinition[bindingCount];
-                uint readBindings = kernel.GetColliderBindings(bindingBuffer);
-                for (int index = 0; index < readBindings && index < bindingBuffer.Length; ++index)
-                {
-                    colliderBindings[bindingBuffer[index].entity_type] = bindingBuffer[index];
-                }
-            }
-
-            projectileTemplates.Clear();
-            uint projectileCount = kernel.GetProjectileTemplates(null);
-            if (projectileCount > 0)
-            {
-                var projectileBuffer = new KernelProjectileTemplateDefinition[projectileCount];
-                uint readProjectiles = kernel.GetProjectileTemplates(projectileBuffer);
-                for (int index = 0; index < readProjectiles && index < projectileBuffer.Length; ++index)
-                {
-                    projectileTemplates[projectileBuffer[index].projectile_template_id] =
-                        projectileBuffer[index];
-                }
-            }
-
-            catalogLoaded = true;
         }
 
         private void CacheEntityPositions()
@@ -334,68 +186,6 @@ namespace NetworkExample.UnityDemo.Rendering
             }
         }
 
-        // Reconstructs a collider shape for one render entity from the kernel catalog, placing
-        // the template at the entity's render transform plus the binding's local offset.
-        private bool TryReconstructColliderShape(RenderEntityState state, out KernelColliderShapeView shape)
-        {
-            shape = default;
-
-            // Per-instance collider id (Request 3) wins; fall back to the entity-type binding.
-            uint templateId = state.collider_template_id;
-            bool hasBinding = colliderBindings.TryGetValue(
-                (ushort)state.entity_type,
-                out KernelColliderBindingDefinition binding);
-            if (templateId == 0 && hasBinding)
-            {
-                templateId = binding.collider_template_id;
-            }
-
-            // Projectiles have no entity-type binding (their collider lives on the projectile
-            // template), so resolve through template_id -> collider_template_id.
-            if (templateId == 0 &&
-                state.entity_type == KernelEntityType.Projectile &&
-                projectileTemplates.TryGetValue(
-                    state.template_id,
-                    out KernelProjectileTemplateDefinition projectileTemplate))
-            {
-                templateId = projectileTemplate.mechanics.collider_template_id;
-            }
-
-            if (templateId == 0 ||
-                !colliderTemplates.TryGetValue(templateId, out KernelColliderTemplateDefinition template))
-            {
-                return false;
-            }
-
-            Vector3 entityPos = ToVector3(state.position);
-            Quaternion entityRot = ToQuaternion(state.rotation);
-            Vector3 localOffset = ToVector3(template.center);
-            Quaternion localRot = Quaternion.identity;
-            if (hasBinding)
-            {
-                localOffset += ToVector3(binding.local_position);
-                localRot = ToQuaternion(binding.local_rotation);
-            }
-
-            Quaternion worldRot = entityRot * localRot;
-            Vector3 worldCenter = entityPos + entityRot * localOffset;
-
-            shape.entity_net_id = state.net_id;
-            shape.entity_type = (ushort)state.entity_type;
-            shape.actor_type = state.actor_type;
-            shape.collider_template_id = templateId;
-            shape.shape_type = template.shape_type;
-            shape.shape_params = template.shape_params;
-            shape.purpose_flags = template.purpose_flags;
-            shape.world_center = ToKernelVec3(worldCenter);
-            shape.world_rotation = ToKernelQuat(worldRot);
-
-            // Segment colliders need explicit endpoints; bound colliders here are never
-            // segments (those are transient hit-scan colliders from the live query), so the
-            // endpoints are left at the center and Segment shapes simply collapse to a point.
-            return true;
-        }
-
         private void OnRenderObject()
         {
             if (!enableVisualDebug)
@@ -412,11 +202,11 @@ namespace NetworkExample.UnityDemo.Rendering
             GL.MultMatrix(Matrix4x4.identity);
             GL.Begin(GL.LINES);
 
-            if (drawColliders && colliderShapes != null)
+            if (drawColliders && colliderSource != null)
             {
-                for (int index = 0; index < colliderShapeCount; ++index)
+                for (int index = 0; index < colliderSource.Count; ++index)
                 {
-                    DrawColliderShape(colliderShapes[index]);
+                    DrawColliderShape(colliderSource.Shapes[index]);
                 }
             }
 
@@ -540,13 +330,13 @@ namespace NetworkExample.UnityDemo.Rendering
 
             statsBuilder
                 .Append("\nColliders ")
-                .Append(colliderShapeCount)
+                .Append(colliderSource != null ? colliderSource.Count : 0)
                 .Append(" (cat T:")
-                .Append(colliderTemplates.Count)
+                .Append(colliderSource != null ? colliderSource.ColliderTemplateCount : 0)
                 .Append(" B:")
-                .Append(colliderBindings.Count)
+                .Append(colliderSource != null ? colliderSource.ColliderBindingCount : 0)
                 .Append(" P:")
-                .Append(projectileTemplates.Count)
+                .Append(colliderSource != null ? colliderSource.ProjectileTemplateCount : 0)
                 .Append(")");
             if (drawVision)
             {
@@ -692,12 +482,12 @@ namespace NetworkExample.UnityDemo.Rendering
 
             // Draw the cone here only if the live collider query did not already return a
             // vision-purpose shape for this agent (that shape is drawn by DrawColliderShape).
-            if (!liveVisionNetIds.Contains(vision.agent_net_id))
+            if (!colliderSource.HasLiveVisionShape(vision.agent_net_id))
             {
                 uint templateId = vision.resolved_collider_template_id != 0
                     ? vision.resolved_collider_template_id
                     : vision.vision_collider_template_id;
-                if (colliderTemplates.TryGetValue(templateId, out KernelColliderTemplateDefinition template) &&
+                if (colliderSource.TryGetColliderTemplate(templateId, out KernelColliderTemplateDefinition template) &&
                     (KernelColliderShapeType)template.shape_type == KernelColliderShapeType.Cone)
                 {
                     DrawCone(origin, forward, template.shape_params.x, template.shape_params.y);
@@ -961,7 +751,8 @@ namespace NetworkExample.UnityDemo.Rendering
         private KernelProjectileType ProjectileTypeFor(RenderEntityState state)
         {
             if (state.entity_type == KernelEntityType.Projectile &&
-                projectileTemplates.TryGetValue(
+                colliderSource != null &&
+                colliderSource.TryGetProjectileTemplate(
                     state.template_id,
                     out KernelProjectileTemplateDefinition projectileTemplate))
             {
@@ -1052,16 +843,6 @@ namespace NetworkExample.UnityDemo.Rendering
         private static Vector3 ToVector3(KernelVec4 value)
         {
             return new Vector3(value.x, value.y, value.z);
-        }
-
-        private static KernelVec3 ToKernelVec3(Vector3 value)
-        {
-            return new KernelVec3(value.x, value.y, value.z);
-        }
-
-        private static KernelQuat ToKernelQuat(Quaternion value)
-        {
-            return new KernelQuat(value.x, value.y, value.z, value.w);
         }
 
         private static Quaternion ToQuaternion(KernelQuat value)
