@@ -140,10 +140,14 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
                 actor_type = type, hp = 100, template_id = 100, position = new KernelVec3(x, 0, 0) };
 
         private static LocalAgentCommand Step(LocalAgentController controller, LocalAgentSettings settings,
-            params RenderEntityState[] states) =>
-            controller.Step(settings, states, states.Length, 1, true,
+            params RenderEntityState[] states)
+        {
+            var perception = new LocalAgentPerception(); // Omniscient: sees the render states as they are
+            perception.Update(settings, 0f, states, states.Length, 1);
+            return controller.Step(settings, perception, true,
                 new KernelLocalWeaponState { weapon_id = 0, ammo = 10,
                     flags = KernelConstants.LocalWeaponStateFlagWeaponIdValid }, 0f);
+        }
 
         [Test]
         public void AloneTheAgentExploresAndWithoutANavMeshItStaysPut()

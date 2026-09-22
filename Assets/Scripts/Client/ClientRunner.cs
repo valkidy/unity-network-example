@@ -98,6 +98,7 @@ namespace NetworkExample.UnityDemo.Client
         private LocalAgentSettings localAgentSettings = new LocalAgentSettings();
 
         private readonly LocalAgentController localAgent = new LocalAgentController();
+        private readonly LocalAgentPerception localAgentPerception = new LocalAgentPerception();
         private bool agentMode;
         private bool pendingInputHandoff;
         private int manualWeaponSlot = -1;
@@ -396,6 +397,7 @@ namespace NetworkExample.UnityDemo.Client
             else if (manualWeaponSlot >= 0)
                 inputSampler.TrySelectWeaponSlot(manualWeaponSlot);
             localAgent.Reset();
+            localAgentPerception.Reset();
             aimReticleView?.SetVisible(!agentMode);
             if (agentMode && (localAgentSettings == null ||
                 localAgentSettings.enemyTemplateIds == null ||
@@ -417,9 +419,10 @@ namespace NetworkExample.UnityDemo.Client
                 weaponFireTriggerModes.TryGetValue(inputSampler.SelectedWeaponId,
                     out KernelActionTriggerMode triggerMode) &&
                 triggerMode == KernelActionTriggerMode.Hold;
-            LocalAgentCommand command = localAgent.Step(localAgentSettings, agentObservations,
-                agentObservationCount, client.LocalPlayerNetId, hasWeapon, weapon,
-                Time.unscaledTime - agentObservationTime, holdTrigger,
+            localAgentPerception.Update(localAgentSettings, agentObservationTime,
+                agentObservations, agentObservationCount, client.LocalPlayerNetId);
+            LocalAgentCommand command = localAgent.Step(localAgentSettings, localAgentPerception,
+                hasWeapon, weapon, Time.unscaledTime - agentObservationTime, holdTrigger,
                 inputSampler.HeldFireActionInstanceId != 0);
             return inputSampler.SampleExplicit(command.Move, command.AimDirection,
                 command.Aim, command.Fire, command.Reload);
@@ -470,6 +473,7 @@ namespace NetworkExample.UnityDemo.Client
         {
             agentObservationCount = 0;
             localAgent.Reset();
+            localAgentPerception.Reset();
         }
 
         private void EnsureComponents()

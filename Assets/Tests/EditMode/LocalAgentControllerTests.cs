@@ -8,12 +8,14 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
     public sealed class LocalAgentControllerTests
     {
         private LocalAgentController controller;
+        private LocalAgentPerception perception;
         private LocalAgentSettings settings;
         private KernelLocalWeaponState weapon;
         [SetUp]
         public void Setup()
         {
             controller = new LocalAgentController();
+            perception = new LocalAgentPerception();
             settings = new LocalAgentSettings { enemyTemplateIds = new uint[] { 100 } };
             weapon = new KernelLocalWeaponState { weapon_id = 3, ammo = 10,
                 flags = KernelConstants.LocalWeaponStateFlagWeaponIdValid };
@@ -22,7 +24,14 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             new RenderEntityState { net_id = id, entity_type = KernelEntityType.Actor,
                 actor_type = type, hp = 100, template_id = 100, position = new KernelVec3(x, 0, 0) };
         private LocalAgentCommand Step(params RenderEntityState[] states) =>
-            controller.Step(settings, states, states.Length, 1, true, weapon, 0f);
+            StepWith(states, states.Length, true, weapon, 0f);
+        // Omniscient perception: the controller sees exactly the render states.
+        private LocalAgentCommand StepWith(RenderEntityState[] states, int count, bool hasWeapon,
+            KernelLocalWeaponState weaponState, float age, bool holdTrigger = false, bool fireActionLive = false)
+        {
+            perception.Update(settings, 0f, states, count, 1);
+            return controller.Step(settings, perception, hasWeapon, weaponState, age, holdTrigger, fireActionLive);
+        }
 
         [Test]
         public void FollowLocksNearestWithStableTieAndReselectsWhenMissing()
@@ -139,7 +148,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             Assert.That(Step(Actor(2, 5)).Move, Is.EqualTo(Vector2.zero));
             Assert.That(controller.FollowTargetId, Is.Zero);
             var states = new[] { Actor(1, 0), Actor(2, 5) };
-            controller.Step(settings, states, 2, 1, true, weapon, 0.6f);
+            StepWith(states, 2, true, weapon, 0.6f);
             Assert.That(controller.State, Is.EqualTo(LocalAgentState.Idle));
         }
 
@@ -170,7 +179,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             var states = new[] { Actor(1, 0), Actor(2, 5, KernelActorType.Agent) };
             bool[] fire = new bool[5];
             for (int i = 0; i < fire.Length; i++)
-                fire[i] = controller.Step(settings, states, 2, 1, true, weapon, 0f, false, true).Fire;
+                fire[i] = StepWith(states, 2, true, weapon, 0f, false, true).Fire;
             Assert.That(fire, Is.EqualTo(new[] { true, false, true, false, true }));
         }
 
@@ -179,7 +188,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         {
             var states = new[] { Actor(1, 0), Actor(2, 5, KernelActorType.Agent) };
             LocalAgentCommand Hold(bool live) =>
-                controller.Step(settings, states, 2, 1, true, weapon, 0f, true, live);
+                StepWith(states, 2, true, weapon, 0f, true, live);
             Assert.That(Hold(false).Fire, Is.True);
             Assert.That(Hold(true).Fire, Is.True);
             Assert.That(Hold(true).Fire, Is.True);
@@ -201,12 +210,22 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
+        public void LastAimDirectionKeepsTheLastNonZeroAim()
+        {
+            Assert.That(controller.LastAimDirection, Is.EqualTo(Vector3.forward));
+            Step(Actor(1, 0), Actor(3, -5, KernelActorType.Agent));
+            Assert.That(controller.LastAimDirection, Is.EqualTo(Vector3.left));
+            Assert.That(Step(Actor(2, 5)).AimDirection, Is.EqualTo(Vector3.zero), "no self: default command");
+            Assert.That(controller.LastAimDirection, Is.EqualTo(Vector3.left));
+        }
+
+        [Test]
         public void UnknownWeaponDoesNotFireOrReloadAndCountBoundsAreRespected()
         {
             var states = new[] { Actor(1, 0), Actor(2, 5, KernelActorType.Agent) };
-            var command = controller.Step(settings, states, 99, 1, false, default, 0);
+            var command = StepWith(states, 99, false, default, 0);
             Assert.That(command.Fire || command.Reload, Is.False);
-            controller.Step(settings, states, 1, 1, true, weapon, 0);
+            StepWith(states, 1, true, weapon, 0);
             Assert.That(controller.AttackTargetId, Is.Zero);
         }
     }

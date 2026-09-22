@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using NetworkExample.Kernel;
 using UnityEngine;
 
@@ -52,6 +53,8 @@ namespace NetworkExample.UnityDemo.LocalAgent
         public LocalAgentState State { get; private set; }
         public uint FollowTargetId { get; private set; }
         public uint AttackTargetId { get; private set; }
+        /// <summary>The last non-zero aim the agent sent: where it is looking.</summary>
+        public Vector3 LastAimDirection { get; private set; } = Vector3.forward;
         private bool following;
         private bool reloadRequested;
         private bool reloadPressedLastStep;
@@ -78,63 +81,69 @@ namespace NetworkExample.UnityDemo.LocalAgent
             explorer?.ClearPath(); // cells already seen stay seen
         }
 
+        /// <param name="perception">What the agent perceives, updated from the
+        /// observation <paramref name="observationAgeSeconds"/> describes.</param>
         /// <param name="holdTrigger">The active weapon's fire action is hold-mode.
         /// Unknown weapons should pass false: re-pressing fires every weapon.</param>
         /// <param name="fireActionLive">The input sampler still tracks the fire
         /// action the last press started (it drops one the kernel refused).</param>
-        public LocalAgentCommand Step(LocalAgentSettings settings,
-            RenderEntityState[] states, int count, uint localPlayerId,
+        public LocalAgentCommand Step(LocalAgentSettings settings, LocalAgentPerception perception,
             bool hasWeaponState, KernelLocalWeaponState weapon, float observationAgeSeconds,
             bool holdTrigger = false, bool fireActionLive = false)
+        {
+            LocalAgentCommand command = Decide(settings, perception, hasWeaponState, weapon,
+                observationAgeSeconds, holdTrigger, fireActionLive);
+            if (command.AimDirection.sqrMagnitude > 0.000001f)
+                LastAimDirection = command.AimDirection.normalized;
+            return command;
+        }
+
+        private LocalAgentCommand Decide(LocalAgentSettings settings, LocalAgentPerception perception,
+            bool hasWeaponState, KernelLocalWeaponState weapon, float observationAgeSeconds,
+            bool holdTrigger, bool fireActionLive)
         {
             bool canPressReload = !reloadPressedLastStep;
             reloadPressedLastStep = false;
             bool fireWasPressed = firePressedLastStep;
             firePressedLastStep = false;
-            if (settings == null || states == null || localPlayerId == 0 ||
+            if (settings == null || perception == null || !perception.HasSelf ||
                 !float.IsFinite(observationAgeSeconds) || observationAgeSeconds < 0f ||
                 observationAgeSeconds > 0.5f)
             {
                 Reset();
                 return default;
             }
-            count = Mathf.Clamp(count, 0, states.Length);
-            int localIndex = -1;
-            for (int i = 0; i < count; i++)
-                if (IsLivingActor(states[i]) && states[i].actor_type == KernelActorType.Player &&
-                    states[i].net_id == localPlayerId) localIndex = i;
-            if (localIndex < 0)
-            {
-                Reset();
-                return default;
-            }
 
-            Vector3 position = Position(states[localIndex]);
+            IReadOnlyList<PerceivedActor> actors = perception.Actors;
+            Vector3 position = perception.SelfPosition;
             int followIndex = -1, nearestPlayer = -1, enemyIndex = -1;
             float playerDistance = float.PositiveInfinity;
             float enemyDistance = float.PositiveInfinity;
             float range = NonNegative(settings.threatRange, 15f);
-            for (int i = 0; i < count; i++)
+            for (int i = 0; i < actors.Count; i++)
             {
-                RenderEntityState candidate = states[i];
-                if (!IsLivingActor(candidate) || candidate.net_id == localPlayerId) continue;
-                float distance = (Position(candidate) - position).sqrMagnitude;
+                PerceivedActor candidate = actors[i];
+                if (candidate.KnownDead || candidate.NetId == 0 ||
+                    candidate.NetId == perception.LocalPlayerId) continue;
+                float distance = (candidate.LastKnownPosition - position).sqrMagnitude;
                 if (!float.IsFinite(distance)) continue;
-                if (candidate.actor_type == KernelActorType.Player)
+                if (candidate.ActorType == KernelActorType.Player)
                 {
-                    if (candidate.net_id == FollowTargetId) followIndex = i;
-                    if (Better(states, i, nearestPlayer, distance, playerDistance))
+                    if (candidate.NetId == FollowTargetId) followIndex = i;
+                    if (Better(actors, i, nearestPlayer, distance, playerDistance))
                     { nearestPlayer = i; playerDistance = distance; }
                 }
-                else if (candidate.actor_type == KernelActorType.Agent &&
-                    IsEnemy(settings, candidate.template_id) && distance <= range * range &&
-                    Better(states, i, enemyIndex, distance, enemyDistance))
+                // Only a threat the agent can see, and has had time to react to, is shot at.
+                else if (candidate.ActorType == KernelActorType.Agent &&
+                    candidate.VisibleNow && candidate.Confirmed &&
+                    IsEnemy(settings, candidate.TemplateId) && distance <= range * range &&
+                    Better(actors, i, enemyIndex, distance, enemyDistance))
                 { enemyIndex = i; enemyDistance = distance; }
             }
             if (followIndex < 0)
             {
                 followIndex = nearestPlayer;
-                FollowTargetId = followIndex < 0 ? 0 : states[followIndex].net_id;
+                FollowTargetId = followIndex < 0 ? 0 : actors[followIndex].NetId;
                 following = false;
             }
 
@@ -142,8 +151,8 @@ namespace NetworkExample.UnityDemo.LocalAgent
             {
                 State = LocalAgentState.Combat;
                 following = false;
-                AttackTargetId = states[enemyIndex].net_id;
-                Vector3 offset = Position(states[enemyIndex]) - position + Vector3.up *
+                AttackTargetId = actors[enemyIndex].NetId;
+                Vector3 offset = actors[enemyIndex].LastKnownPosition - position + Vector3.up *
                     (Finite(settings.targetHeight, 0.5f) - Finite(settings.muzzleHeight, 0.5f));
                 LocalAgentCommand command = new LocalAgentCommand
                 { Aim = true, AimDirection = offset.sqrMagnitude > 0.000001f ? offset.normalized : Vector3.forward };
@@ -192,7 +201,7 @@ namespace NetworkExample.UnityDemo.LocalAgent
                 return Explore(activeExplorer, settings, position, null, 0f);
             }
 
-            Vector3 followPosition = Position(states[followIndex]);
+            Vector3 followPosition = actors[followIndex].LastKnownPosition;
             Vector3 delta = followPosition - position;
             Vector2 planar = new Vector2(delta.x, delta.z);
             float stop = NonNegative(settings.followStopDistance, 3f);
@@ -240,22 +249,12 @@ namespace NetworkExample.UnityDemo.LocalAgent
             };
         }
 
-        private static bool Better(RenderEntityState[] states, int index, int previous,
+        private static bool Better(IReadOnlyList<PerceivedActor> actors, int index, int previous,
             float distance, float bestDistance) => previous < 0 || distance < bestDistance ||
-            distance == bestDistance && states[index].net_id < states[previous].net_id;
+            distance == bestDistance && actors[index].NetId < actors[previous].NetId;
         private static bool IsEnemy(LocalAgentSettings settings, uint templateId) =>
             templateId != 0 && settings.enemyTemplateIds != null &&
             Array.IndexOf(settings.enemyTemplateIds, templateId) >= 0;
-        // hp is not consulted: snapshots carry it only for players, and the server sets
-        // VisualFlagDead from hp == 0 in the same tick for every actor. A Stale record is
-        // the kernel's fill-in for an entity missing from recent snapshots; it carries
-        // no dead flag, so it cannot say whether the actor is alive.
-        private static bool IsLivingActor(RenderEntityState state) => state.net_id != 0 &&
-            state.entity_type == KernelEntityType.Actor && state.status != RenderEntityStatus.Stale &&
-            (state.visual_flags & KernelConstants.VisualFlagDead) == 0 &&
-            float.IsFinite(state.position.x) && float.IsFinite(state.position.y) && float.IsFinite(state.position.z);
-        private static Vector3 Position(RenderEntityState state) =>
-            new Vector3(state.position.x, state.position.y, state.position.z);
         private static float Finite(float value, float fallback) => float.IsFinite(value) ? value : fallback;
         private static float NonNegative(float value, float fallback) => Mathf.Max(0f, Finite(value, fallback));
     }

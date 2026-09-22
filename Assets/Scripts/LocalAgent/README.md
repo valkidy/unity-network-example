@@ -21,7 +21,11 @@ one tick when the kernel refuses it. Trigger modes are read from the synchronize
 unknown weapon is treated as press-mode, which fires every weapon (hold ones at a lower rate).
 
 The controller lives in its own assembly depending only on Unity and Kernel. ClientRunner supplies
-completed render observations and weapon state; commands go through the same input sequence and
+completed render observations to `LocalAgentPerception`, and the controller decides only from what
+that perceives (`PerceivedActor`: last known position, visible, confirmed, known dead) plus the
+agent's own position and weapon state. The perception is currently omniscient: every living actor
+is perceived visible and confirmed where it is, so behaviour matches reading the render states
+directly. Only visible, confirmed enemies are shot at. Commands go through the same input sequence and
 action bookkeeping as manual input. It uses the existing submission clock (30 Hz by default).
 Switching modes submits one neutral/release input before the new source takes over. Manual item
 commands are suppressed while enabled; inventory updates continue. The camera remains available

@@ -55,10 +55,12 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
                     actor_type = KernelActorType.Agent, hp = 100, template_id = 100,
                     position = new KernelVec3(5, 0, 0) },
             };
+            var perception = new LocalAgentPerception();
             var intents = new System.Collections.Generic.HashSet<uint>();
             for (int i = 0; i < 6; i++)
             {
-                LocalAgentCommand command = agent.Step(settings, states, 2, 1, true, weapon, 0f,
+                perception.Update(settings, 0f, states, 2, 1);
+                LocalAgentCommand command = agent.Step(settings, perception, true, weapon, 0f,
                     false, sampler.HeldFireActionInstanceId != 0);
                 var input = sampler.SampleExplicit(command.Move, command.AimDirection,
                     command.Aim, command.Fire, command.Reload);
