@@ -552,6 +552,31 @@ MonoBehaviour:
     targetHeight: 0.5
     preferredWeaponId: 0
     enemyTemplateIds: 0200000015000000160000001700000018000000190000001a0000001c0000001d0000001e0000001f00000020000000
+    enableExploration: 1
+    leashRadius: 15
+    explorationCellSize: 4
+    sightRadius: 6
+    explorationSightChecks: 16
+    waypointReachDistance: 0.75
+    stuckSteps: 45
+    perceptionMode: 1
+    perceptionHz: 10
+    eyeHeight: 1.6
+    visionRange: 30
+    fovDegrees: 110
+    closeAwarenessRadius: 2.5
+    headSampleHeight: 1.5
+    footSampleHeight: 0.5
+    reactionSeconds: 0.25
+    memorySeconds: 8
+    sightBlockingLayers:
+      serializedVersion: 2
+      m_Bits: 1
+    investigateScanSeconds: 1
+    exploreLookAroundSeconds: 4
+    aimErrorStartDegrees: 6
+    aimErrorSettledDegrees: 1.5
+    aimSettleSeconds: 1
 --- !u!4 &543450652889433851
 Transform:
   m_ObjectHideFlags: 0
