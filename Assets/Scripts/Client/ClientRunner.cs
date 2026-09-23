@@ -622,11 +622,42 @@ namespace NetworkExample.UnityDemo.Client
         {
             return new GameplayCatalogSyncOptions
             {
-                CacheDirectory = Path.Combine(
-                    Application.persistentDataPath,
-                    "NetworkExample",
-                    "GameplayCatalogCache"),
+                CacheDirectory = GetGameplayCatalogCacheDirectory(),
             };
+        }
+
+        /// <summary>
+        /// Where the synchronized catalog bundle is cached between sessions.
+        /// </summary>
+        /// <remarks>
+        /// The cache is not optional: the kernel drops its downloaded copy once
+        /// the handshake completes, so <see cref="ConfigureSynchronizedCatalog"/>
+        /// can only read the bundle back from this directory. Each entry adds 178
+        /// characters beneath it -- two SHA-256 hex directories, bundle.zip, and
+        /// the .tmp.&lt;guid&gt; suffix of the file the write goes through -- and
+        /// Mono on Windows cannot open a path longer than MAX_PATH. Under
+        /// persistentDataPath (AppData\LocalLow\&lt;company&gt;\&lt;product&gt;) that
+        /// temporary file runs past the limit, the write fails, and the sync goes
+        /// memory-only with nothing left to read. LocalApplicationData is short
+        /// enough to leave room for a long user name.
+        /// </remarks>
+        private static string GetGameplayCatalogCacheDirectory()
+        {
+            if (Application.platform == RuntimePlatform.WindowsPlayer ||
+                Application.platform == RuntimePlatform.WindowsEditor)
+            {
+                string localAppData = Environment.GetFolderPath(
+                    Environment.SpecialFolder.LocalApplicationData);
+                if (!string.IsNullOrEmpty(localAppData))
+                {
+                    return Path.Combine(localAppData, "NetworkExample", "CatalogCache");
+                }
+            }
+
+            return Path.Combine(
+                Application.persistentDataPath,
+                "NetworkExample",
+                "GameplayCatalogCache");
         }
 
         private static void ConfigurePhysicsBeforeStart(
@@ -933,7 +964,10 @@ namespace NetworkExample.UnityDemo.Client
                     "Client could not read the synchronized gameplay catalog bundle: " +
                     (string.IsNullOrEmpty(diagnostic)
                         ? "no bundle bytes"
-                        : diagnostic));
+                        : diagnostic) +
+                    (syncResult.MemoryOnly
+                        ? " (the sync could not cache it: " + syncResult.CacheWarning + ")"
+                        : string.Empty));
                 return false;
             }
 
