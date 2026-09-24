@@ -73,7 +73,7 @@ namespace NetworkExample.UnityDemo.Rendering
         [SerializeField]
         [Min(0f)]
         [Tooltip("How far from the point splats scatter before they are dropped.")]
-        private float scatterRadius = 1.2f;
+        private float scatterRadius = 1.6f;
 
         [SerializeField]
         [Min(0f)]
@@ -81,12 +81,12 @@ namespace NetworkExample.UnityDemo.Rendering
             "Height above the point splats launch from. The kernel places an " +
             "actor's origin on its feet, so leaving this near 1 throws from the " +
             "body rather than the ground.")]
-        private float launchHeight = 1f;
+        private float launchHeight = 1.6f;
 
         [SerializeField]
         [Min(0.01f)]
         [Tooltip("Seconds from launch to landing. Longer lobs the arc higher.")]
-        private float flightSeconds = 0.2f;
+        private float flightSeconds = 0.35f;
 
         [SerializeField]
         [Min(0f)]
@@ -107,7 +107,7 @@ namespace NetworkExample.UnityDemo.Rendering
 
         [SerializeField]
         [Tooltip("Footprint of a landed splat on the surface, picked per splat.")]
-        private Vector2 splatSizeRange = new Vector2(1.7f, 5.0f);
+        private Vector2 splatSizeRange = new Vector2(1.7f, 8.0f);
 
         [SerializeField]
         [Min(0.01f)]
