@@ -320,17 +320,19 @@ namespace NetworkExample.UnityDemo.Client
             WarnIfReadyWithoutRenderStates(safeRenderCount);
             ObserveFireStall(safeRenderCount);
             renderStateApplier.Apply(renderStates, safeRenderCount);
-            localPlayerDead =
-                TryGetLocalPlayerState(
-                    safeRenderCount,
-                    client.LocalPlayerNetId,
-                    out RenderEntityState localPlayer) &&
+            bool hasLocalPlayer = TryGetLocalPlayerState(
+                safeRenderCount,
+                client.LocalPlayerNetId,
+                out RenderEntityState localPlayer);
+            localPlayerDead = hasLocalPlayer &&
                 (localPlayer.visual_flags & KernelConstants.VisualFlagDead) != 0;
+            UpdateLocalActionGate(hasLocalPlayer, localPlayer);
             renderStateApplier.ApplySkeletonPoses(client.Kernel, skeletonPoseStates);
             UpdateCameraTarget(client.LocalPlayerNetId);
             renderStateApplier.ApplyKernelEvents(
                 events,
-                SafeCount(eventCount, events.Length));
+                SafeCount(eventCount, events.Length),
+                client.LocalPlayerNetId);
             renderStateApplier.ApplyLocalActionResults(
                 client.LocalPlayerNetId,
                 localActionResults,
@@ -742,8 +744,12 @@ namespace NetworkExample.UnityDemo.Client
         /// </summary>
         private void LogActionResultFailure(KernelLocalActionResult result)
         {
+            // A stunned player refused an action is the stun working, not a
+            // failure; logging it would print a line for every stagger.
             if (!logActionResultFailures ||
-                result.result == KernelLocalActionResultType.Accepted)
+                result.result == KernelLocalActionResultType.Accepted ||
+                result.reason == KernelLocalActionResultReason.Staggered ||
+                result.reason == KernelLocalActionResultReason.KnockedBack)
             {
                 return;
             }
@@ -797,6 +803,20 @@ namespace NetworkExample.UnityDemo.Client
             {
                 Debug.LogWarning("Client " + report);
             }
+        }
+
+        /// <summary>
+        /// Tells the sampler whether the server would refuse an action right now,
+        /// so a stunned player sends none. Shared with the local agent, which
+        /// samples through the same gate.
+        /// </summary>
+        private void UpdateLocalActionGate(bool hasLocalPlayer, RenderEntityState localPlayer)
+        {
+            bool staggered = hasLocalPlayer && !localPlayerDead &&
+                (localPlayer.visual_flags & KernelConstants.VisualFlagStaggered) != 0;
+            bool grounded = !hasLocalPlayer ||
+                (localPlayer.visual_flags & KernelConstants.VisualFlagGrounded) != 0;
+            inputSampler.UpdateLocalActorState(staggered, grounded, Time.unscaledDeltaTime);
         }
 
         private bool TryGetLocalPlayerState(

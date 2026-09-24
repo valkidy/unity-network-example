@@ -17,6 +17,22 @@ namespace NetworkExample.UnityDemo.Input
         /// </summary>
         private const int MaxHeldFireRestarts = 3;
 
+        /// <summary>
+        /// How long a Staggered or KnockedBack refusal holds actions back before
+        /// the replicated state has caught up with it. The refusal comes with the
+        /// server's results; the flag and the airborne state come with the render
+        /// states, which are interpolated behind them. Without this the sampler
+        /// would restart a held trigger into the same refusal on the next sample.
+        /// </summary>
+        public const float ActionRefusalGraceSeconds = 0.25f;
+
+        /// <summary>
+        /// The longest a knockback can hold actions back when the client never
+        /// sees it land: the kernel's own ceiling, at the default server rate.
+        /// </summary>
+        public const float KnockbackLockoutLimitSeconds =
+            KernelConstants.MaxImpulseLockoutTicks / 30f;
+
         private static readonly string[] WeaponSelectBindings =
         {
             "<Keyboard>/1",
@@ -68,6 +84,13 @@ namespace NetworkExample.UnityDemo.Input
         private bool wasReloadPressed;
         private bool wasAimPressed;
         private bool isAiming;
+        // The local actor's replicated state, pushed by the runner each frame.
+        private bool localActorStaggered;
+        private bool localActorGrounded = true;
+        private float staggerRefusalHoldRemaining;
+        private bool knockbackLocked;
+        private bool knockbackSawAirborne;
+        private float knockbackLockElapsed;
 
         public int OutstandingActionCount => outstandingActionIds.Count;
 
@@ -108,6 +131,23 @@ namespace NetworkExample.UnityDemo.Input
         public bool IsAiming => isAiming;
         public bool HasWeaponLoadout => weaponSlotCount > 0;
         public int SelectedWeaponSlot => selectedWeaponSlot;
+
+        /// <summary>
+        /// Whether the local actor is stunned in a way the server refuses actions
+        /// for -- staggered, or knocked back and not yet landed. While it is, a
+        /// press sends no intent, and a held trigger waits to restart until it
+        /// lifts.
+        /// </summary>
+        public bool IsActionBlocked =>
+            localActorStaggered || staggerRefusalHoldRemaining > 0f || knockbackLocked;
+
+        /// <summary>
+        /// Whether movement is sent as zero. Only a stagger pins the actor; a
+        /// knockback keeps the velocity it was thrown with and the server ignores
+        /// move input for it anyway.
+        /// </summary>
+        public bool IsMovementFrozen =>
+            localActorStaggered || staggerRefusalHoldRemaining > 0f;
         public byte SelectedWeaponId => selectedWeapon;
 
         public void SetViewTransform(Transform target)
@@ -330,11 +370,56 @@ namespace NetworkExample.UnityDemo.Input
                 IsFirePressed(), IsActionPressed(reloadAction));
         }
 
+        /// <summary>
+        /// Feeds the local actor's replicated state into the action gate. Called
+        /// once a frame by the runner, with the frame's delta rather than a clock
+        /// read, so a test can step the gate through time.
+        /// </summary>
+        /// <remarks>
+        /// The knockback is inferred, because nothing replicates it. The kernel
+        /// ends its lockout when the actor lands, so the gate ends on the ground
+        /// too -- but only on ground it has seen the actor leave, since the
+        /// refusal that opened the gate can arrive before the render states
+        /// show the actor in the air. A knockback that never leaves the ground
+        /// is let go after the refusal grace, and a new refusal simply closes
+        /// the gate again. <see cref="KnockbackLockoutLimitSeconds"/> is the
+        /// backstop for an actor the client never sees land.
+        /// </remarks>
+        public void UpdateLocalActorState(bool staggered, bool grounded, float deltaSeconds)
+        {
+            deltaSeconds = Mathf.Max(0f, deltaSeconds);
+            localActorStaggered = staggered;
+            localActorGrounded = grounded;
+            staggerRefusalHoldRemaining = Mathf.Max(
+                0f, staggerRefusalHoldRemaining - deltaSeconds);
+
+            if (!knockbackLocked)
+            {
+                return;
+            }
+
+            knockbackLockElapsed += deltaSeconds;
+            if (!grounded)
+            {
+                knockbackSawAirborne = true;
+            }
+
+            bool landed = grounded &&
+                (knockbackSawAirborne || knockbackLockElapsed >= ActionRefusalGraceSeconds);
+            if (landed || knockbackLockElapsed >= KnockbackLockoutLimitSeconds)
+            {
+                ClearKnockbackLock();
+            }
+        }
+
         /// <summary>Uses the same sequence and action bookkeeping without polling any device.</summary>
         public KernelPlayerInput SampleExplicit(Vector2 move, Vector3 aimDirection,
             bool aiming, bool isFirePressed, bool isReloadPressed)
         {
-            move = Vector2.ClampMagnitude(move, 1f);
+            // The client kernel predicts movement from this input while the server
+            // holds a staggered actor still; sending the stick anyway walks the
+            // prediction off and has the snapshot pull it back.
+            move = IsMovementFrozen ? Vector2.zero : Vector2.ClampMagnitude(move, 1f);
             aimDirection = aimDirection.sqrMagnitude > 0.000001f
                 ? aimDirection.normalized : Vector3.forward;
             isAiming = aiming;
@@ -358,6 +443,23 @@ namespace NetworkExample.UnityDemo.Input
             }
             bool reloadTriggered = isReloadPressed && !wasReloadPressed;
             wasReloadPressed = isReloadPressed;
+
+            // The server refuses every new action while the actor is stunned, so
+            // nothing is asked for. A press is dropped, not queued, but a trigger
+            // pressed or still held now is marked to restart once the gate lifts
+            // -- the player never has to let go and press again.
+            if (IsActionBlocked)
+            {
+                if (fireTriggered)
+                {
+                    heldFireRestartBudget = MaxHeldFireRestarts;
+                    restartHeldFire = heldFireActionInstanceId == 0;
+                }
+
+                fireTriggered = false;
+                fireRestarted = false;
+                reloadTriggered = false;
+            }
 
             KernelActionIntent actionIntent = default;
             KernelActionInput actionInput = default;
@@ -483,6 +585,7 @@ namespace NetworkExample.UnityDemo.Input
         {
             if (result != KernelLocalActionResultType.Accepted)
             {
+                NoteActionRefusal(reason);
                 StopActionInput(actionInstanceId, reason);
                 return;
             }
@@ -523,6 +626,31 @@ namespace NetworkExample.UnityDemo.Input
         }
 
         /// <summary>
+        /// Closes the action gate for a refusal whose cause the replicated state
+        /// has not shown yet.
+        /// </summary>
+        private void NoteActionRefusal(KernelLocalActionResultReason reason)
+        {
+            if (reason == KernelLocalActionResultReason.Staggered)
+            {
+                staggerRefusalHoldRemaining = ActionRefusalGraceSeconds;
+            }
+            else if (reason == KernelLocalActionResultReason.KnockedBack)
+            {
+                knockbackLocked = true;
+                knockbackSawAirborne = !localActorGrounded;
+                knockbackLockElapsed = 0f;
+            }
+        }
+
+        private void ClearKnockbackLock()
+        {
+            knockbackLocked = false;
+            knockbackSawAirborne = false;
+            knockbackLockElapsed = 0f;
+        }
+
+        /// <summary>
         /// Whether a fire action that ended for this reason may restart itself
         /// while the trigger is still held.
         /// </summary>
@@ -534,6 +662,11 @@ namespace NetworkExample.UnityDemo.Input
         /// will keep answering the same way until something else changes -- no
         /// ammo, reloading, cooling down, dead -- waits for a fresh press, so the
         /// sampler cannot spin one intent per sample against a kernel saying no.
+        ///
+        /// Staggered and KnockedBack are refusals that end on their own, which
+        /// puts them with the first group: the restart is held back by
+        /// <see cref="IsActionBlocked"/> until the stun lifts, and then fires
+        /// for the trigger the player never let go of.
         /// </remarks>
         public static bool CanRestartWhileHeld(KernelLocalActionResultReason reason)
         {
@@ -543,6 +676,8 @@ namespace NetworkExample.UnityDemo.Input
                 case KernelLocalActionResultReason.Cancelled:
                 case KernelLocalActionResultReason.TimedOut:
                 case KernelLocalActionResultReason.InvalidActionId:
+                case KernelLocalActionResultReason.Staggered:
+                case KernelLocalActionResultReason.KnockedBack:
                     return true;
                 default:
                     return false;
@@ -561,6 +696,10 @@ namespace NetworkExample.UnityDemo.Input
             wasReloadPressed = false;
             wasAimPressed = false;
             isAiming = false;
+            localActorStaggered = false;
+            localActorGrounded = true;
+            staggerRefusalHoldRemaining = 0f;
+            ClearKnockbackLock();
             if (weaponSlotCount > 0)
             {
                 TrySelectWeaponSlot(activeWeaponSlot);

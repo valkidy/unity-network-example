@@ -211,10 +211,12 @@ namespace NetworkExample.UnityDemo.Host
                 : (int)renderCount;
             ObserveFireStall(safeRenderCount);
             renderStateApplier.Apply(renderStates, safeRenderCount);
+            UpdateLocalActionGate(safeRenderCount);
             UpdateCameraTarget(host.LocalPlayerNetId);
             renderStateApplier.ApplyKernelEvents(
                 events,
-                SafeCount(eventCount, events.Length));
+                SafeCount(eventCount, events.Length),
+                host.LocalPlayerNetId);
             renderStateApplier.ApplyLocalActionResults(
                 host.LocalPlayerNetId,
                 localActionResults,
@@ -468,8 +470,12 @@ namespace NetworkExample.UnityDemo.Host
         /// </summary>
         private void LogActionResultFailure(KernelLocalActionResult result)
         {
+            // A stunned player refused an action is the stun working, not a
+            // failure; logging it would print a line for every stagger.
             if (!logActionResultFailures ||
-                result.result == KernelLocalActionResultType.Accepted)
+                result.result == KernelLocalActionResultType.Accepted ||
+                result.reason == KernelLocalActionResultReason.Staggered ||
+                result.reason == KernelLocalActionResultReason.KnockedBack)
             {
                 return;
             }
@@ -523,6 +529,24 @@ namespace NetworkExample.UnityDemo.Host
             {
                 Debug.LogWarning("HostMode " + report);
             }
+        }
+
+        /// <summary>
+        /// Tells the sampler whether the server would refuse an action right now,
+        /// so a stunned player sends none -- the same gate the client runs.
+        /// </summary>
+        private void UpdateLocalActionGate(int safeRenderCount)
+        {
+            bool hasLocalPlayer = TryGetLocalPlayerState(
+                safeRenderCount,
+                host.LocalPlayerNetId,
+                out RenderEntityState localPlayer);
+            uint flags = hasLocalPlayer ? localPlayer.visual_flags : 0U;
+            bool staggered = (flags & KernelConstants.VisualFlagDead) == 0 &&
+                (flags & KernelConstants.VisualFlagStaggered) != 0;
+            bool grounded = !hasLocalPlayer ||
+                (flags & KernelConstants.VisualFlagGrounded) != 0;
+            inputSampler.UpdateLocalActorState(staggered, grounded, Time.unscaledDeltaTime);
         }
 
         private bool TryGetLocalPlayerState(

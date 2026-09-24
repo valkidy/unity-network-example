@@ -1236,6 +1236,97 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
+        public void StaggeredFlagRising_StaggersOnceAndHoldsWhileRaised()
+        {
+            applier.Apply(new[] { Actor(105, alive: true) }, 1);
+            Assert.That(entityRegistry.TryGet(105, out GameObject visual), Is.True);
+            NetworkActorView view = visual.GetComponent<NetworkActorView>();
+            Assert.That(view.IsStaggered, Is.False);
+
+            applier.Apply(new[] { Staggered(105) }, 1);
+            applier.Apply(new[] { Staggered(105) }, 1);
+
+            Assert.That(view.IsStaggered, Is.True);
+            Assert.That(view.IsIdle, Is.False);
+            Assert.That(view.StaggerReactionCount, Is.EqualTo(1));
+
+            applier.Apply(new[] { Actor(105, alive: true) }, 1);
+            Assert.That(view.IsStaggered, Is.False);
+            applier.Apply(new[] { Staggered(105) }, 1);
+
+            Assert.That(view.StaggerReactionCount, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void ActorFirstSeenAlreadyStaggered_DoesNotReplayTheStagger()
+        {
+            applier.Apply(new[] { Staggered(105) }, 1);
+
+            Assert.That(entityRegistry.TryGet(105, out GameObject visual), Is.True);
+            NetworkActorView view = visual.GetComponent<NetworkActorView>();
+            Assert.That(view.IsStaggered, Is.True);
+            Assert.That(view.StaggerReactionCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void DeadActor_IsNeverStaggered()
+        {
+            applier.Apply(new[] { Actor(105, alive: true) }, 1);
+            RenderEntityState dying = Actor(105, alive: false);
+            dying.visual_flags |= KernelConstants.VisualFlagStaggered;
+
+            applier.Apply(new[] { dying }, 1);
+
+            Assert.That(entityRegistry.TryGet(105, out GameObject visual), Is.True);
+            NetworkActorView view = visual.GetComponent<NetworkActorView>();
+            Assert.That(view.IsStaggered, Is.False);
+            Assert.That(view.StaggerReactionCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void ApplyKernelEvents_LocalPlayerDamage_PlaysOneHitReactionPerTick()
+        {
+            GameObject local = RegisterActorVisual(8, 102);
+            GameObject remote = RegisterActorVisual(9, 103);
+            KernelEvent[] hits =
+            {
+                Damage(102, tick: 45),
+                Damage(102, tick: 45),
+                Damage(103, tick: 45),
+            };
+
+            applier.ApplyKernelEvents(hits, hits.Length, localPlayerNetId: 102);
+            applier.ApplyKernelEvents(hits, hits.Length, localPlayerNetId: 102);
+
+            Assert.That(
+                local.GetComponent<NetworkActorView>().HitReactionCount,
+                Is.EqualTo(1));
+            // Remote actors get theirs from the HitReaction presentation event.
+            Assert.That(
+                remote.GetComponent<NetworkActorView>().HitReactionCount,
+                Is.EqualTo(0));
+
+            applier.ApplyKernelEvents(
+                new[] { Damage(102, tick: 46) }, 1, localPlayerNetId: 102);
+
+            Assert.That(
+                local.GetComponent<NetworkActorView>().HitReactionCount,
+                Is.EqualTo(2));
+        }
+
+        [Test]
+        public void ApplyKernelEvents_WithoutLocalPlayer_PlaysNoHitReaction()
+        {
+            GameObject visual = RegisterActorVisual(8, 102);
+
+            applier.ApplyKernelEvents(new[] { Damage(102, tick: 45) }, 1);
+
+            Assert.That(
+                visual.GetComponent<NetworkActorView>().HitReactionCount,
+                Is.EqualTo(0));
+        }
+
+        [Test]
         public void RetiredActor_ThrowsNothing()
         {
             NetworkHitSplatters splatters = ConfigureSplatters();
@@ -1710,6 +1801,24 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
                 KernelActorType.Player);
             state.visual_flags = alive ? 0u : KernelConstants.VisualFlagDead;
             return state;
+        }
+
+        private static RenderEntityState Staggered(uint netId)
+        {
+            RenderEntityState state = Actor(netId, alive: true);
+            state.visual_flags = KernelConstants.VisualFlagStaggered;
+            return state;
+        }
+
+        private static KernelEvent Damage(uint netId, uint tick)
+        {
+            return new KernelEvent
+            {
+                type = KernelEventType.DamageApplied,
+                net_id = netId,
+                tick = tick,
+                code = 10,
+            };
         }
 
         private static KernelRemoteActionPresentationEvent Death(

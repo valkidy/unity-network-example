@@ -92,6 +92,8 @@ namespace NetworkExample.UnityDemo.Rendering
         private static readonly int ReloadCommitParameter = Animator.StringToHash("ReloadCommit");
         private static readonly int HitReactionParameter = Animator.StringToHash("HitReaction");
         private static readonly int DeathTriggerParameter = Animator.StringToHash("DeathTrigger");
+        private static readonly int StaggeredParameter = Animator.StringToHash("Staggered");
+        private static readonly int StaggerReactionParameter = Animator.StringToHash("StaggerReaction");
         private static readonly int ActorLandedParameter = Animator.StringToHash("ActorLanded");
 
         private Animator animator;
@@ -236,6 +238,13 @@ namespace NetworkExample.UnityDemo.Rendering
         public bool IsWindup { get; private set; }
         public bool IsFiring { get; private set; }
         public bool IsRecovery { get; private set; }
+
+        /// <summary>
+        /// Whether the server is holding this actor in a stagger. Read from the
+        /// replicated flag, which is the only stagger signal a client gets: the
+        /// Staggered kernel event is server-local and never reaches it.
+        /// </summary>
+        public bool IsStaggered { get; private set; }
         public bool IsIdle { get; private set; }
         public bool IsStale { get; private set; }
         public int PredictedCommitCount { get; private set; }
@@ -248,6 +257,8 @@ namespace NetworkExample.UnityDemo.Rendering
         public int LocalCommitCount { get; private set; }
         public int RemoteCommitCount { get; private set; }
         public int LandedCount { get; private set; }
+        public int HitReactionCount { get; private set; }
+        public int StaggerReactionCount { get; private set; }
 
         /// <summary>
         /// Whether the body is drawn. A dormant corpse keeps its entity -- the
@@ -314,7 +325,11 @@ namespace NetworkExample.UnityDemo.Rendering
                 (HasFlag(KernelConstants.VisualFlagFiring) ||
                     state.action.phase == KernelActionPhase.Active);
             IsRecovery = !IsDead && state.action.phase == KernelActionPhase.Recovery;
+            // Death outranks stagger: the kernel clears the flag on death, but a
+            // snapshot can still carry both on the tick the actor dies.
+            IsStaggered = !IsDead && HasFlag(KernelConstants.VisualFlagStaggered);
             IsIdle = !IsDead &&
+                !IsStaggered &&
                 !IsMoving &&
                 !IsReloading &&
                 !IsAiming &&
@@ -364,6 +379,7 @@ namespace NetworkExample.UnityDemo.Rendering
             SetBoolIfPresent(target, FiringParameter, IsFiring);
             SetBoolIfPresent(target, RecoveryParameter, IsRecovery);
             SetBoolIfPresent(target, IdleParameter, IsIdle);
+            SetBoolIfPresent(target, StaggeredParameter, IsStaggered);
             SetIntegerIfPresent(target, ActionPhaseParameter, (int)ActionPhase);
             ApplyUpperBodyLayerWeight(target);
         }
@@ -728,6 +744,37 @@ namespace NetworkExample.UnityDemo.Rendering
 
             LandedCount++;
             SetTriggerIfPresent(GetAnimator(), ActorLandedParameter);
+        }
+
+        /// <summary>
+        /// Plays a hit reaction that arrived by some path other than the remote
+        /// presentation events -- the local player's own, which the server
+        /// leaves out of those.
+        /// </summary>
+        public void PlayHitReaction()
+        {
+            if (IsStale || IsDead)
+            {
+                return;
+            }
+
+            HitReactionCount++;
+            SetTriggerIfPresent(GetAnimator(), HitReactionParameter);
+        }
+
+        /// <summary>
+        /// Plays the start of a stagger. The Staggered bool holds the pose for as
+        /// long as the flag stays up; this is the one-shot for the moment it rose.
+        /// </summary>
+        public void PlayStaggerReaction()
+        {
+            if (IsStale || IsDead)
+            {
+                return;
+            }
+
+            StaggerReactionCount++;
+            SetTriggerIfPresent(GetAnimator(), StaggerReactionParameter);
         }
 
         private bool HasFlag(uint flag)

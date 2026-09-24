@@ -656,6 +656,182 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
                 Is.False);
         }
 
+        [Test]
+        public void CanRestartWhileHeld_WaitsOutStunsRatherThanAFreshPress()
+        {
+            Assert.That(
+                NetworkInputSampler.CanRestartWhileHeld(
+                    KernelLocalActionResultReason.Staggered),
+                Is.True);
+            Assert.That(
+                NetworkInputSampler.CanRestartWhileHeld(
+                    KernelLocalActionResultReason.KnockedBack),
+                Is.True);
+        }
+
+        [Test]
+        public void SampleExplicit_WhileStaggered_SendsNoActionAndNoMovement()
+        {
+            sampler.UpdateLocalActorState(staggered: true, grounded: true, 0.1f);
+
+            KernelPlayerInput fire = sampler.SampleExplicit(
+                Vector2.right, Vector3.forward, false, true, false);
+            KernelPlayerInput reload = sampler.SampleExplicit(
+                Vector2.right, Vector3.forward, false, false, true);
+
+            Assert.That(sampler.IsActionBlocked, Is.True);
+            Assert.That(fire.action_intent.action_instance_id, Is.Zero);
+            Assert.That(reload.action_intent.action_instance_id, Is.Zero);
+            Assert.That(fire.move.x, Is.Zero);
+            Assert.That(fire.move.y, Is.Zero);
+        }
+
+        /// <summary>
+        /// The trigger was pressed during the stagger and never let go of: the
+        /// player means to fire, so the shot starts the moment the stagger ends.
+        /// </summary>
+        [Test]
+        public void SampleExplicit_TriggerHeldThroughStagger_FiresWhenItLifts()
+        {
+            sampler.UpdateLocalActorState(staggered: true, grounded: true, 0.1f);
+            sampler.SampleExplicit(Vector2.zero, Vector3.forward, false, true, false);
+
+            sampler.UpdateLocalActorState(staggered: false, grounded: true, 0.1f);
+            KernelPlayerInput resumed = sampler.SampleExplicit(
+                Vector2.right, Vector3.forward, false, true, false);
+
+            Assert.That(resumed.action_intent.action_instance_id, Is.Not.Zero);
+            Assert.That(resumed.action_intent.binding_id,
+                Is.EqualTo(KernelActionBinding.PrimaryFire));
+            Assert.That(resumed.move.x, Is.EqualTo(1f));
+        }
+
+        /// <summary>
+        /// The stagger interrupts the burst before the flag has reached the
+        /// client. The refusal alone holds the restart back, so it is not spent
+        /// against a server that is still saying no.
+        /// </summary>
+        [Test]
+        public void SampleExplicit_HeldFireInterruptedByStagger_RestartsAfterTheStagger()
+        {
+            KernelPlayerInput first = sampler.SampleExplicit(
+                Vector2.zero, Vector3.forward, false, true, false);
+            sampler.ApplyActionResult(
+                first.action_intent.action_instance_id,
+                KernelLocalActionResultType.Corrected,
+                KernelLocalActionResultReason.Staggered);
+
+            KernelPlayerInput beforeFlag = sampler.SampleExplicit(
+                Vector2.zero, Vector3.forward, false, true, false);
+            sampler.UpdateLocalActorState(staggered: true, grounded: true, 0.3f);
+            KernelPlayerInput duringStagger = sampler.SampleExplicit(
+                Vector2.zero, Vector3.forward, false, true, false);
+            sampler.UpdateLocalActorState(staggered: false, grounded: true, 0.1f);
+            KernelPlayerInput afterStagger = sampler.SampleExplicit(
+                Vector2.zero, Vector3.forward, false, true, false);
+
+            Assert.That(beforeFlag.action_intent.action_instance_id, Is.Zero);
+            Assert.That(duringStagger.action_intent.action_instance_id, Is.Zero);
+            Assert.That(afterStagger.action_intent.action_instance_id, Is.Not.Zero);
+            Assert.That(afterStagger.action_intent.action_instance_id,
+                Is.Not.EqualTo(first.action_intent.action_instance_id));
+        }
+
+        [Test]
+        public void SampleExplicit_ReleasedDuringStagger_DoesNotFireAfterIt()
+        {
+            sampler.UpdateLocalActorState(staggered: true, grounded: true, 0.1f);
+            sampler.SampleExplicit(Vector2.zero, Vector3.forward, false, true, false);
+            sampler.SampleExplicit(Vector2.zero, Vector3.forward, false, false, false);
+
+            sampler.UpdateLocalActorState(staggered: false, grounded: true, 0.1f);
+            KernelPlayerInput after = sampler.SampleExplicit(
+                Vector2.zero, Vector3.forward, false, false, false);
+
+            Assert.That(after.action_intent.action_instance_id, Is.Zero);
+        }
+
+        /// <summary>
+        /// Nothing replicates a knockback, so the gate reads it from the refusal
+        /// and ends it on the landing -- which, like the kernel's own lockout,
+        /// needs the actor to have left the ground first. Movement is left
+        /// alone: the server ignores it while the actor is thrown.
+        /// </summary>
+        [Test]
+        public void KnockedBackRefusal_BlocksActionsUntilTheActorLands()
+        {
+            KernelPlayerInput first = sampler.SampleExplicit(
+                Vector2.zero, Vector3.forward, false, true, false);
+            sampler.ApplyActionResult(
+                first.action_intent.action_instance_id,
+                KernelLocalActionResultType.Rejected,
+                KernelLocalActionResultReason.KnockedBack);
+
+            // Still grounded in the render states: the snapshot showing the
+            // actor in the air has not arrived yet.
+            sampler.UpdateLocalActorState(staggered: false, grounded: true, 0.1f);
+            Assert.That(sampler.IsActionBlocked, Is.True);
+            sampler.UpdateLocalActorState(staggered: false, grounded: false, 0.5f);
+            KernelPlayerInput airborne = sampler.SampleExplicit(
+                Vector2.right, Vector3.forward, false, true, false);
+
+            Assert.That(sampler.IsActionBlocked, Is.True);
+            Assert.That(sampler.IsMovementFrozen, Is.False);
+            Assert.That(airborne.action_intent.action_instance_id, Is.Zero);
+            Assert.That(airborne.move.x, Is.EqualTo(1f));
+
+            sampler.UpdateLocalActorState(staggered: false, grounded: true, 0.1f);
+            KernelPlayerInput landed = sampler.SampleExplicit(
+                Vector2.zero, Vector3.forward, false, true, false);
+
+            Assert.That(sampler.IsActionBlocked, Is.False);
+            Assert.That(landed.action_intent.action_instance_id, Is.Not.Zero);
+        }
+
+        [Test]
+        public void KnockedBackRefusal_ThatNeverLeavesTheGround_EndsAfterTheGrace()
+        {
+            KernelPlayerInput first = sampler.SampleExplicit(
+                Vector2.zero, Vector3.forward, false, true, false);
+            sampler.ApplyActionResult(
+                first.action_intent.action_instance_id,
+                KernelLocalActionResultType.Rejected,
+                KernelLocalActionResultReason.KnockedBack);
+
+            sampler.UpdateLocalActorState(staggered: false, grounded: true, 0.1f);
+            Assert.That(sampler.IsActionBlocked, Is.True);
+            sampler.UpdateLocalActorState(
+                staggered: false,
+                grounded: true,
+                NetworkInputSampler.ActionRefusalGraceSeconds);
+
+            Assert.That(sampler.IsActionBlocked, Is.False);
+        }
+
+        [Test]
+        public void KnockedBackRefusal_NeverSeenToLand_EndsAtTheLockoutLimit()
+        {
+            KernelPlayerInput first = sampler.SampleExplicit(
+                Vector2.zero, Vector3.forward, false, true, false);
+            sampler.ApplyActionResult(
+                first.action_intent.action_instance_id,
+                KernelLocalActionResultType.Rejected,
+                KernelLocalActionResultReason.KnockedBack);
+
+            float step = 0.5f;
+            float elapsed = 0f;
+            while (elapsed + step < NetworkInputSampler.KnockbackLockoutLimitSeconds)
+            {
+                sampler.UpdateLocalActorState(staggered: false, grounded: false, step);
+                elapsed += step;
+                Assert.That(sampler.IsActionBlocked, Is.True, "at " + elapsed + "s");
+            }
+
+            sampler.UpdateLocalActorState(staggered: false, grounded: false, step);
+
+            Assert.That(sampler.IsActionBlocked, Is.False);
+        }
+
         private void SetKey(params Key[] keys)
         {
             InputSystem.QueueStateEvent(keyboard, new KeyboardState(keys));

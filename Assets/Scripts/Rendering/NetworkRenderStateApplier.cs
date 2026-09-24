@@ -47,6 +47,13 @@ namespace NetworkExample.UnityDemo.Rendering
             "ground can be traced to whichever signal did not arrive.")]
         private bool logDeathSignals;
 
+        [SerializeField]
+        [Tooltip(
+            "Logs the replicated staggered flag rising, the only stagger signal " +
+            "a client receives, so a stagger that never animates can be told " +
+            "apart from one that never arrived.")]
+        private bool logStaggerSignals;
+
         private readonly HashSet<ulong> visibleThisFrame = new HashSet<ulong>();
         private readonly Dictionary<ulong, KnownEntity> knownEntities =
             new Dictionary<ulong, KnownEntity>();
@@ -60,13 +67,17 @@ namespace NetworkExample.UnityDemo.Rendering
             new HashSet<RemoteCommitKey>();
         private readonly Queue<RemoteCommitKey> remoteCommitOrder =
             new Queue<RemoteCommitKey>();
-        private readonly HashSet<LandedEventKey> landedEventDedup =
-            new HashSet<LandedEventKey>();
-        private readonly Queue<LandedEventKey> landedEventOrder =
-            new Queue<LandedEventKey>();
+        private readonly HashSet<ActorTickKey> landedEventDedup =
+            new HashSet<ActorTickKey>();
+        private readonly Queue<ActorTickKey> landedEventOrder =
+            new Queue<ActorTickKey>();
+        private readonly HashSet<ActorTickKey> localHitReactionDedup =
+            new HashSet<ActorTickKey>();
+        private readonly Queue<ActorTickKey> localHitReactionOrder =
+            new Queue<ActorTickKey>();
 
         private const int MaxRememberedRemoteCommits = 512;
-        private const int MaxRememberedLandedEvents = 512;
+        private const int MaxRememberedActorTickEvents = 512;
 
         public void Configure(
             NetworkEntityRegistry registry,
@@ -123,6 +134,7 @@ namespace NetworkExample.UnityDemo.Rendering
                     knownEntities.TryGetValue(entityKey, out KnownEntity known);
                 bool wasServerBacked = knownBefore && known.serverBacked;
                 bool isDead = known.wasDead;
+                bool isStaggered = known.wasStaggered;
 
                 if (state.entity_type == KernelEntityType.Projectile)
                 {
@@ -172,12 +184,29 @@ namespace NetworkExample.UnityDemo.Rendering
                         // is hidden from the frame it is instantiated.
                         GetOrAddActorView(visual).SetBodyHidden(
                             isDead && state.actor_type == KernelActorType.Player);
+
+                        // The same edge rule as death, and for the same reason:
+                        // an actor first seen mid-stagger was staggered out of
+                        // this client's sight, and replaying the flinch for it
+                        // would show a hit nobody here watched land.
+                        isStaggered = !isDead && (state.visual_flags &
+                            KernelConstants.VisualFlagStaggered) != 0;
+                        if (isStaggered && !known.wasStaggered && knownBefore)
+                        {
+                            LogStaggerSignal("staggered flag raised", state.net_id);
+                            GetOrAddActorView(visual).PlayStaggerReaction();
+                        }
+                        else if (isStaggered && !knownBefore)
+                        {
+                            LogStaggerSignal("first seen already staggered", state.net_id);
+                        }
                     }
                 }
 
                 knownEntities[entityKey] = new KnownEntity(
                     wasServerBacked || state.net_id != 0,
-                    isDead);
+                    isDead,
+                    isStaggered);
             }
 
             entityKeysToRemove.Clear();
@@ -271,6 +300,8 @@ namespace NetworkExample.UnityDemo.Rendering
             remoteCommitOrder.Clear();
             landedEventDedup.Clear();
             landedEventOrder.Clear();
+            localHitReactionDedup.Clear();
+            localHitReactionOrder.Clear();
             entityKeysToRemove.Clear();
             entityRegistry?.Clear();
         }
@@ -383,7 +414,21 @@ namespace NetworkExample.UnityDemo.Rendering
             }
         }
 
-        public void ApplyKernelEvents(KernelEvent[] events, int count)
+        /// <summary>
+        /// Plays the kernel events that have an animation of their own.
+        /// </summary>
+        /// <remarks>
+        /// <paramref name="localPlayerNetId"/> is there for the local player's
+        /// hit reaction. The server builds its HitReaction presentation events
+        /// for everyone except the actor being hit, so the local player never
+        /// receives its own; DamageApplied is broadcast to every peer and is
+        /// what stands in for it. Every other actor keeps the presentation
+        /// event, so no hit plays twice. 0 leaves the local reaction off.
+        /// </remarks>
+        public void ApplyKernelEvents(
+            KernelEvent[] events,
+            int count,
+            uint localPlayerNetId = 0)
         {
             if (events == null || entityRegistry == null)
             {
@@ -394,18 +439,41 @@ namespace NetworkExample.UnityDemo.Rendering
             for (int index = 0; index < safeCount; ++index)
             {
                 KernelEvent kernelEvent = events[index];
-                if (kernelEvent.type != KernelEventType.ActorLanded ||
-                    kernelEvent.net_id == 0 ||
-                    !RememberLandedEvent(
-                        new LandedEventKey(kernelEvent.net_id, kernelEvent.tick)) ||
-                    !entityRegistry.TryGetByNetId(
-                        kernelEvent.net_id,
-                        out GameObject visual))
+                if (kernelEvent.net_id == 0)
                 {
                     continue;
                 }
 
-                GetOrAddActorView(visual).PlayActorLanded();
+                if (kernelEvent.type == KernelEventType.ActorLanded)
+                {
+                    if (RememberActorTickEvent(
+                            landedEventDedup,
+                            landedEventOrder,
+                            new ActorTickKey(kernelEvent.net_id, kernelEvent.tick)) &&
+                        entityRegistry.TryGetByNetId(
+                            kernelEvent.net_id,
+                            out GameObject landed))
+                    {
+                        GetOrAddActorView(landed).PlayActorLanded();
+                    }
+                }
+                else if (kernelEvent.type == KernelEventType.DamageApplied &&
+                    localPlayerNetId != 0 &&
+                    kernelEvent.net_id == localPlayerNetId)
+                {
+                    // Keyed by tick, so two hits landing on the same tick make
+                    // one flinch rather than restarting it.
+                    if (RememberActorTickEvent(
+                            localHitReactionDedup,
+                            localHitReactionOrder,
+                            new ActorTickKey(kernelEvent.net_id, kernelEvent.tick)) &&
+                        entityRegistry.TryGetByNetId(
+                            kernelEvent.net_id,
+                            out GameObject hit))
+                    {
+                        GetOrAddActorView(hit).PlayHitReaction();
+                    }
+                }
             }
         }
 
@@ -645,6 +713,16 @@ namespace NetworkExample.UnityDemo.Rendering
                 (string.IsNullOrEmpty(detail) ? string.Empty : "  " + detail));
         }
 
+        private void LogStaggerSignal(string signal, uint netId)
+        {
+            if (!logStaggerSignals)
+            {
+                return;
+            }
+
+            Debug.Log("Stagger signal: " + signal + " netId=" + netId);
+        }
+
         private static bool ShouldRender(RenderEntityState state)
         {
             if (state.entity_type == KernelEntityType.Projectile)
@@ -738,17 +816,20 @@ namespace NetworkExample.UnityDemo.Rendering
             return true;
         }
 
-        private bool RememberLandedEvent(LandedEventKey key)
+        private static bool RememberActorTickEvent(
+            HashSet<ActorTickKey> dedup,
+            Queue<ActorTickKey> order,
+            ActorTickKey key)
         {
-            if (!landedEventDedup.Add(key))
+            if (!dedup.Add(key))
             {
                 return false;
             }
 
-            landedEventOrder.Enqueue(key);
-            while (landedEventOrder.Count > MaxRememberedLandedEvents)
+            order.Enqueue(key);
+            while (order.Count > MaxRememberedActorTickEvents)
             {
-                landedEventDedup.Remove(landedEventOrder.Dequeue());
+                dedup.Remove(order.Dequeue());
             }
             return true;
         }
@@ -760,33 +841,36 @@ namespace NetworkExample.UnityDemo.Rendering
             // The replicated flag says "is dead", which is true for as long as
             // the corpse is rendered; only the edge means "just died".
             public readonly bool wasDead;
+            // The staggered flag's edge, kept the same way.
+            public readonly bool wasStaggered;
 
-            public KnownEntity(bool serverBacked, bool wasDead)
+            public KnownEntity(bool serverBacked, bool wasDead, bool wasStaggered)
             {
                 this.serverBacked = serverBacked;
                 this.wasDead = wasDead;
+                this.wasStaggered = wasStaggered;
             }
         }
 
-        private readonly struct LandedEventKey : System.IEquatable<LandedEventKey>
+        private readonly struct ActorTickKey : System.IEquatable<ActorTickKey>
         {
             private readonly uint actorNetId;
             private readonly uint tick;
 
-            public LandedEventKey(uint actorNetId, uint tick)
+            public ActorTickKey(uint actorNetId, uint tick)
             {
                 this.actorNetId = actorNetId;
                 this.tick = tick;
             }
 
-            public bool Equals(LandedEventKey other)
+            public bool Equals(ActorTickKey other)
             {
                 return actorNetId == other.actorNetId && tick == other.tick;
             }
 
             public override bool Equals(object obj)
             {
-                return obj is LandedEventKey other && Equals(other);
+                return obj is ActorTickKey other && Equals(other);
             }
 
             public override int GetHashCode()
