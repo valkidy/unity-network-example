@@ -1616,7 +1616,7 @@ AnimatorState:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_Name: Stagger
-  m_Speed: 1
+  m_Speed: 2.92
   m_CycleOffset: 0
   m_Transitions:
   - {fileID: -5575598032743734408}
