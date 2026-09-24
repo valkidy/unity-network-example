@@ -317,7 +317,9 @@ namespace NetworkExample.UnityDemo.Rendering
             Renderer renderer = primitive.GetComponent<Renderer>();
             if (renderer != null)
             {
-                renderer.material.color = ColorFor(state);
+                // Copy the shared material by hand: Renderer.material does the same copy
+                // but logs an error when called in edit mode, which fails EditMode tests.
+                renderer.sharedMaterial = new Material(renderer.sharedMaterial) { color = ColorFor(state) };
             }
 
             if (state.entity_type != KernelEntityType.Actor)
