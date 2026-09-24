@@ -250,7 +250,10 @@ namespace NetworkExample.UnityDemo.Items
                     " committed_item=" + outcome.item_instance_id +
                     " committed_prop=" + outcome.prop_entity_id +
                     " quantity=" + outcome.committed_quantity;
-                if (status == KernelGameplayRequestStatus.Rejected)
+                // A request that raced the player's death is refused for that
+                // alone. Nothing is wrong with the request or the item.
+                if (status == KernelGameplayRequestStatus.Rejected &&
+                    rejection != KernelGameplayRequestRejectionReason.InstigatorDead)
                 {
                     LogWarning(message);
                 }

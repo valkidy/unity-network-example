@@ -106,6 +106,9 @@ namespace NetworkExample.UnityDemo.Client
         private readonly ShapeLineOfSight agentLineOfSight = new ShapeLineOfSight();
         private bool agentMode;
         private bool pendingInputHandoff;
+        // From the last rendered frame: input is sampled before this frame's
+        // render states exist.
+        private bool localPlayerDead;
         private int manualWeaponSlot = -1;
         private RenderEntityState[] agentObservations;
         private int agentObservationCount;
@@ -290,6 +293,7 @@ namespace NetworkExample.UnityDemo.Client
                 itemPropController.ResetSession();
                 inputSubmissionClock.Reset();
                 ClearAgentObservation();
+                localPlayerDead = false;
                 started = false;
                 return;
             }
@@ -316,6 +320,12 @@ namespace NetworkExample.UnityDemo.Client
             WarnIfReadyWithoutRenderStates(safeRenderCount);
             ObserveFireStall(safeRenderCount);
             renderStateApplier.Apply(renderStates, safeRenderCount);
+            localPlayerDead =
+                TryGetLocalPlayerState(
+                    safeRenderCount,
+                    client.LocalPlayerNetId,
+                    out RenderEntityState localPlayer) &&
+                (localPlayer.visual_flags & KernelConstants.VisualFlagDead) != 0;
             renderStateApplier.ApplySkeletonPoses(client.Kernel, skeletonPoseStates);
             UpdateCameraTarget(client.LocalPlayerNetId);
             renderStateApplier.ApplyKernelEvents(
@@ -335,7 +345,8 @@ namespace NetworkExample.UnityDemo.Client
             {
                 itemPropController.SetAimDirection(followCamera.AimDirection);
             }
-            if (!agentMode && !pendingInputHandoff)
+            // The server rejects every item request from a dead player.
+            if (!agentMode && !pendingInputHandoff && !localPlayerDead)
                 itemPropController.ProcessInput(client, renderStates, safeRenderCount);
 
             // Retain this completed frame for the next input tick. Lifecycle events
@@ -379,6 +390,7 @@ namespace NetworkExample.UnityDemo.Client
             ClearAgentObservation();
             agentMode = false;
             pendingInputHandoff = false;
+            localPlayerDead = false;
             aimReticleView?.SetVisible(true);
             followCamera?.SetTarget(null);
             renderStateApplier?.Clear();
@@ -424,6 +436,14 @@ namespace NetworkExample.UnityDemo.Client
         {
             if (pendingInputHandoff)
                 return inputSampler.SampleExplicit(Vector2.zero, Vector3.forward, false, false, false);
+            // A dead player's input is ignored by the server, but a client's
+            // kernel keeps predicting from it: the corpse would walk off and be
+            // pulled back. Still submitted, and neutral, so the trigger is let
+            // go and the stream stays unbroken for the tick the player revives.
+            if (localPlayerDead)
+                return inputSampler.SampleExplicit(Vector2.zero,
+                    followCamera != null ? followCamera.AimDirection : Vector3.forward,
+                    false, false, false);
             if (!agentMode) return inputSampler.Sample();
             SelectAgentWeapon();
             bool hasWeapon = client.Kernel.TryGetLocalWeaponState(out KernelLocalWeaponState weapon);

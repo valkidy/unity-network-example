@@ -1167,6 +1167,88 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
+        public void PlayerRevivedAndKilledAgain_ThrowsASecondBurst()
+        {
+            NetworkHitSplatters splatters = ConfigureSplatters();
+
+            applier.Apply(new[] { Actor(105, alive: true) }, 1);
+            applier.Apply(new[] { Actor(105, alive: false) }, 1);
+            int afterFirstDeath = splatters.LiveSplatCount;
+
+            // A dormant player is never despawned: revival clears the flag on
+            // the same entity, and the next death is a fresh edge.
+            applier.Apply(new[] { Actor(105, alive: true) }, 1);
+            Assert.That(splatters.LiveSplatCount, Is.EqualTo(afterFirstDeath));
+            applier.Apply(new[] { Actor(105, alive: false) }, 1);
+
+            Assert.That(
+                splatters.LiveSplatCount - afterFirstDeath,
+                Is.InRange(3, 5));
+        }
+
+        [Test]
+        public void DeadPlayer_IsHiddenUntilRevived()
+        {
+            applier.Apply(new[] { Actor(105, alive: true) }, 1);
+            Assert.That(entityRegistry.TryGet(105, out GameObject visual), Is.True);
+            NetworkActorView view = visual.GetComponent<NetworkActorView>();
+            Assert.That(view.IsBodyHidden, Is.False);
+
+            applier.Apply(new[] { Actor(105, alive: false) }, 1);
+
+            Assert.That(view.IsBodyHidden, Is.True);
+            Assert.That(visual.activeSelf, Is.True);
+            foreach (Renderer renderer in visual.GetComponentsInChildren<Renderer>(true))
+            {
+                Assert.That(renderer.forceRenderingOff, Is.True, renderer.name);
+            }
+
+            applier.Apply(new[] { Actor(105, alive: true) }, 1);
+
+            Assert.That(view.IsBodyHidden, Is.False);
+            foreach (Renderer renderer in visual.GetComponentsInChildren<Renderer>(true))
+            {
+                Assert.That(renderer.forceRenderingOff, Is.False, renderer.name);
+            }
+        }
+
+        [Test]
+        public void PlayerFirstSeenAlreadyDead_IsHiddenFromItsFirstFrame()
+        {
+            applier.Apply(new[] { Actor(105, alive: false) }, 1);
+
+            Assert.That(entityRegistry.TryGet(105, out GameObject visual), Is.True);
+            Assert.That(visual.GetComponent<NetworkActorView>().IsBodyHidden, Is.True);
+        }
+
+        [Test]
+        public void DeadAgent_IsLeftVisible()
+        {
+            // Agents are removed when they die; their last frames belong to the
+            // Animator's Dead state.
+            RenderEntityState agent = Actor(106, alive: false);
+            agent.actor_type = KernelActorType.Agent;
+
+            applier.Apply(new[] { agent }, 1);
+
+            Assert.That(entityRegistry.TryGet(106, out GameObject visual), Is.True);
+            Assert.That(visual.GetComponent<NetworkActorView>().IsBodyHidden, Is.False);
+        }
+
+        [Test]
+        public void RetiredActor_ThrowsNothing()
+        {
+            NetworkHitSplatters splatters = ConfigureSplatters();
+            applier.Apply(new[] { Actor(105, alive: true) }, 1);
+
+            applier.ApplyEntityLifecycleEvents(
+                new[] { Despawn(105, KernelEntityType.Actor, KernelDespawnReason.Retired) },
+                1);
+
+            Assert.That(splatters.LiveSplatCount, Is.Zero);
+        }
+
+        [Test]
         public void DeathWithNoSplattersBound_IsHarmless()
         {
             // Splatters are optional wiring: a session without them still runs

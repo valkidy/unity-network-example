@@ -249,9 +249,43 @@ namespace NetworkExample.UnityDemo.Rendering
         public int RemoteCommitCount { get; private set; }
         public int LandedCount { get; private set; }
 
+        /// <summary>
+        /// Whether the body is drawn. A dormant corpse keeps its entity -- the
+        /// server holds it where it fell as its owner's relevance anchor until
+        /// it is revived -- so dying no longer takes the visual away with it.
+        /// </summary>
+        public bool IsBodyHidden { get; private set; }
+
         public void SetStale(bool stale)
         {
             IsStale = stale;
+        }
+
+        /// <summary>
+        /// Stops drawing the body without deactivating anything. The transform
+        /// keeps following the corpse, which is what the follow camera and the
+        /// splatter both read, and the Animator keeps running so the body comes
+        /// back in its current pose rather than the one it died in.
+        /// </summary>
+        /// <remarks>
+        /// forceRenderingOff rather than enabled, so this never fights a
+        /// component that switches its own renderers on and off. Children
+        /// inactive now are included: a link that activates while the actor is
+        /// dead must not appear on its own.
+        /// </remarks>
+        public void SetBodyHidden(bool hidden)
+        {
+            if (IsBodyHidden == hidden)
+            {
+                return;
+            }
+
+            IsBodyHidden = hidden;
+            Renderer[] renderers = GetComponentsInChildren<Renderer>(true);
+            for (int index = 0; index < renderers.Length; ++index)
+            {
+                renderers[index].forceRenderingOff = hidden;
+            }
         }
 
         public void ApplyContinuousState(RenderEntityState state)

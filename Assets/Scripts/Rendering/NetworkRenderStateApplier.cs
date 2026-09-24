@@ -158,6 +158,20 @@ namespace NetworkExample.UnityDemo.Rendering
                         {
                             LogDeathSignal("first seen already dead", state.net_id);
                         }
+                        else if (!isDead && known.wasDead && knownBefore)
+                        {
+                            LogDeathSignal("dead flag cleared (revived)", state.net_id);
+                        }
+
+                        // Only players: they are the actors the server keeps
+                        // dormant, so they are the only corpses that stay in the
+                        // world. Every other actor is removed when it dies, and
+                        // its last frames keep whatever the Animator does with
+                        // Dead. Driven from the flag every frame rather than
+                        // from its edges, so a player first seen already dead
+                        // is hidden from the frame it is instantiated.
+                        GetOrAddActorView(visual).SetBodyHidden(
+                            isDead && state.actor_type == KernelActorType.Player);
                     }
                 }
 
@@ -602,11 +616,14 @@ namespace NetworkExample.UnityDemo.Rendering
         /// mark the ground under every expired projectile -- which is most of
         /// what despawns in a firefight. Narrowing it to actors is what makes it
         /// mean death: an actor that leaves for any other cause reports that
-        /// cause instead, OutOfRange or Disconnected.
+        /// cause instead, OutOfRange, Disconnected, or Retired for a patrol the
+        /// server withdraws.
         ///
         /// It stays a proxy, though. An actor the server removes for a reason of
-        /// its own -- despawning a wave, ending a round -- is indistinguishable
-        /// here from one that was killed, and would leave a mark it did not earn.
+        /// its own and reports as Destroyed -- a DespawnAll called with 0 rather
+        /// than Retired -- is indistinguishable here from one that was killed,
+        /// and would leave a mark it did not earn. A player never reaches this
+        /// path by dying: players stay dormant, so their death is the flag.
         /// </remarks>
         private static bool IsKill(KernelEntityLifecycleEvent lifecycleEvent)
         {
