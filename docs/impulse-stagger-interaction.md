@@ -101,7 +101,9 @@ Unity 靠拒絕原因決定要鎖多久：`Staggered` 只擋 0.25 s，`KnockedBa
 
 **已修正：** runner 每格把 view 的 `IsLaunched` 傳給 `NetworkInputSampler.UpdateLocalActorState`。view 一判斷為被打飛，就關上跟 `KnockedBack` 拒絕同一個鎖，一直到落地才解除；中間 view 為了播落地 clip 放掉 `IsLaunched` 時，鎖不會跟著解除。所以被打飛後按的第一下不會再送出去，也不用再等拒絕原因。這只靠 client 的判斷，server 的拒絕仍然是最後的保險。
 
-**道具（這一版的規則）：** server 在空中不會擋丟、撿、使用道具。client 這一版先擋：只要 view 判斷在空中（`IsAirborne`，一般落下也算），或擊退鎖還沒解除，`NetworkItemPropController.ProcessInput` 就丟掉這三種按壓（丟掉，不排隊）。切換選取的道具不受影響。
+**道具（這一版的規則）：** server 在空中不會擋丟、撿、使用道具。client 這一版先擋：view 一判斷為在空中（一般落下、被打飛、重生下降都算），就開始擋，一直到 grounded flag 回來才解除；擊退鎖還沒解除時也擋。擋的時候 `NetworkItemPropController.ProcessInput` 會丟掉這三種按壓（丟掉，不排隊）。切換選取的道具不受影響。走下路緣這類沒有構成落下的短暫離地不會擋。
+
+probe（`52f21c5` server，120 s）：11 次擊退，動作鎖和道具都在離地的那一格開始擋、落地的那一格解除；3 次重生，道具從重生開始擋到落地。
 
 ### 2. 鎖定在空中到期時，擊退會突然停住
 

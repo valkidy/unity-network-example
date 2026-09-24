@@ -827,8 +827,23 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             Assert.That(sampler.IsItemUseBlocked, Is.True);
             Assert.That(sampler.IsActionBlocked, Is.False);
 
+            // Inside the landing lead: no longer airborne to the view, still up.
+            sampler.UpdateLocalActorState(
+                staggered: false, grounded: false, airborne: false, launched: false, 0.1f);
+            Assert.That(sampler.IsItemUseBlocked, Is.True);
+
             sampler.UpdateLocalActorState(
                 staggered: false, grounded: true, airborne: false, launched: false, 0.1f);
+
+            Assert.That(sampler.IsItemUseBlocked, Is.False);
+        }
+
+        [Test]
+        public void ActorOffTheGroundWithoutAFall_KeepsItemUse()
+        {
+            // A step down a kerb: not grounded for a tick, but no fall.
+            sampler.UpdateLocalActorState(
+                staggered: false, grounded: false, airborne: false, launched: false, 0.1f);
 
             Assert.That(sampler.IsItemUseBlocked, Is.False);
         }

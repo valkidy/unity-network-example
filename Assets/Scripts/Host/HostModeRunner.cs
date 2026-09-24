@@ -554,7 +554,7 @@ namespace NetworkExample.UnityDemo.Host
             inputSampler.UpdateLocalActorState(
                 staggered,
                 grounded,
-                airborne: view != null && view.IsAirborne,
+                airborne: view != null && (view.IsAirborne || view.IsReviveFalling),
                 launched: view != null && view.IsLaunched,
                 Time.unscaledDeltaTime);
         }

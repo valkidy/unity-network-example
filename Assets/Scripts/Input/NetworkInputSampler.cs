@@ -87,7 +87,10 @@ namespace NetworkExample.UnityDemo.Input
         // The local actor's replicated state, pushed by the runner each frame.
         private bool localActorStaggered;
         private bool localActorGrounded = true;
-        private bool localActorAirborne;
+        // Set when the view reports a fall and held until the grounded flag
+        // returns: the view stops calling the body airborne a landing lead
+        // before touchdown, and the items stay held through that too.
+        private bool itemAirHold;
         private float staggerRefusalHoldRemaining;
         private bool knockbackLocked;
         private bool knockbackSawAirborne;
@@ -151,11 +154,12 @@ namespace NetworkExample.UnityDemo.Input
             localActorStaggered || staggerRefusalHoldRemaining > 0f;
 
         /// <summary>
-        /// Whether throwing, picking up and using an item is held back: while
-        /// the local actor is in the air, falling or thrown. The server would
-        /// accept these; holding them in the air is this version's rule.
+        /// Whether throwing, picking up and using an item is held back: from
+        /// the moment the local actor is in the air -- falling, thrown or
+        /// revived -- until it is on the ground again. The server would accept
+        /// these; holding them in the air is this version's rule.
         /// </summary>
-        public bool IsItemUseBlocked => localActorAirborne || knockbackLocked;
+        public bool IsItemUseBlocked => itemAirHold || knockbackLocked;
 
         public byte SelectedWeaponId => selectedWeapon;
 
@@ -400,8 +404,10 @@ namespace NetworkExample.UnityDemo.Input
         /// to be refused a round trip later. It closes the same gate a refusal
         /// does, so it stays shut until the landing, past the moment the view
         /// stops calling the body launched to start its landing clip.
-        /// <paramref name="airborne"/> is any fall, launched or not, and only
-        /// gates the item commands (<see cref="IsItemUseBlocked"/>).
+        /// <paramref name="airborne"/> is any fall -- launched, dropped or a
+        /// revive's -- and only gates the item commands
+        /// (<see cref="IsItemUseBlocked"/>), from the fall until the grounded
+        /// flag returns.
         /// </remarks>
         public void UpdateLocalActorState(
             bool staggered,
@@ -413,7 +419,14 @@ namespace NetworkExample.UnityDemo.Input
             deltaSeconds = Mathf.Max(0f, deltaSeconds);
             localActorStaggered = staggered;
             localActorGrounded = grounded;
-            localActorAirborne = airborne;
+            if (grounded)
+            {
+                itemAirHold = false;
+            }
+            else if (airborne)
+            {
+                itemAirHold = true;
+            }
             staggerRefusalHoldRemaining = Mathf.Max(
                 0f, staggerRefusalHoldRemaining - deltaSeconds);
 
@@ -730,7 +743,7 @@ namespace NetworkExample.UnityDemo.Input
             isAiming = false;
             localActorStaggered = false;
             localActorGrounded = true;
-            localActorAirborne = false;
+            itemAirHold = false;
             staggerRefusalHoldRemaining = 0f;
             ClearKnockbackLock();
             if (weaponSlotCount > 0)
