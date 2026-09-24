@@ -1,0 +1,147 @@
+# 擊退（impulse）與 stagger：交互作用
+
+整理日期：2026-09-25。依據 kernel `origin/main`（`01444f7`）的原始碼和 catalog，以及一次 server 端移動量測。行號對應那個版本。
+
+## 結論
+
+- **套用：** 兩者互不影響。各自觸發、各自計時，誰都不會擋掉或取消對方。
+- **讀取：** 在會讀這兩個狀態的地方才有優先度，而且不同地方的優先度相反：
+  - 水平移動：impulse 鎖定 > stagger。飛行途中照常飛出去，stagger 要等鎖定解除才會定住角色。
+  - 拒絕動作的原因：stagger > impulse。兩者都會拒絕動作，只是回報的原因不同。
+- **表現：** 動畫只看得到 stagger（`Staggered` flag 會 replicate，鎖定不會）；本地玩家的預測只看得到 impulse 鎖定。
+
+## 擊退的來源
+
+`KnockedBack` 這個拒絕原因只在一個地方回傳（`damage_system.cc:132`）：角色身上有 `ImpulseLockout`，而且還沒到期。
+
+`ImpulseLockout` 也只在一個地方加上去（`systems.cc:1222`），條件是：
+
+1. 執行了 `apply_impulse`；
+2. 強度大於目標的 `impulse_resistance`（不夠的話整個 impulse 會被略過）；
+3. 這個 impulse 設定了 `lockout_ticks`，而且大於 0。
+
+沒有設 `lockout_ticks` 的 impulse 只會推動角色，不會造成 `KnockedBack`。
+
+目前只有兩個 action graph 設了 `lockout_ticks`：
+
+| action graph | 強度 [水平, 垂直] | lockout_ticks | stagger | 誰會觸發 |
+|---|---|---|---|---|
+| `action_melee_impact` | [8.0, 3.5] m/s | 28 | 120（玩家門檻，一定 stagger） | `grunt_slam_hit`：gingerbread-infantry、gingerbread_warrior 的 grunt slam |
+| `action_rocket_explosion_at_target` | [12.0, 5.0] m/s | 40 | 依傷害，45 到不了門檻 | `rocket_explosion`：火箭（weapon 3）、榴彈（weapon 7）、gingerbread_mage 的榴彈、爆炸測試瓶 |
+
+玩家的 stagger 設定（`player.yaml`）：門檻 120、持續 12 tick、之後免疫 60 tick。
+
+`area_effect_system.cc` 裡沒看到排除發射者本人的條件，只有 `damage_source_may_damage` 一個檢查，我沒有追進去看。所以玩家自己的爆炸可能也會把自己炸飛，這點還沒驗證。
+
+## 套用：互不影響
+
+| | 觸發條件 | 會不會看對方 |
+|---|---|---|
+| impulse | 強度大於 `impulse_resistance`。水平速度以累加（`+=`）套上去，並強制設成離地。鎖定會重新計時，不會延長上一次的剩餘時間。 | 不看 stagger。角色在 stagger 中照樣會被擊退。 |
+| stagger | 累積量達到門檻，而且不在 stagger 或免疫期間 | 不看鎖定。角色在擊退飛行中照樣會 stagger。 |
+
+同一次攻擊會在同一個 tick 同時產生這兩者：impulse 在 action pass 裡立刻套用，stagger 在 tick 結束時才生效，從下一個 tick 開始定住角色（`until_tick = current + 1 + stagger_ticks`）。
+
+## 讀取：各處的優先度
+
+| 讀取的地方 | 優先度 | 程式位置 |
+|---|---|---|
+| 水平移動（server） | **impulse 鎖定 > stagger** | `player_movement.cc:338`：鎖定期間保留擊退速度，stagger 的定住要等鎖定解除才生效 |
+| 垂直移動 | 兩者都不影響 | 重力照常運作，stagger 不會把 y 歸零 |
+| 拒絕動作的原因 | **stagger > impulse** | `damage_system.cc:127`：同時成立時回傳 `Staggered` |
+| AI 寫入速度（`set_velocity`） | 只看鎖定 | `systems.cc:2812`：stagger 期間 AI 可以寫入速度，但會在移動階段被歸零 |
+| 死亡和重生 | 一起清掉 | `systems.cc:2409`、`2744` |
+| snapshot / 動畫 | 只有 stagger | `Staggered` flag 會 replicate；鎖定不會 |
+| client 預測（本地玩家） | 只有鎖定 | `kernel.cc:8285` 會預測鎖定，不會預測 stagger 定住 |
+| Unity 輸入 | 動作：兩者都擋；移動：只有 stagger 會送出 0 | `NetworkInputSampler.IsActionBlocked` / `IsMovementFrozen` |
+
+server 每個 tick 依這個順序決定水平速度（`player_movement.cc:333` 起）：
+
+1. 死亡：歸零。
+2. 擊退鎖定期間：保留目前的水平速度，也就是擊退的速度。
+3. stagger 期間：歸零。
+4. 其他情況：照輸入移動；玩家沒有輸入就歸零。
+
+鎖定會在落地的那個 tick 解除（但不會在套用的同一個 tick 解除），或是到期時解除。
+
+## 量測：stagger 對擊退水平位移的影響
+
+用 kernel 的 `MovementFixture`（`impulse_lockout_test.cc`）驅動真正的 character controller。膠囊體、重力、移動速度都跟 `player.yaml` 一致；server 每秒 30 tick，stagger 持續 12 tick。
+
+| 情況 | 落地（tick） | 落地時水平位移 | 4 秒後的位移 |
+|---|---|---|---|
+| 近戰 [8, 3.5]，無 stagger | 20 | 5.60 m | 按住前進：22.10 m |
+| 近戰，命中當下 stagger | 20 | 5.60 m | 22.10 m（完全一樣） |
+| 近戰，飛行途中（+15 tick）才 stagger | 20 | 5.60 m | 20.93 m |
+| 火箭 [12, 5]，無 stagger 或命中當下 stagger | 29 | 12.00 m | 27.00 m（兩者一樣） |
+| 純水平擊退 [8, 0]，無 stagger 或命中當下 stagger | 在地上滑行 | 滑到鎖定到期（28 tick）：7.63 m | 兩者一樣 |
+| 近戰把角色推下 6 m 高台，無 stagger | 44（鎖定在 28 就到期） | 10.30 m | |
+| 同上，+20 tick 時 stagger | 44 | 9.47 m | |
+| 同上，沒有輸入 | 44 | 7.47 m | |
+
+解讀：
+
+1. **grunt slam 和爆炸，stagger 對擊退距離完全沒有影響。** grunt slam 的 stagger 持續 13 tick，比飛行時間的 20 tick 還短，落地前就結束了。
+2. **飛行途中才觸發的 stagger，只會影響落地之後。** stagger 比落地晚結束時，落地後剩下的時間會被定住；上表 +15 的情況少走了約 1.2 m。實際上很少發生：玩家 stagger 後有 2 秒免疫，而這種情況需要一次本身不會 stagger 的擊退，再加上飛行途中另一次傷害累積到門檻。
+3. **只有鎖定在空中到期時，stagger 才會改變水平位移。** 例如被打下高台、飛行時間超過鎖定。鎖定一到期，水平速度立刻被改寫：有 stagger 就歸零，有輸入就以 5 m/s 在空中轉向，沒有輸入就歸零。
+
+量測只跑 server 端的移動程式；client 預測和 Unity 上的畫面沒有實際跑。
+
+## 已知問題
+
+### 1. 拒絕原因的優先度讓 client 晚一步進入擊退鎖定
+
+Unity 靠拒絕原因決定要鎖多久：`Staggered` 只擋 0.25 s，`KnockedBack` 會鎖到落地。
+
+1. grunt slam 同時造成擊退和 stagger。在 stagger 的 13 tick 內按動作，server 回 `Staggered`，client 不會進入擊退鎖定。
+2. stagger 結束了，但角色還在空中（總共飛 20 tick），server 還在擊退鎖定。
+3. 這時玩家按下動作，client 會送出去，server 以 `KnockedBack` 拒絕，client 收到後才開始鎖定。
+
+結果大約會多浪費一次來回的動作請求；按住扳機時，可能會看到一次開火被拒絕。只讀了程式，沒有量測。
+
+### 2. 鎖定在空中到期時，擊退會突然停住
+
+跟 stagger 無關。鎖定到期的那一刻，水平速度會從擊退速度直接跳成輸入值或 0，沒有衰減。沒有輸入時，玩家會在空中突然停住、直直往下掉（上表 7.47 m 那一行）。被打下比約 1 m 還高的地方就會發生。
+
+要修的話，可以改成鎖定到期後在空中保留水平速度，只在落地時才交還控制。這是 kernel 的改動。
+
+### 3. client 預測沒有 stagger
+
+本地玩家的預測只處理擊退鎖定，沒有 stagger 定住。平常靠 Unity 的 `IsMovementFrozen`，在收到 staggered flag 後把移動輸入送成 0，但這個 flag 要晚一個來回才收到。在「飛行途中才 stagger、落地後還被定住」的情況下，本地玩家落地後會先往前走一點，再被拉回去。
+
+### 4. stagger 吃掉被打飛的動畫
+
+grunt slam 每次都會 stagger，Any State 會把 animator 帶進 `Stagger`。stagger 結束回到 Idle 時，離觸地只剩約 0.31 s，已經在 0.35 s 的 landing lead 之內，`Airborne` 早就是 false 了。所以最常見的擊退來源，看不到 `Falling` 也看不到 `Landing`。
+
+爆炸（不會 stagger）則會被 `HitReaction` 切開：本地玩家受傷時一定會播 `HitReaction`，播到 90% 才回 Idle，之後才進入 `Falling`。
+
+## 動畫：區分「被打飛」和「掉下來」（已記下，還沒做）
+
+離地的時機只有兩種：被擊退打到空中、從高處掉下來。目前沒有跳躍（`InputButton_MoveJump` 有定義，但 kernel 沒有使用）。
+
+| 情況 | 滯空 | `Falling` 播多久（滯空減 0.35 s lead） |
+|---|---|---|
+| 爆炸擊退（垂直 5.0 m/s） | 約 1.02 s | 約 0.67 s |
+| grunt slam（垂直 3.5 m/s） | 約 0.71 s | 理論約 0.36 s，實際被 stagger 吃掉 |
+| 從高處掉下來 | 看高度 | 落差大於約 0.6 m 才會播 |
+
+判斷方式：
+
+- **A（先做）：** 在 `NetworkActorView.AdvanceFall`，`IsAirborne` 變成 true 的那一刻，依速度記下 `IsLaunched`：往上速度大於約 1 m/s，或水平速度大於約 6.5 m/s（走路是 5）。落下途中突然有往上的速度，就改成 true。本地和 remote 都能用。
+- **B（最準確）：** kernel 從 `ImpulseLockout` 產生一個新的 visual flag（下一個可用的是 `0x400`），放進 snapshot；本地玩家改用預測值。要改 kernel、發布 package，client 和 server 要用同一版。
+
+controller：
+
+```
+Idle / Run / RunBackwards / SideStep*
+   ├─ Airborne && Launched   → Launched
+   └─ Airborne && !Launched  → Falling
+
+Launched ─ !Airborne → LaunchedLanding → Idle (exit 0.8)
+Falling  ─ !Airborne → Landing         → Idle (exit 0.8)
+Falling  ─ Launched  → Launched
+```
+
+還要決定第 4 點怎麼處理，建議：讓 `Stagger` 在 `Airborne && Launched` 時直接接 `Launched`，被打飛的優先權高於 stagger；stagger 仍然會出現在地面上的受擊。
+
+另外，gingerbread 系列的 controller 沒有 `Airborne`，敵人被玩家炸飛時還是在播走路或 Idle。
