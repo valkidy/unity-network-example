@@ -97,6 +97,7 @@ namespace NetworkExample.UnityDemo.Rendering
         private static readonly int ActorLandedParameter = Animator.StringToHash("ActorLanded");
         private static readonly int ReviveParameter = Animator.StringToHash("Revive");
         private static readonly int ReviveLandingParameter = Animator.StringToHash("ReviveLanding");
+        private static readonly int AirborneParameter = Animator.StringToHash("Airborne");
 
         private Animator animator;
         private KernelSkeletonBinding skeletonBinding;
@@ -185,30 +186,33 @@ namespace NetworkExample.UnityDemo.Rendering
         private float itemThrowHoldSeconds = 1.3f;
 
         /// <summary>
-        /// How long before touchdown the landing of a revive is started.
+        /// How long before touchdown a landing is started, for a revive and for
+        /// any other fall.
         /// </summary>
         /// <remarks>
-        /// A revive drops the body from above its corpse, and the landing clip
-        /// reaches for the ground before it meets it. Started on contact, the
-        /// legs would still be extending with the feet already down; started
-        /// this far ahead, contact lands on the clip's own impact. Match it to
-        /// the time from the clip's first frame to its touchdown.
+        /// The landing clips reach for the ground before they meet it. Started
+        /// on contact, the legs would still be extending with the feet already
+        /// down; started this far ahead, contact lands on the clip's own
+        /// impact. Match it to the time from the clip's first frame to its
+        /// touchdown. It is also the shortest airtime that counts as a fall: a
+        /// drop that lands sooner than this, such as stepping off a kerb, has
+        /// no room for the fall and the landing, so the body keeps walking.
         /// </remarks>
-        [Header("Revive")]
+        [Header("Falling")]
         [SerializeField]
         [Min(0f)]
-        private float reviveLandingLeadSeconds = 0.35f;
+        private float landingLeadSeconds = 0.35f;
 
         [SerializeField]
         [Min(0.01f)]
         [Tooltip(
             "Downward acceleration used to predict touchdown, in m/s^2. Must " +
             "match the actor template's movement gravity.")]
-        private float reviveFallGravity = 9.81f;
+        private float fallGravity = 9.81f;
 
         [SerializeField]
-        [Tooltip("Colliders the revive fall measures its height above.")]
-        private LayerMask reviveGroundLayers = ~0;
+        [Tooltip("Colliders a fall measures its height above.")]
+        private LayerMask groundLayers = ~0;
 
         [Header("Action Triggers")]
         [SerializeField]
@@ -307,6 +311,14 @@ namespace NetworkExample.UnityDemo.Rendering
         // the ground; only a flag seen after the body left it means touchdown.
         private bool reviveSeenAirborne;
 
+        /// <summary>
+        /// Whether the body is in a fall other than a revive's, drawn as the
+        /// Falling state. It clears a landing lead before touchdown, which is
+        /// what starts the landing.
+        /// </summary>
+        public bool IsAirborne { get; private set; }
+        public int FallCount { get; private set; }
+
         public void SetStale(bool stale)
         {
             IsStale = stale;
@@ -354,6 +366,7 @@ namespace NetworkExample.UnityDemo.Rendering
             ActionInstanceId = state.action.action_instance_id;
             ActionTemplateId = state.action.action_template_id;
 
+            bool wasDead = IsDead;
             IsDead = HasFlag(KernelConstants.VisualFlagDead);
             IsReloading = !IsDead && HasFlag(KernelConstants.VisualFlagReloading);
             IsMoving = !IsDead && HasFlag(KernelConstants.VisualFlagMoving);
@@ -361,6 +374,7 @@ namespace NetworkExample.UnityDemo.Rendering
             IsGrounded = HasFlag(KernelConstants.VisualFlagGrounded);
             IsFalling = HasFlag(KernelConstants.VisualFlagFalling);
             AdvanceReviveFall(state.velocity.y);
+            AdvanceFall(state.velocity.y, revived: wasDead && !IsDead);
             IsWindup = !IsDead && state.action.phase == KernelActionPhase.Windup;
             IsFiring = !IsDead && !IsReloading &&
                 (HasFlag(KernelConstants.VisualFlagFiring) ||
@@ -421,6 +435,7 @@ namespace NetworkExample.UnityDemo.Rendering
             SetBoolIfPresent(target, RecoveryParameter, IsRecovery);
             SetBoolIfPresent(target, IdleParameter, IsIdle);
             SetBoolIfPresent(target, StaggeredParameter, IsStaggered);
+            SetBoolIfPresent(target, AirborneParameter, IsAirborne);
             SetIntegerIfPresent(target, ActionPhaseParameter, (int)ActionPhase);
             ApplyUpperBodyLayerWeight(target);
         }
@@ -803,6 +818,7 @@ namespace NetworkExample.UnityDemo.Rendering
         {
             ReviveCount++;
             IsReviveFalling = true;
+            IsAirborne = false;
             reviveSeenAirborne = false;
             Animator target = GetAnimator();
             ResetTriggerIfPresent(target, ReviveLandingParameter);
@@ -842,7 +858,7 @@ namespace NetworkExample.UnityDemo.Rendering
             bool landed = reviveSeenAirborne && IsGrounded;
             if (!landed &&
                 (!TryPredictTouchdownSeconds(verticalVelocity, out float seconds) ||
-                    seconds > reviveLandingLeadSeconds))
+                    seconds > landingLeadSeconds))
             {
                 return;
             }
@@ -850,6 +866,39 @@ namespace NetworkExample.UnityDemo.Rendering
             IsReviveFalling = false;
             ReviveLandingCount++;
             SetTriggerIfPresent(GetAnimator(), ReviveLandingParameter);
+        }
+
+        /// <summary>
+        /// Tracks a fall that is not a revive's -- a knockback into the air, a
+        /// drop off a ledge -- the same way: airborne while touchdown is further
+        /// off than the landing lead, landing once it is not.
+        /// </summary>
+        /// <remarks>
+        /// The kernel's Falling flag is only "not grounded", which also covers
+        /// the few ticks of stepping down a kerb or a slope. Holding the fall to
+        /// a predicted airtime keeps those out. A ray that finds nothing below
+        /// has no airtime to predict, so the fall then lasts until the grounded
+        /// flag comes back. The flag has to be up either way: the ray alone
+        /// would call a body standing on something without a collider airborne.
+        /// The frame the dead flag clears is left out too: that fall is the
+        /// revive's, and <see cref="PlayRevive"/> is only called after this.
+        /// </remarks>
+        private void AdvanceFall(float verticalVelocity, bool revived)
+        {
+            if (revived || IsDead || IsReviveFalling || IsGrounded || !IsFalling)
+            {
+                IsAirborne = false;
+                return;
+            }
+
+            bool farFromGround =
+                !TryPredictTouchdownSeconds(verticalVelocity, out float seconds) ||
+                seconds > landingLeadSeconds;
+            if (farFromGround && !IsAirborne)
+            {
+                FallCount++;
+            }
+            IsAirborne = farFromGround;
         }
 
         private bool TryPredictTouchdownSeconds(float verticalVelocity, out float seconds)
@@ -862,18 +911,19 @@ namespace NetworkExample.UnityDemo.Rendering
                     Vector3.down,
                     out RaycastHit hit,
                     ProbeReach,
-                    reviveGroundLayers,
+                    groundLayers,
                     QueryTriggerInteraction.Ignore))
             {
                 return false;
             }
 
-            // h = v t + g t^2 / 2, with v the downward speed, solved for t.
+            // 0 = h + v t - g t^2 / 2, with v the upward speed, solved for t.
+            // A body still rising, as after a knockback, has its climb to go
+            // first.
             float height = Mathf.Max(0f, hit.distance - ProbeLift);
-            float downwardSpeed = Mathf.Max(0f, -verticalVelocity);
-            seconds = (-downwardSpeed + Mathf.Sqrt(
-                downwardSpeed * downwardSpeed + 2f * reviveFallGravity * height)) /
-                reviveFallGravity;
+            seconds = (verticalVelocity + Mathf.Sqrt(
+                verticalVelocity * verticalVelocity + 2f * fallGravity * height)) /
+                fallGravity;
             return true;
         }
 

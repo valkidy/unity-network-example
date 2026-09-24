@@ -1408,6 +1408,98 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             Assert.That(view.ReviveLandingCount, Is.Zero);
         }
 
+        [Test]
+        public void ActorKnockedIntoTheAir_IsAirborneUntilTouchdownIsWithinTheLandingLead()
+        {
+            CreateGround();
+            NetworkActorView view = Spawn(105);
+
+            // 3 m up is 0.78 s from the ground.
+            applier.Apply(new[] { Falling(105, height: 3f, downwardSpeed: 0f) }, 1);
+            Assert.That(view.IsAirborne, Is.True);
+            Assert.That(view.FallCount, Is.EqualTo(1));
+
+            // 0.3 m up is 0.25 s away, inside the 0.35 s lead.
+            applier.Apply(new[] { Falling(105, height: 0.3f, downwardSpeed: 0f) }, 1);
+            Assert.That(view.IsAirborne, Is.False);
+            Assert.That(view.FallCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void RisingActor_CountsItsClimbTowardTouchdown()
+        {
+            CreateGround();
+            NetworkActorView view = Spawn(105);
+
+            // 0.3 m up is 0.25 s from rest, but 0.88 s rising at 4 m/s.
+            applier.Apply(new[] { Falling(105, height: 0.3f, downwardSpeed: -4f) }, 1);
+
+            Assert.That(view.IsAirborne, Is.True);
+        }
+
+        [Test]
+        public void ActorSteppingDownAKerb_IsNotAFall()
+        {
+            CreateGround();
+            NetworkActorView view = Spawn(105);
+
+            applier.Apply(new[] { Falling(105, height: 0.2f, downwardSpeed: 0f) }, 1);
+
+            Assert.That(view.IsAirborne, Is.False);
+            Assert.That(view.FallCount, Is.Zero);
+        }
+
+        [Test]
+        public void ActorHighAboveTheGround_IsNotAFallUntilTheKernelSaysSo()
+        {
+            CreateGround();
+            NetworkActorView view = Spawn(105);
+
+            RenderEntityState raised = Falling(105, height: 3f, downwardSpeed: 0f);
+            raised.visual_flags = 0u;
+            applier.Apply(new[] { raised }, 1);
+
+            Assert.That(view.IsAirborne, Is.False);
+        }
+
+        [Test]
+        public void ActorFallingWithNoGroundToMeasure_LandsOnTouchdown()
+        {
+            NetworkActorView view = Spawn(105);
+            applier.Apply(new[] { Falling(105, height: 0.3f, downwardSpeed: 5f) }, 1);
+            Assert.That(view.IsAirborne, Is.True);
+
+            RenderEntityState landed = Falling(105, height: 0f, downwardSpeed: 0f);
+            landed.visual_flags = KernelConstants.VisualFlagGrounded;
+            applier.Apply(new[] { landed }, 1);
+
+            Assert.That(view.IsAirborne, Is.False);
+        }
+
+        [Test]
+        public void RevivedPlayer_FallsAsARevive_NotAsAnOrdinaryFall()
+        {
+            CreateGround();
+            NetworkActorView view = KillAndRevive(105, height: 8f);
+
+            applier.Apply(new[] { Falling(105, height: 8f, downwardSpeed: 0f) }, 1);
+            Assert.That(view.IsAirborne, Is.False);
+
+            // After the revive's landing starts, the rest of its fall is inside
+            // the lead and must not start a second landing.
+            applier.Apply(new[] { Falling(105, height: 0.3f, downwardSpeed: 0f) }, 1);
+            Assert.That(view.ReviveLandingCount, Is.EqualTo(1));
+            Assert.That(view.IsAirborne, Is.False);
+            Assert.That(view.FallCount, Is.Zero);
+        }
+
+        private NetworkActorView Spawn(uint netId)
+        {
+            applier.Apply(new[] { Actor(netId, alive: true) }, 1);
+            Assert.That(entityRegistry.TryGetByNetId(netId, out GameObject visual), Is.True);
+            return visual.GetComponent<NetworkActorView>();
+        }
+
         private NetworkActorView KillAndRevive(uint netId, float height)
         {
             applier.Apply(new[] { Actor(netId, alive: true) }, 1);

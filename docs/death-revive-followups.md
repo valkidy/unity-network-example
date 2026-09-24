@@ -10,26 +10,17 @@
 | package lock 更新到 `bce776e` | Unity `3a0dade` | 同上 |
 | 重生時 remote 不再從屍體往上滑 | kernel `cc204fe` | 已進 `bce776e` package |
 | snapshot 補上 Grounded/Falling、本地改用預測值 | kernel `01444f7`，`claude/fix-replicate-ground-flags` | 已 commit，**未 push、未發布 package** |
-| 重生動畫（`Flying` → `FlyToLanding`） | Unity，工作目錄 | **未 commit**，混在 `claude/feat-stagger-client` 的未 commit 修改裡 |
-
-開新分支前，先把重生動畫的這些檔案 commit 掉，不然它們會跟著帶到新分支：
-
-- `Assets/Scripts/Rendering/NetworkActorView.cs`
-- `Assets/Scripts/Rendering/NetworkRenderStateApplier.cs`
-- `Assets/Tests/EditMode/NetworkRenderingTests.cs`
-- `Assets/Resources/Actors/wizard-cat/wizard-cat.controller`
-- `Assets/Resources/Actors/wizard-cat/wizard-cat@flying.fbx`（和 `.meta`）
-- `Assets/Resources/Actors/wizard-cat/wizard-cat@fly-to-landing.fbx`（和 `.meta`）
-
-`Client.unity` 和 `ClientRunner.cs` 上是 stagger 的修改，跟這件事無關。
+| 重生動畫（`Flying` → `FlyToLanding`） | Unity `dad2cc9` | 已 commit，在 `claude/feat-stagger-client` |
+| EditMode 測試雜訊（placeholder material） | Unity `9eb262c` | 已 commit，在 `claude/fix-placeholder-shared-material` |
+| 一般落下與落地（`Falling` → `Landing`） | Unity，同一個分支 | 已 commit，暫用重生的 clip |
 
 ## 重生動畫現在怎麼運作
 
 - dead flag 從 1 變 0 時，`NetworkRenderStateApplier` 呼叫 `NetworkActorView.PlayRevive()`，送出 `Revive` trigger，Any State 直接進入 `Flying`，不做 blend。
-- 下降途中，用往下的 raycast 量高度、用 replicated 的速度，預測還剩多久觸地。剩下的時間不超過 `reviveLandingLeadSeconds`（0.35 s）時，送出 `ReviveLanding`，進入 `FlyToLanding`。
+- 下降途中，用往下的 raycast 量高度、用 replicated 的速度，預測還剩多久觸地。剩下的時間不超過 `landingLeadSeconds`（0.35 s）時，送出 `ReviveLanding`，進入 `FlyToLanding`。
 - 後備判斷：先看到角色離地之後，`Grounded` 變成 true 時也會觸發落地。這要等 `01444f7` 發布之後才會生效，在那之前 Grounded 永遠是 false。
 - 播到 `FlyToLanding` 的 80% 時，回到 `Idle`。
-- Inspector 可以調整三個值：landing lead（0.35 s）、重力（9.81，要跟 catalog 一致），以及哪些 layer 算地面。
+- Inspector 的 Falling 區可以調整三個值：landing lead（0.35 s）、重力（9.81，要跟 catalog 一致），以及哪些 layer 算地面。一般落下也共用這三個值。
 - 重生高度由 kernel catalog 的 `player.respawn.height_offset` 決定。你打算改成 8 m，下降時間是 1.28 s。
 
 ## 需要準備的 clip
@@ -38,11 +29,13 @@
 
 ### 建議（接下來最有用的）
 
-1. **一般的落下 loop 和落地**（`Falling`，著地時 `ActorLanded`，或者用 `Grounded` 從 false 變成 true）
-   - 為什麼：`01444f7` 發布之後，client 會第一次收到正確的 Grounded/Falling。現在的 controller 沒有這兩個參數，被擊退飛起來或從高處掉下來時，都還是在播走路或 Idle。
-   - 參數：`Grounded`（bool）、`Falling`（bool）、`ActorLanded`（trigger）。程式已經會送出這三個參數，controller 還沒有。
-   - 注意：Landed flag 不會放進 snapshot（只維持一個 tick，client 收到的結果不可靠）。remote 玩家的「剛落地」要用 `Grounded` 從 false 變 true 來判斷，不能靠 `ActorLanded`。
-   - 如果 clip 在觸地前有預備動作，可以照重生落地的做法提前觸發。那段邏輯可以抽出來共用。
+1. **一般的落下 loop 和落地的專用 clip**
+   - controller 已經接好：`Airborne`（bool）為 true 時，Idle、Run、RunBackwards、SideStepLeft、SideStepRight 會進入 `Falling`；變回 false 時進入 `Landing`，播到 80% 回到 `Idle`。
+   - 目前 `Falling` 用 `wizard-cat@flying`，`Landing` 用 `wizard-cat@fly-to-landing`。有了專用 clip 之後，只要換掉這兩個 state 的 Motion。
+   - `Airborne` 由 `NetworkActorView` 決定，跟重生用同一套預測：kernel 的 Falling flag 要是 up，而且預測離觸地還超過 landing lead，才算在空中；剩下的時間進入 lead 之內，或者 Grounded 變成 true，就開始落地。所以落差很小的情況（例如走下路緣）不會進入 `Falling`。
+   - 新的落地 clip 從第一格到觸地的時間如果不是 0.35 s，要一起調 landing lead。重生落地也用同一個值，兩個 clip 最好對齊。
+   - controller 沒有加 `Grounded`、`Falling`、`ActorLanded` 這三個參數。`Airborne` 已經涵蓋落下和落地。`ActorLanded` 是 trigger，沒被 state 消耗就會一直留著，而且 remote 收不到可靠的 landed。
+   - 在 `01444f7` 發布之前，client 收不到 Falling flag，所以 `Falling` state 不會出現。
 
 ### 看設計決定
 
@@ -65,7 +58,8 @@
    - knockback 鎖定在落地時就解除
 4. **重新調 knockback 鎖定：** 之前在 pure client 上 grounded 永遠是 false，所以 `NetworkInputSampler.UpdateLocalActorState` 的鎖定每次都要等到 `KnockbackLockoutLimitSeconds` 逾時才解除。修正後會在落地時解除，0.25 s grace 那條規則也是第一次真的生效。要確認手感，必要的話重新調這個上限。
 5. **push：** Unity 的 `claude/feat-despawn-reason-retired`，以及 local main 上的 `251c9b9`。
-6. **（建議）修掉 EditMode 測試的雜訊：** `NetworkPrefabRegistry.CreatePlaceholder` 在 edit mode 呼叫 `renderer.material`，Unity 會記成 error log，讓 21 個測試失敗，也會擋住新加的測試。改成 `sharedMaterial = new Material(...)` 就會回到已知的 8 個失敗。
+6. ~~修掉 EditMode 測試的雜訊~~：已在 `9eb262c` 修好，回到已知的 8 個失敗。
+7. **驗證一般落下：** `01444f7` 發布之後，用擊退把角色打到空中，確認它會播 `Falling`，觸地前會開始播 `Landing`。
 
 ## 已知限制（這一版不處理）
 
