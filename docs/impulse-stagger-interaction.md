@@ -154,4 +154,20 @@ Any State
 - 每種落地各有自己的 landing lead，對齊各自 clip 的觸地時間：重生 0.35 s（flying-to-landing）、一般落下 0.25 s（falling-to-landing，是 flying-to-landing 加速 1.39 倍）、擊退 0.2 s（impact-falling-flat 在 0.19 s 觸地）。
 - `impact-falling-flat` 結束時是躺在地上的姿勢，回到 Idle 的 0.3 s blend 就是「站起來」。如果看起來太突兀，需要一個起身的 clip。
 
-另外，gingerbread 系列的 controller 沒有 `Airborne`，敵人被玩家炸飛時還是在播走路或 Idle。
+gingerbread 系列（catalog 有用到的五個 controller）也接好同一套流程，**clip 還沒補**：
+
+| controller | actor template |
+|---|---|
+| `gingerbread` | 2、28，以及沒有自己一列的 agent（例如 chaser_grunt 26） |
+| `gingerbread-infantry` | 30 |
+| `gingerbread-warrior` | 29 |
+| `gingerbread-mage` | 31 |
+| `gingerbread-mushroom` | 32 |
+
+- 參數：`Airborne`、`Launched`（bool）。
+- `ImpactFalling`：從 Any State 進入，條件 `Airborne && Launched && !Dead`，排在 Any State 清單最後（Death、Stagger、HitReaction 之後）。
+- `ImpactFalling` → `ImpactLanding`：`!Airborne`。`ImpactLanding` → `Idle`：exit time 1.0，blend 0.3 s。
+- 兩個 state 的 Motion 都是空的，等 clip 補上。在那之前，被打飛的 gingerbread 會在空中顯示預設姿勢（這兩個 state 跟其他 base layer state 一樣是 Write Defaults），落地後約 1.3 s 回到 Idle（沒有 clip 的 state 以 1 s 計）。
+- 補 clip 時：飛行那個 clip 要設成 loop。落地 clip 觸地的時間如果跟 0.2 s 差很多，要調 view 的 launch landing lead；這個值目前所有角色共用。
+- 沒有一般落下（`Falling` / `Landing`）：敵人走路時腳會貼著地面往下，不太會有真正的落下。
+- `gingerbread-knight` 沒有被 catalog 用到，沒改。
