@@ -173,6 +173,7 @@ namespace NetworkExample.UnityDemo.Rendering
                         else if (!isDead && known.wasDead && knownBefore)
                         {
                             LogDeathSignal("dead flag cleared (revived)", state.net_id);
+                            GetOrAddActorView(visual).PlayRevive();
                         }
 
                         // Only players: they are the actors the server keeps

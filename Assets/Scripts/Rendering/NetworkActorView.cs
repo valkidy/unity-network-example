@@ -95,6 +95,8 @@ namespace NetworkExample.UnityDemo.Rendering
         private static readonly int StaggeredParameter = Animator.StringToHash("Staggered");
         private static readonly int StaggerReactionParameter = Animator.StringToHash("StaggerReaction");
         private static readonly int ActorLandedParameter = Animator.StringToHash("ActorLanded");
+        private static readonly int ReviveParameter = Animator.StringToHash("Revive");
+        private static readonly int ReviveLandingParameter = Animator.StringToHash("ReviveLanding");
 
         private Animator animator;
         private KernelSkeletonBinding skeletonBinding;
@@ -182,6 +184,32 @@ namespace NetworkExample.UnityDemo.Rendering
         [Min(0f)]
         private float itemThrowHoldSeconds = 1.3f;
 
+        /// <summary>
+        /// How long before touchdown the landing of a revive is started.
+        /// </summary>
+        /// <remarks>
+        /// A revive drops the body from above its corpse, and the landing clip
+        /// reaches for the ground before it meets it. Started on contact, the
+        /// legs would still be extending with the feet already down; started
+        /// this far ahead, contact lands on the clip's own impact. Match it to
+        /// the time from the clip's first frame to its touchdown.
+        /// </remarks>
+        [Header("Revive")]
+        [SerializeField]
+        [Min(0f)]
+        private float reviveLandingLeadSeconds = 0.35f;
+
+        [SerializeField]
+        [Min(0.01f)]
+        [Tooltip(
+            "Downward acceleration used to predict touchdown, in m/s^2. Must " +
+            "match the actor template's movement gravity.")]
+        private float reviveFallGravity = 9.81f;
+
+        [SerializeField]
+        [Tooltip("Colliders the revive fall measures its height above.")]
+        private LayerMask reviveGroundLayers = ~0;
+
         [Header("Action Triggers")]
         [SerializeField]
         [Tooltip(
@@ -267,6 +295,18 @@ namespace NetworkExample.UnityDemo.Rendering
         /// </summary>
         public bool IsBodyHidden { get; private set; }
 
+        /// <summary>
+        /// Whether a revive's fall is in progress: from the frame the dead flag
+        /// clears until its landing is started.
+        /// </summary>
+        public bool IsReviveFalling { get; private set; }
+        public int ReviveCount { get; private set; }
+        public int ReviveLandingCount { get; private set; }
+
+        // The grounded flag on the revive tick can still describe the corpse on
+        // the ground; only a flag seen after the body left it means touchdown.
+        private bool reviveSeenAirborne;
+
         public void SetStale(bool stale)
         {
             IsStale = stale;
@@ -320,6 +360,7 @@ namespace NetworkExample.UnityDemo.Rendering
             IsAiming = !IsDead && HasFlag(KernelConstants.VisualFlagAiming);
             IsGrounded = HasFlag(KernelConstants.VisualFlagGrounded);
             IsFalling = HasFlag(KernelConstants.VisualFlagFalling);
+            AdvanceReviveFall(state.velocity.y);
             IsWindup = !IsDead && state.action.phase == KernelActionPhase.Windup;
             IsFiring = !IsDead && !IsReloading &&
                 (HasFlag(KernelConstants.VisualFlagFiring) ||
@@ -751,6 +792,89 @@ namespace NetworkExample.UnityDemo.Rendering
 
             LandedCount++;
             SetTriggerIfPresent(GetAnimator(), ActorLandedParameter);
+        }
+
+        /// <summary>
+        /// Starts a revive: the body was just placed above its corpse and falls
+        /// from there, so it flies until <see cref="AdvanceReviveFall"/> starts
+        /// the landing.
+        /// </summary>
+        public void PlayRevive()
+        {
+            ReviveCount++;
+            IsReviveFalling = true;
+            reviveSeenAirborne = false;
+            Animator target = GetAnimator();
+            ResetTriggerIfPresent(target, ReviveLandingParameter);
+            SetTriggerIfPresent(target, ReviveParameter);
+        }
+
+        /// <summary>
+        /// Starts the landing once touchdown is no further away than the
+        /// landing clip's lead, or on touchdown itself if that was missed.
+        /// </summary>
+        /// <remarks>
+        /// Touchdown is predicted rather than awaited because the landing clip
+        /// begins in the air. The height comes from a ray against the scene and
+        /// the speed from the replicated velocity, which is what the server is
+        /// integrating under the same gravity, so the estimate is the time left
+        /// in a fall nothing else is steering. A ray that finds nothing leaves
+        /// only the grounded flag.
+        /// </remarks>
+        private void AdvanceReviveFall(float verticalVelocity)
+        {
+            if (!IsReviveFalling)
+            {
+                return;
+            }
+
+            if (IsDead)
+            {
+                IsReviveFalling = false;
+                return;
+            }
+
+            if (!IsGrounded)
+            {
+                reviveSeenAirborne = true;
+            }
+
+            bool landed = reviveSeenAirborne && IsGrounded;
+            if (!landed &&
+                (!TryPredictTouchdownSeconds(verticalVelocity, out float seconds) ||
+                    seconds > reviveLandingLeadSeconds))
+            {
+                return;
+            }
+
+            IsReviveFalling = false;
+            ReviveLandingCount++;
+            SetTriggerIfPresent(GetAnimator(), ReviveLandingParameter);
+        }
+
+        private bool TryPredictTouchdownSeconds(float verticalVelocity, out float seconds)
+        {
+            const float ProbeLift = 0.05f;
+            const float ProbeReach = 100f;
+            seconds = 0f;
+            if (!Physics.Raycast(
+                    transform.position + Vector3.up * ProbeLift,
+                    Vector3.down,
+                    out RaycastHit hit,
+                    ProbeReach,
+                    reviveGroundLayers,
+                    QueryTriggerInteraction.Ignore))
+            {
+                return false;
+            }
+
+            // h = v t + g t^2 / 2, with v the downward speed, solved for t.
+            float height = Mathf.Max(0f, hit.distance - ProbeLift);
+            float downwardSpeed = Mathf.Max(0f, -verticalVelocity);
+            seconds = (-downwardSpeed + Mathf.Sqrt(
+                downwardSpeed * downwardSpeed + 2f * reviveFallGravity * height)) /
+                reviveFallGravity;
+            return true;
         }
 
         /// <summary>

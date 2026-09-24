@@ -1333,6 +1333,110 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
+        public void RevivedPlayer_FliesUntilTouchdownIsWithinTheLandingLead()
+        {
+            CreateGround();
+            NetworkActorView view = KillAndRevive(105, height: 8f);
+
+            Assert.That(view.ReviveCount, Is.EqualTo(1));
+            Assert.That(view.IsReviveFalling, Is.True);
+
+            // 8 m up is 1.28 s from the ground: well before the landing lead.
+            applier.Apply(new[] { Falling(105, height: 8f, downwardSpeed: 0f) }, 1);
+            Assert.That(view.ReviveLandingCount, Is.Zero);
+
+            // 0.3 m up is 0.25 s away, inside the 0.35 s lead.
+            applier.Apply(new[] { Falling(105, height: 0.3f, downwardSpeed: 0f) }, 1);
+            Assert.That(view.ReviveLandingCount, Is.EqualTo(1));
+            Assert.That(view.IsReviveFalling, Is.False);
+
+            // Once, however long the rest of the fall takes.
+            applier.Apply(new[] { Falling(105, height: 0.1f, downwardSpeed: 1f) }, 1);
+            Assert.That(view.ReviveLandingCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void RevivedPlayer_CountsSpeedAlreadyGainedTowardTouchdown()
+        {
+            CreateGround();
+            NetworkActorView view = KillAndRevive(105, height: 8f);
+
+            // 2 m up is 0.64 s from rest, but only 0.16 s at 10 m/s downward.
+            applier.Apply(new[] { Falling(105, height: 2f, downwardSpeed: 10f) }, 1);
+
+            Assert.That(view.ReviveLandingCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void RevivedPlayer_IgnoresAGroundedFlagLeftOverFromItsCorpse()
+        {
+            CreateGround();
+            NetworkActorView view = KillAndRevive(105, height: 8f);
+
+            RenderEntityState stale = Falling(105, height: 8f, downwardSpeed: 0f);
+            stale.visual_flags |= KernelConstants.VisualFlagGrounded;
+            applier.Apply(new[] { stale }, 1);
+
+            Assert.That(view.ReviveLandingCount, Is.Zero);
+        }
+
+        [Test]
+        public void RevivedPlayer_WithNoGroundToMeasure_LandsOnTouchdown()
+        {
+            NetworkActorView view = KillAndRevive(105, height: 8f);
+            applier.Apply(new[] { Falling(105, height: 0.3f, downwardSpeed: 5f) }, 1);
+            Assert.That(view.ReviveLandingCount, Is.Zero);
+
+            RenderEntityState landed = Falling(105, height: 0f, downwardSpeed: 0f);
+            landed.visual_flags |= KernelConstants.VisualFlagGrounded;
+            applier.Apply(new[] { landed }, 1);
+
+            Assert.That(view.ReviveLandingCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void PlayerDyingMidFall_AbandonsTheLanding()
+        {
+            CreateGround();
+            NetworkActorView view = KillAndRevive(105, height: 8f);
+
+            RenderEntityState dead = Falling(105, height: 0.1f, downwardSpeed: 0f);
+            dead.visual_flags |= KernelConstants.VisualFlagDead;
+            applier.Apply(new[] { dead }, 1);
+
+            Assert.That(view.IsReviveFalling, Is.False);
+            Assert.That(view.ReviveLandingCount, Is.Zero);
+        }
+
+        private NetworkActorView KillAndRevive(uint netId, float height)
+        {
+            applier.Apply(new[] { Actor(netId, alive: true) }, 1);
+            applier.Apply(new[] { Actor(netId, alive: false) }, 1);
+            applier.Apply(new[] { Falling(netId, height, downwardSpeed: 0f) }, 1);
+            Assert.That(entityRegistry.TryGetByNetId(netId, out GameObject visual), Is.True);
+            return visual.GetComponent<NetworkActorView>();
+        }
+
+        private static RenderEntityState Falling(uint netId, float height, float downwardSpeed)
+        {
+            RenderEntityState state = Actor(netId, alive: true);
+            state.position = new KernelVec3(2f, height, -3f);
+            state.velocity = new KernelVec3(0f, -downwardSpeed, 0f);
+            state.visual_flags = KernelConstants.VisualFlagFalling;
+            return state;
+        }
+
+        private void CreateGround()
+        {
+            GameObject ground = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            ground.name = "Ground";
+            ground.transform.SetParent(rootObject.transform);
+            ground.transform.position = new Vector3(0f, -0.5f, 0f);
+            ground.transform.localScale = new Vector3(200f, 1f, 200f);
+            Physics.SyncTransforms();
+        }
+
+        [Test]
         public void RetiredActor_ThrowsNothing()
         {
             NetworkHitSplatters splatters = ConfigureSplatters();
