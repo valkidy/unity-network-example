@@ -435,6 +435,13 @@ namespace NetworkExample.UnityDemo.Rendering
 
         public float ResolveUpperBodyLayerGoal()
         {
+            // A stagger is a whole-body reaction on the base layer. Leaving the
+            // firing layer up would keep the arms in the shot it interrupted.
+            if (IsStaggered)
+            {
+                return 0f;
+            }
+
             return IsAiming ||
                 IsFiring ||
                 itemThrowHoldRemaining > 0f ||
@@ -774,7 +781,11 @@ namespace NetworkExample.UnityDemo.Rendering
             }
 
             StaggerReactionCount++;
-            SetTriggerIfPresent(GetAnimator(), StaggerReactionParameter);
+            Animator target = GetAnimator();
+            // A flinch still pending from the hit that caused this stagger would
+            // otherwise play the moment the stagger lets go.
+            ResetTriggerIfPresent(target, HitReactionParameter);
+            SetTriggerIfPresent(target, StaggerReactionParameter);
         }
 
         private bool HasFlag(uint flag)
@@ -969,6 +980,14 @@ namespace NetworkExample.UnityDemo.Rendering
             if (HasParameter(target, parameter, AnimatorControllerParameterType.Trigger))
             {
                 target.SetTrigger(parameter);
+            }
+        }
+
+        private static void ResetTriggerIfPresent(Animator target, int parameter)
+        {
+            if (HasParameter(target, parameter, AnimatorControllerParameterType.Trigger))
+            {
+                target.ResetTrigger(parameter);
             }
         }
 

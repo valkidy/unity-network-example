@@ -1250,6 +1250,12 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             Assert.That(view.IsIdle, Is.False);
             Assert.That(view.StaggerReactionCount, Is.EqualTo(1));
 
+            // The stagger drops the firing layer even while the aim is held.
+            RenderEntityState aimingWhileStaggered = Staggered(105);
+            aimingWhileStaggered.visual_flags |= KernelConstants.VisualFlagAiming;
+            applier.Apply(new[] { aimingWhileStaggered }, 1);
+            Assert.That(view.ResolveUpperBodyLayerGoal(), Is.Zero);
+
             applier.Apply(new[] { Actor(105, alive: true) }, 1);
             Assert.That(view.IsStaggered, Is.False);
             applier.Apply(new[] { Staggered(105) }, 1);
