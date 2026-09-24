@@ -48,18 +48,18 @@
 
 ## 後續工作
 
-1. **kernel `01444f7`：** push、合併到 main、同步到 dev-latest，然後重新發布 package。
-2. **Unity：** 更新 `Packages/packages-lock.json` 並 commit。
-3. **驗證：** 參考 memory 裡的 `probe-client-against-own-server`，對自己開的 server 跑一次，確認三件事：
-   - log 裡的 `grounded` 會在 True 和 False 之間切換
-   - 重生落地正常
-   - knockback 鎖定在落地時就解除
+1. ~~kernel `01444f7` 發布~~：已包含在 package `52f21c5`。
+2. ~~Unity 更新 lock~~：`75e48ad`。
+3. ~~驗證~~：2026-09-25 對 `52f21c5` 的 server 跑 probe（玩家 hp 降到 150，每 0.2 s 按一次開火）：
+   - 本地玩家和 remote 角色的 `grounded` 都會在 True 和 False 之間切換；
+   - 重生落地正常：每次都是 `Flying` → `FlyToLanding` → `Idle`，`FlyToLanding` 在觸地前約 0.3 s 開始；
+   - knockback 鎖定 5 次都在落地的那一格解除，持續 0.5–1.9 s，不再等到 10 s 上限。
 4. **重新調 knockback 鎖定：** 之前在 pure client 上 grounded 永遠是 false，所以 `NetworkInputSampler.UpdateLocalActorState` 的鎖定每次都要等到 `KnockbackLockoutLimitSeconds` 逾時才解除。修正後會在落地時解除，0.25 s grace 那條規則也是第一次真的生效。要確認手感，必要的話重新調這個上限。
 5. **push：** Unity 的 `claude/feat-despawn-reason-retired`，以及 local main 上的 `251c9b9`。
 6. ~~修掉 EditMode 測試的雜訊~~：已在 `9eb262c` 修好，回到已知的 8 個失敗。
-7. **驗證落下和擊退：** `01444f7` 發布之後，確認兩件事：
-   - 從高處走下去時播 `Falling` → `Landing`；
-   - 被 grunt slam 或爆炸打飛時播 `ImpactFalling` → `ImpactLanding`，而且 grunt slam 的 stagger 不會把飛行動畫蓋掉。
+7. **驗證落下和擊退：**
+   - ~~被打飛時播 `ImpactFalling` → `ImpactLanding`~~：probe 裡每次都是，`ImpactLanding` 在觸地前約 0.17 s 開始；飛行中不會再被 `HitReaction` 或 `Stagger` 打斷。
+   - **還沒驗證：** 從高處走下去時播 `Falling` → `Landing`。probe 的地圖是平面，沒有高低差。
 
 ## 已知限制（這一版不處理）
 

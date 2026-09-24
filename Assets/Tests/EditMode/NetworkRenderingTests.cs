@@ -1516,6 +1516,64 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
+        public void LaunchedActor_ShowsNoFlinchOrStaggerUntilItLands()
+        {
+            CreateGround();
+            NetworkActorView view = Spawn(105);
+            applier.Apply(new[] { Falling(105, height: 0.3f, downwardSpeed: -4f) }, 1);
+            Assert.That(view.IsLaunched, Is.True);
+
+            view.PlayHitReaction();
+            view.PlayStaggerReaction();
+            view.PlayRemoteCommit(
+                new KernelRemoteActionPresentationEvent
+                {
+                    actor_net_id = 105,
+                    event_type = KernelRemoteActionPresentationEventType.HitReaction,
+                },
+                0);
+
+            Assert.That(view.HitReactionCount, Is.Zero);
+            Assert.That(view.StaggerReactionCount, Is.Zero);
+            Assert.That(view.RemoteCommitCount, Is.Zero);
+        }
+
+        [Test]
+        public void RevivedPlayer_RestOfTheFallAfterItsLandingStarts_IsNotAFall()
+        {
+            CreateGround();
+            NetworkActorView view = KillAndRevive(105, height: 8f);
+
+            // 0.4 m up is 0.29 s away: inside the revive's 0.35 s lead.
+            applier.Apply(new[] { Falling(105, height: 0.4f, downwardSpeed: 0f) }, 1);
+            Assert.That(view.ReviveLandingCount, Is.EqualTo(1));
+
+            // 0.35 m up is 0.27 s away: outside the 0.25 s fall lead, but still
+            // the revive's own fall.
+            applier.Apply(new[] { Falling(105, height: 0.35f, downwardSpeed: 0f) }, 1);
+            Assert.That(view.IsAirborne, Is.False);
+            Assert.That(view.FallCount, Is.Zero);
+
+            // Down, and a later drop is a fall again.
+            RenderEntityState down = Falling(105, height: 0f, downwardSpeed: 0f);
+            down.visual_flags = KernelConstants.VisualFlagGrounded;
+            applier.Apply(new[] { down }, 1);
+            applier.Apply(new[] { Falling(105, height: 3f, downwardSpeed: 0f) }, 1);
+            Assert.That(view.IsAirborne, Is.True);
+        }
+
+        [Test]
+        public void ActorDrawnJustBelowTheGround_IsNotAFall()
+        {
+            CreateGround();
+            NetworkActorView view = Spawn(105);
+
+            applier.Apply(new[] { Falling(105, height: -0.06f, downwardSpeed: 1f) }, 1);
+
+            Assert.That(view.IsAirborne, Is.False);
+        }
+
+        [Test]
         public void ActorSteppingDownAKerb_IsNotAFall()
         {
             CreateGround();

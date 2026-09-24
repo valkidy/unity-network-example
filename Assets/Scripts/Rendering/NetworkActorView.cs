@@ -340,6 +340,11 @@ namespace NetworkExample.UnityDemo.Rendering
         // the ground; only a flag seen after the body left it means touchdown.
         private bool reviveSeenAirborne;
 
+        // Set when a revive's landing starts and held until the body is down.
+        // The revive lead is the longest, so the rest of that fall would
+        // otherwise pass for a fall of its own inside the shorter fall lead.
+        private bool reviveLandingAwaitingGround;
+
         /// <summary>
         /// Whether the body is in a fall other than a revive's. It clears a
         /// landing lead before touchdown, which is what starts the landing.
@@ -834,6 +839,15 @@ namespace NetworkExample.UnityDemo.Rendering
                 return;
             }
 
+            // A body the hit has already thrown into the air shows the hit as
+            // its flight. The flinch would cut into ImpactFalling from Any
+            // State for a tenth of a second and hand it straight back.
+            if (IsLaunched &&
+                remoteEvent.event_type == KernelRemoteActionPresentationEventType.HitReaction)
+            {
+                return;
+            }
+
             RemoteCommitCount++;
             SetTriggerIfPresent(GetAnimator(), ResolveRemoteActionTrigger(remoteEvent));
         }
@@ -861,6 +875,7 @@ namespace NetworkExample.UnityDemo.Rendering
             IsAirborne = false;
             IsLaunched = false;
             reviveSeenAirborne = false;
+            reviveLandingAwaitingGround = false;
             Animator target = GetAnimator();
             ResetTriggerIfPresent(target, ReviveLandingParameter);
             SetTriggerIfPresent(target, ReviveParameter);
@@ -905,6 +920,7 @@ namespace NetworkExample.UnityDemo.Rendering
             }
 
             IsReviveFalling = false;
+            reviveLandingAwaitingGround = true;
             ReviveLandingCount++;
             SetTriggerIfPresent(GetAnimator(), ReviveLandingParameter);
         }
@@ -923,10 +939,17 @@ namespace NetworkExample.UnityDemo.Rendering
         /// would call a body standing on something without a collider airborne.
         /// The frame the dead flag clears is left out too: that fall is the
         /// revive's, and <see cref="PlayRevive"/> is only called after this.
+        /// So is the end of a revive's fall once its landing has started.
         /// </remarks>
         private void AdvanceFall(Vector3 velocity, bool revived)
         {
-            if (revived || IsDead || IsReviveFalling || IsGrounded || !IsFalling)
+            if (IsDead || IsGrounded || !IsFalling)
+            {
+                reviveLandingAwaitingGround = false;
+            }
+
+            if (revived || IsDead || IsReviveFalling || reviveLandingAwaitingGround ||
+                IsGrounded || !IsFalling)
             {
                 IsAirborne = false;
                 IsLaunched = false;
@@ -954,7 +977,10 @@ namespace NetworkExample.UnityDemo.Rendering
 
         private bool TryPredictTouchdownSeconds(float verticalVelocity, out float seconds)
         {
-            const float ProbeLift = 0.05f;
+            // Well above the feet: the drawn body can dip a few centimetres
+            // into the ground at touchdown, and a ray starting inside the
+            // ground collider finds nothing, which reads as open air below.
+            const float ProbeLift = 0.5f;
             const float ProbeReach = 100f;
             seconds = 0f;
             if (!Physics.Raycast(
@@ -981,11 +1007,12 @@ namespace NetworkExample.UnityDemo.Rendering
         /// <summary>
         /// Plays a hit reaction that arrived by some path other than the remote
         /// presentation events -- the local player's own, which the server
-        /// leaves out of those.
+        /// leaves out of those. Skipped while launched, as in
+        /// <see cref="PlayRemoteCommit"/>.
         /// </summary>
         public void PlayHitReaction()
         {
-            if (IsStale || IsDead)
+            if (IsStale || IsDead || IsLaunched)
             {
                 return;
             }
@@ -997,10 +1024,13 @@ namespace NetworkExample.UnityDemo.Rendering
         /// <summary>
         /// Plays the start of a stagger. The Staggered bool holds the pose for as
         /// long as the flag stays up; this is the one-shot for the moment it rose.
+        /// Skipped while launched: the flight outranks it. A stagger that
+        /// outlasts the flight then goes unshown after the landing, which the
+        /// grunt slam never does -- its stagger ends mid-air.
         /// </summary>
         public void PlayStaggerReaction()
         {
-            if (IsStale || IsDead)
+            if (IsStale || IsDead || IsLaunched)
             {
                 return;
             }

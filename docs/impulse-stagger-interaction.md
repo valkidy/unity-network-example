@@ -115,6 +115,8 @@ grunt slam 每次都會 stagger，Any State 會把 animator 帶進 `Stagger`。s
 
 爆炸（不會 stagger）則會被 `HitReaction` 切開：本地玩家受傷時一定會播 `HitReaction`，播到 90% 才回 Idle，之後才進入 `Falling`。
 
+**已修正：** `ImpactFalling` 從 Any State 進入，會接走 `Stagger`。而且 `IsLaunched` 期間，view 不會送出 `HitReaction` 和 `StaggerReaction` trigger（包括 remote presentation event 送來的）。probe 在修正前看到每次擊退都是 `ImpactFalling` → `HitReaction` → `ImpactFalling`，各約 0.1 s；修正後不再出現。代價是：如果 stagger 比飛行還晚結束，落地後不會補播 stagger。grunt slam 的 stagger 在空中就結束了，所以不會遇到。
+
 ## 動畫：區分「被打飛」和「掉下來」（A 方案已實作）
 
 離地的時機只有兩種：被擊退打到空中、從高處掉下來。目前沒有跳躍（`InputButton_MoveJump` 有定義，但 kernel 沒有使用）。
