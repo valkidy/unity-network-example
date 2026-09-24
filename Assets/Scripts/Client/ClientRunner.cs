@@ -55,6 +55,14 @@ namespace NetworkExample.UnityDemo.Client
         private bool logFireStalls = true;
 
         [Tooltip(
+            "Diagnostic: records the local player's rendered position, velocity, " +
+            "the move it sent and the staggered flag every frame around a " +
+            "stagger, and logs the whole window as one entry when it ends. For " +
+            "measuring how far the player slides while staggered.")]
+        [SerializeField]
+        private bool logLocalStaggerMotion;
+
+        [Tooltip(
             "How long the trigger may be held with no commit progress before that " +
             "counts as a stall. Must clear the slowest weapon's cadence.")]
         [SerializeField]
@@ -124,6 +132,10 @@ namespace NetworkExample.UnityDemo.Client
         public uint AgentFollowTargetId => localAgent.FollowTargetId;
         public uint AgentAttackTargetId => localAgent.AttackTargetId;
         public bool EnableLocalAgent { get => enableLocalAgent; set => enableLocalAgent = value; }
+
+        private readonly LocalStaggerMotionLog staggerMotionLog = new LocalStaggerMotionLog();
+        private Vector2 lastSubmittedMove;
+        private bool submittedThisFrame;
 
         private NetworkClient client;
         private KernelEvent[] events;
@@ -233,6 +245,7 @@ namespace NetworkExample.UnityDemo.Client
                 followCamera.SetAiming(inputSampler.IsAiming);
 
             KernelActionIntent predictedIntent = default;
+            submittedThisFrame = false;
             if (client.IsReady &&
                 inputSampler.HasWeaponLoadout &&
                 inputSubmissionClock.ShouldSubmit(Time.unscaledDeltaTime))
@@ -240,6 +253,8 @@ namespace NetworkExample.UnityDemo.Client
                 KernelPlayerInput input = SampleCurrentInput();
                 if (client.TrySubmitInput(input))
                 {
+                    submittedThisFrame = true;
+                    lastSubmittedMove = new Vector2(input.move.x, input.move.y);
                     pendingInputHandoff = false;
                     predictedIntent = input.action_intent;
                     renderStateApplier.BeginPredictedLocalAction(
@@ -327,6 +342,16 @@ namespace NetworkExample.UnityDemo.Client
             localPlayerDead = hasLocalPlayer &&
                 (localPlayer.visual_flags & KernelConstants.VisualFlagDead) != 0;
             UpdateLocalActionGate(hasLocalPlayer, localPlayer);
+            if (logLocalStaggerMotion && hasLocalPlayer)
+            {
+                staggerMotionLog.Record(
+                    Time.frameCount,
+                    Time.unscaledTimeAsDouble,
+                    localPlayer,
+                    inputSampler.IsMovementFrozen,
+                    submittedThisFrame,
+                    lastSubmittedMove);
+            }
             renderStateApplier.ApplySkeletonPoses(client.Kernel, skeletonPoseStates);
             UpdateCameraTarget(client.LocalPlayerNetId);
             renderStateApplier.ApplyKernelEvents(
@@ -1525,6 +1550,118 @@ namespace NetworkExample.UnityDemo.Client
                 client.LocalPeerId +
                 " local_player=" +
                 client.LocalPlayerNetId);
+        }
+
+        /// <summary>
+        /// Collects the local player's motion around one stagger and logs it as a
+        /// single entry: the frames leading up to the flag, every frame it is up,
+        /// and the frames after it clears, then a summary of how far the body
+        /// travelled while the server had it rooted.
+        /// </summary>
+        private sealed class LocalStaggerMotionLog
+        {
+            private const int FramesBefore = 20;
+            private const int FramesAfter = 30;
+
+            private readonly Queue<string> before = new Queue<string>();
+            private readonly System.Text.StringBuilder window =
+                new System.Text.StringBuilder();
+            private bool wasStaggered;
+            private bool capturing;
+            private int framesAfterClear;
+            private int staggerCount;
+            private Vector3 riseStart;
+            private Vector3 clearPosition;
+            private float maxTravel;
+            private double riseTime;
+            private double clearTime;
+
+            public void Record(
+                int frame,
+                double time,
+                RenderEntityState state,
+                bool movementFrozen,
+                bool submitted,
+                Vector2 submittedMove)
+            {
+                bool staggered =
+                    (state.visual_flags & KernelConstants.VisualFlagStaggered) != 0;
+                var position = new Vector3(state.position.x, state.position.y, state.position.z);
+                string line =
+                    "f=" + frame +
+                    " t=" + time.ToString("0.000") +
+                    " stag=" + (staggered ? 1 : 0) +
+                    " frozen=" + (movementFrozen ? 1 : 0) +
+                    (submitted
+                        ? " sent=(" + submittedMove.x.ToString("0.00") + "," +
+                            submittedMove.y.ToString("0.00") + ")"
+                        : " sent=-") +
+                    " pos=(" + position.x.ToString("0.000") + "," +
+                        position.y.ToString("0.000") + "," +
+                        position.z.ToString("0.000") + ")" +
+                    " vel=(" + state.velocity.x.ToString("0.00") + "," +
+                        state.velocity.z.ToString("0.00") + ")" +
+                    " status=" + state.status;
+
+                if (staggered && !wasStaggered && !capturing)
+                {
+                    capturing = true;
+                    staggerCount++;
+                    riseStart = position;
+                    riseTime = time;
+                    maxTravel = 0f;
+                    window.Clear();
+                    window.AppendLine(
+                        "Local stagger motion #" + staggerCount +
+                        " (" + before.Count + " frames before the flag):");
+                    foreach (string previous in before)
+                    {
+                        window.AppendLine("  " + previous);
+                    }
+                }
+
+                if (capturing)
+                {
+                    float travel = Vector2.Distance(
+                        new Vector2(position.x, position.z),
+                        new Vector2(riseStart.x, riseStart.z));
+                    window.AppendLine(
+                        "  " + line + " travel=" + travel.ToString("0.000"));
+                    if (staggered)
+                    {
+                        maxTravel = Mathf.Max(maxTravel, travel);
+                        framesAfterClear = 0;
+                        clearPosition = position;
+                        clearTime = time;
+                    }
+                    else if (++framesAfterClear >= FramesAfter)
+                    {
+                        float atClear = Vector2.Distance(
+                            new Vector2(clearPosition.x, clearPosition.z),
+                            new Vector2(riseStart.x, riseStart.z));
+                        window.AppendLine(
+                            "  summary: flag up " +
+                            ((clearTime - riseTime) * 1000.0).ToString("0") +
+                            " ms, max ground travel while staggered " +
+                            maxTravel.ToString("0.000") +
+                            " m, travel at clear " + atClear.ToString("0.000") + " m");
+                        Debug.Log(window.ToString());
+                        capturing = false;
+                        before.Clear();
+                    }
+                }
+
+                if (!capturing)
+                {
+                    before.Enqueue(line);
+                    while (before.Count > FramesBefore)
+                    {
+                        before.Dequeue();
+                    }
+                }
+
+                wasStaggered = staggered;
+            }
         }
     }
 }
