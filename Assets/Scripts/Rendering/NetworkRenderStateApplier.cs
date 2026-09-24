@@ -509,16 +509,17 @@ namespace NetworkExample.UnityDemo.Rendering
         /// Marks the ground under a dying actor, if anything is drawing splats.
         /// </summary>
         /// <remarks>
-        /// Raised from the replicated dead flag rather than from the death
-        /// presentation event or the despawn, because that flag is the only one
-        /// of the three that is guaranteed. The presentation event belongs to an
-        /// action instance and reports what an animator should trigger, so
-        /// whether it arrives at all depends on what killed the actor. The
-        /// despawn is worse: it carries
-        /// <see cref="KernelDespawnReason"/>.Destroyed for an actor that merely
-        /// went out of range as much as for one that was killed, and it arrives
-        /// after <see cref="ApplyEntityLifecycleEvents"/> has already dropped the
-        /// visual this reads the position off.
+        /// Raised from the replicated dead flag first, and from the despawn only
+        /// as a fallback; never from the death presentation event. That event
+        /// belongs to an action instance and reports what an animator should
+        /// trigger, so whether it arrives at all depends on what killed the
+        /// actor. The dead flag is the direct signal, but a client can miss it:
+        /// an actor removed on the same tick it was killed never appears in a
+        /// snapshot with the flag raised. For that case
+        /// <see cref="ApplyEntityLifecycleEvents"/> marks the ground from the
+        /// despawn instead, using the position it reads before dropping the
+        /// visual. That path is a proxy (see <see cref="IsKill"/>), which is
+        /// why the flag takes precedence.
         /// </remarks>
         private void TrySplat(GameObject visual)
         {
