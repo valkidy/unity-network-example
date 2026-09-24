@@ -195,7 +195,7 @@ namespace NetworkExample.UnityDemo.Rendering
         /// on contact, the legs would still be extending with the feet already
         /// down; started this far ahead, contact lands on the clip's own
         /// impact. Match each to the time from its clip's first frame to its
-        /// touchdown: fly-to-landing, falling-to-landing and
+        /// touchdown: flying-to-landing, falling-to-landing and
         /// impact-falling-flat. The fall and knockback leads are also the
         /// shortest airtime that counts as one: a drop that lands sooner, such
         /// as stepping off a kerb, has no room for the fall and the landing,

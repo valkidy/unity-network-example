@@ -143,7 +143,7 @@ Any State
 ```
 
 - `ImpactFalling` 走 Any State，所以會蓋掉 `Stagger`、`HitReaction` 和 `Falling`，第 4 點因此解決：grunt slam 的擊退會先進 `Stagger`，下一格就被 `ImpactFalling` 接走。它排在 Any State 清單的最後，讓 `StaggerReaction`、`HitReaction` 這些 trigger 先被消耗掉，不會留到落地後才播。
-- 每種落地各有自己的 landing lead，對齊各自 clip 的觸地時間：重生 0.35 s（fly-to-landing）、一般落下 0.25 s（falling-to-landing，是 fly-to-landing 加速 1.39 倍）、擊退 0.2 s（impact-falling-flat 在 0.19 s 觸地）。
+- 每種落地各有自己的 landing lead，對齊各自 clip 的觸地時間：重生 0.35 s（flying-to-landing）、一般落下 0.25 s（falling-to-landing，是 flying-to-landing 加速 1.39 倍）、擊退 0.2 s（impact-falling-flat 在 0.19 s 觸地）。
 - `impact-falling-flat` 結束時是躺在地上的姿勢，回到 Idle 的 0.3 s blend 就是「站起來」。如果看起來太突兀，需要一個起身的 clip。
 
 另外，gingerbread 系列的 controller 沒有 `Airborne`，敵人被玩家炸飛時還是在播走路或 Idle。
