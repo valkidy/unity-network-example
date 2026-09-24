@@ -546,7 +546,17 @@ namespace NetworkExample.UnityDemo.Host
                 (flags & KernelConstants.VisualFlagStaggered) != 0;
             bool grounded = !hasLocalPlayer ||
                 (flags & KernelConstants.VisualFlagGrounded) != 0;
-            inputSampler.UpdateLocalActorState(staggered, grounded, Time.unscaledDeltaTime);
+            NetworkActorView view = hasLocalPlayer &&
+                entityRegistry != null &&
+                entityRegistry.TryGetByNetId(host.LocalPlayerNetId, out GameObject visual)
+                    ? visual.GetComponent<NetworkActorView>()
+                    : null;
+            inputSampler.UpdateLocalActorState(
+                staggered,
+                grounded,
+                airborne: view != null && view.IsAirborne,
+                launched: view != null && view.IsLaunched,
+                Time.unscaledDeltaTime);
         }
 
         private bool TryGetLocalPlayerState(

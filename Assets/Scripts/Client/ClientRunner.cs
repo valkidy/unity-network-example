@@ -341,7 +341,7 @@ namespace NetworkExample.UnityDemo.Client
                 out RenderEntityState localPlayer);
             localPlayerDead = hasLocalPlayer &&
                 (localPlayer.visual_flags & KernelConstants.VisualFlagDead) != 0;
-            UpdateLocalActionGate(hasLocalPlayer, localPlayer);
+            UpdateLocalActionGate(hasLocalPlayer, localPlayer, client.LocalPlayerNetId);
             if (logLocalStaggerMotion && hasLocalPlayer)
             {
                 staggerMotionLog.Record(
@@ -374,7 +374,11 @@ namespace NetworkExample.UnityDemo.Client
             }
             // The server rejects every item request from a dead player.
             if (!agentMode && !pendingInputHandoff && !localPlayerDead)
-                itemPropController.ProcessInput(client, renderStates, safeRenderCount);
+                itemPropController.ProcessInput(
+                    client,
+                    renderStates,
+                    safeRenderCount,
+                    inputSampler.IsItemUseBlocked);
 
             // Retain this completed frame for the next input tick. Lifecycle events
             // win over render samples from the same update.
@@ -835,13 +839,28 @@ namespace NetworkExample.UnityDemo.Client
         /// so a stunned player sends none. Shared with the local agent, which
         /// samples through the same gate.
         /// </summary>
-        private void UpdateLocalActionGate(bool hasLocalPlayer, RenderEntityState localPlayer)
+        private void UpdateLocalActionGate(
+            bool hasLocalPlayer,
+            RenderEntityState localPlayer,
+            uint localPlayerNetId)
         {
             bool staggered = hasLocalPlayer && !localPlayerDead &&
                 (localPlayer.visual_flags & KernelConstants.VisualFlagStaggered) != 0;
             bool grounded = !hasLocalPlayer ||
                 (localPlayer.visual_flags & KernelConstants.VisualFlagGrounded) != 0;
-            inputSampler.UpdateLocalActorState(staggered, grounded, Time.unscaledDeltaTime);
+            // The view has just applied this frame's states, so its reading of
+            // the fall is current.
+            NetworkActorView view = hasLocalPlayer &&
+                entityRegistry != null &&
+                entityRegistry.TryGetByNetId(localPlayerNetId, out GameObject visual)
+                    ? visual.GetComponent<NetworkActorView>()
+                    : null;
+            inputSampler.UpdateLocalActorState(
+                staggered,
+                grounded,
+                airborne: view != null && view.IsAirborne,
+                launched: view != null && view.IsLaunched,
+                Time.unscaledDeltaTime);
         }
 
         private bool TryGetLocalPlayerState(

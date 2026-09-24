@@ -53,7 +53,7 @@
 | 死亡和重生 | 一起清掉 | `systems.cc:2409`、`2744` |
 | snapshot / 動畫 | 只有 stagger | `Staggered` flag 會 replicate；鎖定不會 |
 | client 預測（本地玩家） | 只有鎖定 | `kernel.cc:8285` 會預測鎖定，不會預測 stagger 定住 |
-| Unity 輸入 | 動作：兩者都擋；移動：只有 stagger 會送出 0 | `NetworkInputSampler.IsActionBlocked` / `IsMovementFrozen` |
+| Unity 輸入 | 動作：兩者都擋，擊退從 view 判斷為 `IsLaunched` 的那一格開始擋；移動：只有 stagger 會送出 0；道具（丟、撿、使用）：在空中就擋 | `NetworkInputSampler.IsActionBlocked` / `IsMovementFrozen` / `IsItemUseBlocked` |
 
 server 每個 tick 依這個順序決定水平速度（`player_movement.cc:333` 起）：
 
@@ -97,7 +97,11 @@ Unity 靠拒絕原因決定要鎖多久：`Staggered` 只擋 0.25 s，`KnockedBa
 2. stagger 結束了，但角色還在空中（總共飛 20 tick），server 還在擊退鎖定。
 3. 這時玩家按下動作，client 會送出去，server 以 `KnockedBack` 拒絕，client 收到後才開始鎖定。
 
-結果大約會多浪費一次來回的動作請求；按住扳機時，可能會看到一次開火被拒絕。只讀了程式，沒有量測。
+結果大約會多浪費一次來回的動作請求；按住扳機時，可能會看到一次開火被拒絕。probe 裡 5 次擊退都是這樣：lock 在離地後 0.1–0.5 s 才出現。
+
+**已修正：** runner 每格把 view 的 `IsLaunched` 傳給 `NetworkInputSampler.UpdateLocalActorState`。view 一判斷為被打飛，就關上跟 `KnockedBack` 拒絕同一個鎖，一直到落地才解除；中間 view 為了播落地 clip 放掉 `IsLaunched` 時，鎖不會跟著解除。所以被打飛後按的第一下不會再送出去，也不用再等拒絕原因。這只靠 client 的判斷，server 的拒絕仍然是最後的保險。
+
+**道具（這一版的規則）：** server 在空中不會擋丟、撿、使用道具。client 這一版先擋：只要 view 判斷在空中（`IsAirborne`，一般落下也算），或擊退鎖還沒解除，`NetworkItemPropController.ProcessInput` 就丟掉這三種按壓（丟掉，不排隊）。切換選取的道具不受影響。
 
 ### 2. 鎖定在空中到期時，擊退會突然停住
 

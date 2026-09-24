@@ -132,10 +132,15 @@ namespace NetworkExample.UnityDemo.Items
             RefreshInventory(client);
         }
 
+        /// <param name="itemUseBlocked">
+        /// Drops throw, pickup and use presses -- dropped, not queued -- while
+        /// the local actor is in the air. Cycling the selection still works.
+        /// </param>
         public void ProcessInput(
             NetworkClient client,
             RenderEntityState[] renderStates,
-            int renderStateCount)
+            int renderStateCount,
+            bool itemUseBlocked)
         {
             if (inputSampler == null)
             {
@@ -151,6 +156,11 @@ namespace NetworkExample.UnityDemo.Items
             if ((commands & ItemPropInputCommand.SelectNextItem) != 0)
             {
                 SelectNextItem();
+            }
+
+            if (itemUseBlocked)
+            {
+                return;
             }
 
             if (client == null || !client.IsReady || client.IsDisconnected)

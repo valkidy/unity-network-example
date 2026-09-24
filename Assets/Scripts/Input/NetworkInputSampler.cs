@@ -87,6 +87,7 @@ namespace NetworkExample.UnityDemo.Input
         // The local actor's replicated state, pushed by the runner each frame.
         private bool localActorStaggered;
         private bool localActorGrounded = true;
+        private bool localActorAirborne;
         private float staggerRefusalHoldRemaining;
         private bool knockbackLocked;
         private bool knockbackSawAirborne;
@@ -148,6 +149,14 @@ namespace NetworkExample.UnityDemo.Input
         /// </summary>
         public bool IsMovementFrozen =>
             localActorStaggered || staggerRefusalHoldRemaining > 0f;
+
+        /// <summary>
+        /// Whether throwing, picking up and using an item is held back: while
+        /// the local actor is in the air, falling or thrown. The server would
+        /// accept these; holding them in the air is this version's rule.
+        /// </summary>
+        public bool IsItemUseBlocked => localActorAirborne || knockbackLocked;
+
         public byte SelectedWeaponId => selectedWeapon;
 
         public void SetViewTransform(Transform target)
@@ -384,14 +393,37 @@ namespace NetworkExample.UnityDemo.Input
         /// is let go after the refusal grace, and a new refusal simply closes
         /// the gate again. <see cref="KnockbackLockoutLimitSeconds"/> is the
         /// backstop for an actor the client never sees land.
+        ///
+        /// <paramref name="launched"/> -- the view's reading that the body left
+        /// the ground thrown by a knockback -- closes the gate without waiting
+        /// for a refusal, so the first press into a knockback is not sent just
+        /// to be refused a round trip later. It closes the same gate a refusal
+        /// does, so it stays shut until the landing, past the moment the view
+        /// stops calling the body launched to start its landing clip.
+        /// <paramref name="airborne"/> is any fall, launched or not, and only
+        /// gates the item commands (<see cref="IsItemUseBlocked"/>).
         /// </remarks>
-        public void UpdateLocalActorState(bool staggered, bool grounded, float deltaSeconds)
+        public void UpdateLocalActorState(
+            bool staggered,
+            bool grounded,
+            bool airborne,
+            bool launched,
+            float deltaSeconds)
         {
             deltaSeconds = Mathf.Max(0f, deltaSeconds);
             localActorStaggered = staggered;
             localActorGrounded = grounded;
+            localActorAirborne = airborne;
             staggerRefusalHoldRemaining = Mathf.Max(
                 0f, staggerRefusalHoldRemaining - deltaSeconds);
+
+            if (launched && !knockbackLocked)
+            {
+                knockbackLocked = true;
+                knockbackSawAirborne = true;
+                knockbackLockElapsed = 0f;
+                return;
+            }
 
             if (!knockbackLocked)
             {
@@ -698,6 +730,7 @@ namespace NetworkExample.UnityDemo.Input
             isAiming = false;
             localActorStaggered = false;
             localActorGrounded = true;
+            localActorAirborne = false;
             staggerRefusalHoldRemaining = 0f;
             ClearKnockbackLock();
             if (weaponSlotCount > 0)

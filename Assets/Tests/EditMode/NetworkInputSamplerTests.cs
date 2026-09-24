@@ -672,7 +672,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         [Test]
         public void SampleExplicit_WhileStaggered_SendsNoActionAndNoMovement()
         {
-            sampler.UpdateLocalActorState(staggered: true, grounded: true, 0.1f);
+            sampler.UpdateLocalActorState(staggered: true, grounded: true, airborne: false, launched: false, 0.1f);
 
             KernelPlayerInput fire = sampler.SampleExplicit(
                 Vector2.right, Vector3.forward, false, true, false);
@@ -693,10 +693,10 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         [Test]
         public void SampleExplicit_TriggerHeldThroughStagger_FiresWhenItLifts()
         {
-            sampler.UpdateLocalActorState(staggered: true, grounded: true, 0.1f);
+            sampler.UpdateLocalActorState(staggered: true, grounded: true, airborne: false, launched: false, 0.1f);
             sampler.SampleExplicit(Vector2.zero, Vector3.forward, false, true, false);
 
-            sampler.UpdateLocalActorState(staggered: false, grounded: true, 0.1f);
+            sampler.UpdateLocalActorState(staggered: false, grounded: true, airborne: false, launched: false, 0.1f);
             KernelPlayerInput resumed = sampler.SampleExplicit(
                 Vector2.right, Vector3.forward, false, true, false);
 
@@ -723,10 +723,10 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
 
             KernelPlayerInput beforeFlag = sampler.SampleExplicit(
                 Vector2.zero, Vector3.forward, false, true, false);
-            sampler.UpdateLocalActorState(staggered: true, grounded: true, 0.3f);
+            sampler.UpdateLocalActorState(staggered: true, grounded: true, airborne: false, launched: false, 0.3f);
             KernelPlayerInput duringStagger = sampler.SampleExplicit(
                 Vector2.zero, Vector3.forward, false, true, false);
-            sampler.UpdateLocalActorState(staggered: false, grounded: true, 0.1f);
+            sampler.UpdateLocalActorState(staggered: false, grounded: true, airborne: false, launched: false, 0.1f);
             KernelPlayerInput afterStagger = sampler.SampleExplicit(
                 Vector2.zero, Vector3.forward, false, true, false);
 
@@ -740,11 +740,11 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         [Test]
         public void SampleExplicit_ReleasedDuringStagger_DoesNotFireAfterIt()
         {
-            sampler.UpdateLocalActorState(staggered: true, grounded: true, 0.1f);
+            sampler.UpdateLocalActorState(staggered: true, grounded: true, airborne: false, launched: false, 0.1f);
             sampler.SampleExplicit(Vector2.zero, Vector3.forward, false, true, false);
             sampler.SampleExplicit(Vector2.zero, Vector3.forward, false, false, false);
 
-            sampler.UpdateLocalActorState(staggered: false, grounded: true, 0.1f);
+            sampler.UpdateLocalActorState(staggered: false, grounded: true, airborne: false, launched: false, 0.1f);
             KernelPlayerInput after = sampler.SampleExplicit(
                 Vector2.zero, Vector3.forward, false, false, false);
 
@@ -769,9 +769,9 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
 
             // Still grounded in the render states: the snapshot showing the
             // actor in the air has not arrived yet.
-            sampler.UpdateLocalActorState(staggered: false, grounded: true, 0.1f);
+            sampler.UpdateLocalActorState(staggered: false, grounded: true, airborne: false, launched: false, 0.1f);
             Assert.That(sampler.IsActionBlocked, Is.True);
-            sampler.UpdateLocalActorState(staggered: false, grounded: false, 0.5f);
+            sampler.UpdateLocalActorState(staggered: false, grounded: false, airborne: false, launched: false, 0.5f);
             KernelPlayerInput airborne = sampler.SampleExplicit(
                 Vector2.right, Vector3.forward, false, true, false);
 
@@ -780,12 +780,74 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             Assert.That(airborne.action_intent.action_instance_id, Is.Zero);
             Assert.That(airborne.move.x, Is.EqualTo(1f));
 
-            sampler.UpdateLocalActorState(staggered: false, grounded: true, 0.1f);
+            sampler.UpdateLocalActorState(staggered: false, grounded: true, airborne: false, launched: false, 0.1f);
             KernelPlayerInput landed = sampler.SampleExplicit(
                 Vector2.zero, Vector3.forward, false, true, false);
 
             Assert.That(sampler.IsActionBlocked, Is.False);
             Assert.That(landed.action_intent.action_instance_id, Is.Not.Zero);
+        }
+
+        [Test]
+        public void LaunchedActor_BlocksActionsFromTakeOffUntilItLands()
+        {
+            // No refusal has come back: the view's launch alone closes the gate.
+            sampler.UpdateLocalActorState(
+                staggered: false, grounded: false, airborne: true, launched: true, 0.1f);
+            KernelPlayerInput thrown = sampler.SampleExplicit(
+                Vector2.zero, Vector3.forward, false, true, false);
+
+            Assert.That(sampler.IsActionBlocked, Is.True);
+            Assert.That(thrown.action_intent.action_instance_id, Is.Zero);
+
+            // The view lets go of the launch to start the landing clip; the
+            // body is still in the air and the server still refuses.
+            sampler.UpdateLocalActorState(
+                staggered: false, grounded: false, airborne: false, launched: false, 0.1f);
+            Assert.That(sampler.IsActionBlocked, Is.True);
+
+            sampler.UpdateLocalActorState(
+                staggered: false, grounded: true, airborne: false, launched: false, 0.1f);
+            KernelPlayerInput landed = sampler.SampleExplicit(
+                Vector2.zero, Vector3.forward, false, false, false);
+            KernelPlayerInput pressed = sampler.SampleExplicit(
+                Vector2.zero, Vector3.forward, false, true, false);
+
+            Assert.That(sampler.IsActionBlocked, Is.False);
+            Assert.That(landed.action_intent.action_instance_id, Is.Zero);
+            Assert.That(pressed.action_intent.action_instance_id, Is.Not.Zero);
+        }
+
+        [Test]
+        public void AirborneActor_HoldsItemUseButNotActions()
+        {
+            sampler.UpdateLocalActorState(
+                staggered: false, grounded: false, airborne: true, launched: false, 0.1f);
+
+            Assert.That(sampler.IsItemUseBlocked, Is.True);
+            Assert.That(sampler.IsActionBlocked, Is.False);
+
+            sampler.UpdateLocalActorState(
+                staggered: false, grounded: true, airborne: false, launched: false, 0.1f);
+
+            Assert.That(sampler.IsItemUseBlocked, Is.False);
+        }
+
+        [Test]
+        public void KnockedBackActor_HoldsItemUseUntilItLands()
+        {
+            sampler.UpdateLocalActorState(
+                staggered: false, grounded: false, airborne: true, launched: true, 0.1f);
+            // Inside the landing lead: no longer airborne to the view, still up.
+            sampler.UpdateLocalActorState(
+                staggered: false, grounded: false, airborne: false, launched: false, 0.1f);
+
+            Assert.That(sampler.IsItemUseBlocked, Is.True);
+
+            sampler.UpdateLocalActorState(
+                staggered: false, grounded: true, airborne: false, launched: false, 0.1f);
+
+            Assert.That(sampler.IsItemUseBlocked, Is.False);
         }
 
         [Test]
@@ -798,11 +860,13 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
                 KernelLocalActionResultType.Rejected,
                 KernelLocalActionResultReason.KnockedBack);
 
-            sampler.UpdateLocalActorState(staggered: false, grounded: true, 0.1f);
+            sampler.UpdateLocalActorState(staggered: false, grounded: true, airborne: false, launched: false, 0.1f);
             Assert.That(sampler.IsActionBlocked, Is.True);
             sampler.UpdateLocalActorState(
                 staggered: false,
                 grounded: true,
+                airborne: false,
+                launched: false,
                 NetworkInputSampler.ActionRefusalGraceSeconds);
 
             Assert.That(sampler.IsActionBlocked, Is.False);
@@ -822,12 +886,12 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             float elapsed = 0f;
             while (elapsed + step < NetworkInputSampler.KnockbackLockoutLimitSeconds)
             {
-                sampler.UpdateLocalActorState(staggered: false, grounded: false, step);
+                sampler.UpdateLocalActorState(staggered: false, grounded: false, airborne: false, launched: false, step);
                 elapsed += step;
                 Assert.That(sampler.IsActionBlocked, Is.True, "at " + elapsed + "s");
             }
 
-            sampler.UpdateLocalActorState(staggered: false, grounded: false, step);
+            sampler.UpdateLocalActorState(staggered: false, grounded: false, airborne: false, launched: false, step);
 
             Assert.That(sampler.IsActionBlocked, Is.False);
         }
