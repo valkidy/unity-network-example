@@ -98,6 +98,7 @@ namespace NetworkExample.UnityDemo.Rendering
         private static readonly int ReviveParameter = Animator.StringToHash("Revive");
         private static readonly int ReviveLandingParameter = Animator.StringToHash("ReviveLanding");
         private static readonly int AirborneParameter = Animator.StringToHash("Airborne");
+        private static readonly int LaunchedParameter = Animator.StringToHash("Launched");
 
         private Animator animator;
         private KernelSkeletonBinding skeletonBinding;
@@ -186,22 +187,50 @@ namespace NetworkExample.UnityDemo.Rendering
         private float itemThrowHoldSeconds = 1.3f;
 
         /// <summary>
-        /// How long before touchdown a landing is started, for a revive and for
-        /// any other fall.
+        /// How long before touchdown each kind of landing is started: a
+        /// revive's, a plain fall's and a knockback's.
         /// </summary>
         /// <remarks>
         /// The landing clips reach for the ground before they meet it. Started
         /// on contact, the legs would still be extending with the feet already
         /// down; started this far ahead, contact lands on the clip's own
-        /// impact. Match it to the time from the clip's first frame to its
-        /// touchdown. It is also the shortest airtime that counts as a fall: a
-        /// drop that lands sooner than this, such as stepping off a kerb, has
-        /// no room for the fall and the landing, so the body keeps walking.
+        /// impact. Match each to the time from its clip's first frame to its
+        /// touchdown: fly-to-landing, falling-to-landing and
+        /// impact-falling-flat. The fall and knockback leads are also the
+        /// shortest airtime that counts as one: a drop that lands sooner, such
+        /// as stepping off a kerb, has no room for the fall and the landing,
+        /// so the body keeps walking.
         /// </remarks>
         [Header("Falling")]
         [SerializeField]
         [Min(0f)]
-        private float landingLeadSeconds = 0.35f;
+        private float reviveLandingLeadSeconds = 0.35f;
+
+        [SerializeField]
+        [Min(0f)]
+        private float fallLandingLeadSeconds = 0.25f;
+
+        [SerializeField]
+        [Min(0f)]
+        private float launchLandingLeadSeconds = 0.2f;
+
+        /// <summary>
+        /// Take-off speeds that mark a fall as a knockback rather than a drop.
+        /// </summary>
+        /// <remarks>
+        /// Nothing replicates the knockback itself, but nothing else lifts a
+        /// body either -- there is no jump -- so leaving the ground on the way
+        /// up means an impulse. A flat knockback has no lift, so a horizontal
+        /// speed well past walking counts too: walking is 5 m/s, the lightest
+        /// knockback 8.
+        /// </remarks>
+        [SerializeField]
+        [Min(0f)]
+        private float launchMinUpwardSpeed = 1f;
+
+        [SerializeField]
+        [Min(0f)]
+        private float launchMinHorizontalSpeed = 6.5f;
 
         [SerializeField]
         [Min(0.01f)]
@@ -312,12 +341,20 @@ namespace NetworkExample.UnityDemo.Rendering
         private bool reviveSeenAirborne;
 
         /// <summary>
-        /// Whether the body is in a fall other than a revive's, drawn as the
-        /// Falling state. It clears a landing lead before touchdown, which is
-        /// what starts the landing.
+        /// Whether the body is in a fall other than a revive's. It clears a
+        /// landing lead before touchdown, which is what starts the landing.
         /// </summary>
         public bool IsAirborne { get; private set; }
+
+        /// <summary>
+        /// Whether the fall in progress is a knockback, drawn as ImpactFalling
+        /// rather than Falling. Decided at take-off and raised, never lowered,
+        /// while airborne: a body hit on the way down becomes launched, one
+        /// launched stays so as it comes back down.
+        /// </summary>
+        public bool IsLaunched { get; private set; }
         public int FallCount { get; private set; }
+        public int LaunchCount { get; private set; }
 
         public void SetStale(bool stale)
         {
@@ -374,7 +411,9 @@ namespace NetworkExample.UnityDemo.Rendering
             IsGrounded = HasFlag(KernelConstants.VisualFlagGrounded);
             IsFalling = HasFlag(KernelConstants.VisualFlagFalling);
             AdvanceReviveFall(state.velocity.y);
-            AdvanceFall(state.velocity.y, revived: wasDead && !IsDead);
+            AdvanceFall(
+                new Vector3(state.velocity.x, state.velocity.y, state.velocity.z),
+                revived: wasDead && !IsDead);
             IsWindup = !IsDead && state.action.phase == KernelActionPhase.Windup;
             IsFiring = !IsDead && !IsReloading &&
                 (HasFlag(KernelConstants.VisualFlagFiring) ||
@@ -436,6 +475,7 @@ namespace NetworkExample.UnityDemo.Rendering
             SetBoolIfPresent(target, IdleParameter, IsIdle);
             SetBoolIfPresent(target, StaggeredParameter, IsStaggered);
             SetBoolIfPresent(target, AirborneParameter, IsAirborne);
+            SetBoolIfPresent(target, LaunchedParameter, IsLaunched);
             SetIntegerIfPresent(target, ActionPhaseParameter, (int)ActionPhase);
             ApplyUpperBodyLayerWeight(target);
         }
@@ -819,6 +859,7 @@ namespace NetworkExample.UnityDemo.Rendering
             ReviveCount++;
             IsReviveFalling = true;
             IsAirborne = false;
+            IsLaunched = false;
             reviveSeenAirborne = false;
             Animator target = GetAnimator();
             ResetTriggerIfPresent(target, ReviveLandingParameter);
@@ -858,7 +899,7 @@ namespace NetworkExample.UnityDemo.Rendering
             bool landed = reviveSeenAirborne && IsGrounded;
             if (!landed &&
                 (!TryPredictTouchdownSeconds(verticalVelocity, out float seconds) ||
-                    seconds > landingLeadSeconds))
+                    seconds > reviveLandingLeadSeconds))
             {
                 return;
             }
@@ -871,7 +912,7 @@ namespace NetworkExample.UnityDemo.Rendering
         /// <summary>
         /// Tracks a fall that is not a revive's -- a knockback into the air, a
         /// drop off a ledge -- the same way: airborne while touchdown is further
-        /// off than the landing lead, landing once it is not.
+        /// off than its landing lead, landing once it is not.
         /// </summary>
         /// <remarks>
         /// The kernel's Falling flag is only "not grounded", which also covers
@@ -883,22 +924,32 @@ namespace NetworkExample.UnityDemo.Rendering
         /// The frame the dead flag clears is left out too: that fall is the
         /// revive's, and <see cref="PlayRevive"/> is only called after this.
         /// </remarks>
-        private void AdvanceFall(float verticalVelocity, bool revived)
+        private void AdvanceFall(Vector3 velocity, bool revived)
         {
             if (revived || IsDead || IsReviveFalling || IsGrounded || !IsFalling)
             {
                 IsAirborne = false;
+                IsLaunched = false;
                 return;
             }
 
+            bool launched = IsLaunched ||
+                velocity.y > launchMinUpwardSpeed ||
+                new Vector2(velocity.x, velocity.z).magnitude > launchMinHorizontalSpeed;
+            float lead = launched ? launchLandingLeadSeconds : fallLandingLeadSeconds;
             bool farFromGround =
-                !TryPredictTouchdownSeconds(verticalVelocity, out float seconds) ||
-                seconds > landingLeadSeconds;
+                !TryPredictTouchdownSeconds(velocity.y, out float seconds) ||
+                seconds > lead;
             if (farFromGround && !IsAirborne)
             {
                 FallCount++;
             }
+            if (farFromGround && launched && !IsLaunched)
+            {
+                LaunchCount++;
+            }
             IsAirborne = farFromGround;
+            IsLaunched = farFromGround && launched;
         }
 
         private bool TryPredictTouchdownSeconds(float verticalVelocity, out float seconds)

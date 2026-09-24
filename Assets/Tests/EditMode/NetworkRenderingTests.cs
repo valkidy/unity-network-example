@@ -1409,7 +1409,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
-        public void ActorKnockedIntoTheAir_IsAirborneUntilTouchdownIsWithinTheLandingLead()
+        public void ActorDroppingOffALedge_FallsUntilTouchdownIsWithinTheFallLead()
         {
             CreateGround();
             NetworkActorView view = Spawn(105);
@@ -1417,16 +1417,18 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             // 3 m up is 0.78 s from the ground.
             applier.Apply(new[] { Falling(105, height: 3f, downwardSpeed: 0f) }, 1);
             Assert.That(view.IsAirborne, Is.True);
+            Assert.That(view.IsLaunched, Is.False);
             Assert.That(view.FallCount, Is.EqualTo(1));
 
-            // 0.3 m up is 0.25 s away, inside the 0.35 s lead.
-            applier.Apply(new[] { Falling(105, height: 0.3f, downwardSpeed: 0f) }, 1);
+            // 0.25 m up is 0.23 s away, inside the 0.25 s fall lead.
+            applier.Apply(new[] { Falling(105, height: 0.25f, downwardSpeed: 0f) }, 1);
             Assert.That(view.IsAirborne, Is.False);
             Assert.That(view.FallCount, Is.EqualTo(1));
+            Assert.That(view.LaunchCount, Is.Zero);
         }
 
         [Test]
-        public void RisingActor_CountsItsClimbTowardTouchdown()
+        public void ActorLeavingTheGroundOnTheWayUp_IsLaunched()
         {
             CreateGround();
             NetworkActorView view = Spawn(105);
@@ -1435,6 +1437,82 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             applier.Apply(new[] { Falling(105, height: 0.3f, downwardSpeed: -4f) }, 1);
 
             Assert.That(view.IsAirborne, Is.True);
+            Assert.That(view.IsLaunched, Is.True);
+            Assert.That(view.LaunchCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void ActorShovedFlatFasterThanItWalks_IsLaunched()
+        {
+            CreateGround();
+            NetworkActorView view = Spawn(105);
+
+            applier.Apply(
+                new[] { Falling(105, height: 1f, downwardSpeed: 0f, horizontalSpeed: 8f) }, 1);
+
+            Assert.That(view.IsLaunched, Is.True);
+        }
+
+        [Test]
+        public void ActorWalkingOffALedge_IsAFallNotALaunch()
+        {
+            CreateGround();
+            NetworkActorView view = Spawn(105);
+
+            applier.Apply(
+                new[] { Falling(105, height: 3f, downwardSpeed: 0f, horizontalSpeed: 5f) }, 1);
+
+            Assert.That(view.IsAirborne, Is.True);
+            Assert.That(view.IsLaunched, Is.False);
+        }
+
+        [Test]
+        public void LaunchedActor_StaysLaunchedOnTheWayDown()
+        {
+            CreateGround();
+            NetworkActorView view = Spawn(105);
+            applier.Apply(new[] { Falling(105, height: 0.3f, downwardSpeed: -4f) }, 1);
+
+            applier.Apply(new[] { Falling(105, height: 1.5f, downwardSpeed: 3f) }, 1);
+
+            Assert.That(view.IsLaunched, Is.True);
+            Assert.That(view.LaunchCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void FallingActor_KnockedUpwardMidFall_BecomesLaunched()
+        {
+            CreateGround();
+            NetworkActorView view = Spawn(105);
+            applier.Apply(new[] { Falling(105, height: 3f, downwardSpeed: 2f) }, 1);
+            Assert.That(view.IsLaunched, Is.False);
+
+            applier.Apply(new[] { Falling(105, height: 2.5f, downwardSpeed: -3.5f) }, 1);
+
+            Assert.That(view.IsLaunched, Is.True);
+            Assert.That(view.FallCount, Is.EqualTo(1));
+            Assert.That(view.LaunchCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void LaunchedActor_LandsOnTheShorterKnockbackLead()
+        {
+            CreateGround();
+            NetworkActorView falling = Spawn(105);
+            NetworkActorView launched = Spawn(106);
+
+            // 0.25 m up at rest is 0.23 s away: inside the 0.25 s fall lead,
+            // still outside the 0.2 s knockback lead.
+            applier.Apply(
+                new[]
+                {
+                    Falling(105, height: 0.25f, downwardSpeed: 0f),
+                    Falling(106, height: 0.25f, downwardSpeed: 0f, horizontalSpeed: 8f),
+                },
+                2);
+
+            Assert.That(falling.IsAirborne, Is.False);
+            Assert.That(launched.IsAirborne, Is.True);
         }
 
         [Test]
@@ -1509,11 +1587,15 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             return visual.GetComponent<NetworkActorView>();
         }
 
-        private static RenderEntityState Falling(uint netId, float height, float downwardSpeed)
+        private static RenderEntityState Falling(
+            uint netId,
+            float height,
+            float downwardSpeed,
+            float horizontalSpeed = 0f)
         {
             RenderEntityState state = Actor(netId, alive: true);
             state.position = new KernelVec3(2f, height, -3f);
-            state.velocity = new KernelVec3(0f, -downwardSpeed, 0f);
+            state.velocity = new KernelVec3(horizontalSpeed, -downwardSpeed, 0f);
             state.visual_flags = KernelConstants.VisualFlagFalling;
             return state;
         }

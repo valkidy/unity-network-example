@@ -115,33 +115,35 @@ grunt slam 每次都會 stagger，Any State 會把 animator 帶進 `Stagger`。s
 
 爆炸（不會 stagger）則會被 `HitReaction` 切開：本地玩家受傷時一定會播 `HitReaction`，播到 90% 才回 Idle，之後才進入 `Falling`。
 
-## 動畫：區分「被打飛」和「掉下來」（已記下，還沒做）
+## 動畫：區分「被打飛」和「掉下來」（A 方案已實作）
 
 離地的時機只有兩種：被擊退打到空中、從高處掉下來。目前沒有跳躍（`InputButton_MoveJump` 有定義，但 kernel 沒有使用）。
 
-| 情況 | 滯空 | `Falling` 播多久（滯空減 0.35 s lead） |
+| 情況 | 滯空 | 空中 state 播多久（滯空減 landing lead） |
 |---|---|---|
-| 爆炸擊退（垂直 5.0 m/s） | 約 1.02 s | 約 0.67 s |
-| grunt slam（垂直 3.5 m/s） | 約 0.71 s | 理論約 0.36 s，實際被 stagger 吃掉 |
-| 從高處掉下來 | 看高度 | 落差大於約 0.6 m 才會播 |
+| 爆炸擊退（垂直 5.0 m/s） | 約 1.02 s | `ImpactFalling` 約 0.82 s |
+| grunt slam（垂直 3.5 m/s） | 約 0.71 s | `ImpactFalling` 約 0.51 s |
+| 從高處掉下來 | 看高度 | `Falling`：落差大於約 0.31 m 才會播 |
 
 判斷方式：
 
-- **A（先做）：** 在 `NetworkActorView.AdvanceFall`，`IsAirborne` 變成 true 的那一刻，依速度記下 `IsLaunched`：往上速度大於約 1 m/s，或水平速度大於約 6.5 m/s（走路是 5）。落下途中突然有往上的速度，就改成 true。本地和 remote 都能用。
+- **A（已實作）：** 在 `NetworkActorView.AdvanceFall`，離地那一刻依速度決定 `IsLaunched`：往上速度大於 1 m/s，或水平速度大於 6.5 m/s（走路是 5）。落下途中突然有往上的速度，就改成 true；飛行中不會變回 false。本地和 remote 都能用。門檻在 Inspector 的 Falling 區。
 - **B（最準確）：** kernel 從 `ImpulseLockout` 產生一個新的 visual flag（下一個可用的是 `0x400`），放進 snapshot；本地玩家改用預測值。要改 kernel、發布 package，client 和 server 要用同一版。
 
-controller：
+controller（wizard-cat）：
 
 ```
 Idle / Run / RunBackwards / SideStep*
-   ├─ Airborne && Launched   → Launched
-   └─ Airborne && !Launched  → Falling
+   └─ Airborne && !Launched  → Falling (falling, loop)
+                                 └─ !Airborne → Landing (falling-to-landing) → Idle (exit 0.8)
 
-Launched ─ !Airborne → LaunchedLanding → Idle (exit 0.8)
-Falling  ─ !Airborne → Landing         → Idle (exit 0.8)
-Falling  ─ Launched  → Launched
+Any State
+   └─ Airborne && Launched   → ImpactFalling (impact-falling, loop)
+                                 └─ !Airborne → ImpactLanding (impact-falling-flat) → Idle (exit 1.0, blend 0.3 s)
 ```
 
-還要決定第 4 點怎麼處理，建議：讓 `Stagger` 在 `Airborne && Launched` 時直接接 `Launched`，被打飛的優先權高於 stagger；stagger 仍然會出現在地面上的受擊。
+- `ImpactFalling` 走 Any State，所以會蓋掉 `Stagger`、`HitReaction` 和 `Falling`，第 4 點因此解決：grunt slam 的擊退會先進 `Stagger`，下一格就被 `ImpactFalling` 接走。它排在 Any State 清單的最後，讓 `StaggerReaction`、`HitReaction` 這些 trigger 先被消耗掉，不會留到落地後才播。
+- 每種落地各有自己的 landing lead，對齊各自 clip 的觸地時間：重生 0.35 s（fly-to-landing）、一般落下 0.25 s（falling-to-landing，是 fly-to-landing 加速 1.39 倍）、擊退 0.2 s（impact-falling-flat 在 0.19 s 觸地）。
+- `impact-falling-flat` 結束時是躺在地上的姿勢，回到 Idle 的 0.3 s blend 就是「站起來」。如果看起來太突兀，需要一個起身的 clip。
 
 另外，gingerbread 系列的 controller 沒有 `Airborne`，敵人被玩家炸飛時還是在播走路或 Idle。
