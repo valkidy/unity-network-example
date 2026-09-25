@@ -1,5 +1,5 @@
 fileFormatVersion: 2
-guid: 842ecc35c489b4b85b908f8d74930e82
+guid: cf26fb791e2a548b7a58700897bfdd44
 ModelImporter:
   serializedVersion: 24200
   internalIDToNameTable: []
@@ -31,11 +31,11 @@ ModelImporter:
     extraUserProperties: []
     clipAnimations:
     - serializedVersion: 16
-      name: idle
+      name: impact-falling
       takeName: mixamo.com
       internalID: -203655887218126122
       firstFrame: 0
-      lastFrame: 317
+      lastFrame: 66
       wrapMode: 0
       orientationOffsetY: 0
       level: 0

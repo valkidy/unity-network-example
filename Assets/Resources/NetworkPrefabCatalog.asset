@@ -16,7 +16,7 @@ MonoBehaviour:
   - actorTemplateId: 1
     prefab: {fileID: 5546976015211235522, guid: 0881492ebf73f4b26a5ca5a03b3fff7a, type: 3}
   - actorTemplateId: 2
-    prefab: {fileID: 4504865450583175258, guid: 0a4d6988b1c564e2192e01fd0a50a6a5, type: 3}
+    prefab: {fileID: 4286435503408897625, guid: 2f459be850ac14508a914bc58fa461ee, type: 3}
   - actorTemplateId: 20
     prefab: {fileID: 5527427090754095325, guid: 8919db2d272914d298443dd55e63e14d, type: 3}
   - actorTemplateId: 21
@@ -26,7 +26,7 @@ MonoBehaviour:
   - actorTemplateId: 23
     prefab: {fileID: 5793342295124904691, guid: 7d1f014db2ff44b3fbc36cc68c645543, type: 3}
   - actorTemplateId: 28
-    prefab: {fileID: 4504865450583175258, guid: 0a4d6988b1c564e2192e01fd0a50a6a5, type: 3}
+    prefab: {fileID: 4286435503408897625, guid: 2f459be850ac14508a914bc58fa461ee, type: 3}
   - actorTemplateId: 29
     prefab: {fileID: 1233655091269612524, guid: a2298cf6bc4244beb97e4c09ecd9fbf8, type: 3}
   - actorTemplateId: 30
@@ -71,8 +71,8 @@ MonoBehaviour:
     prefab: {fileID: 2639555752078317490, guid: 0fe89d0f04d9d4ab4a36142c2033fcad, type: 3}
   - itemTemplateId: 208
     prefab: {fileID: 6380588347404663203, guid: 1cb19959111434659ad118a9baf70391, type: 3}
-  playerActorFallback: {fileID: 5418530430038130503, guid: de79842971be048fa964e98474aabcc0, type: 3}
-  agentActorFallback: {fileID: 4504865450583175258, guid: 0a4d6988b1c564e2192e01fd0a50a6a5, type: 3}
+  playerActorFallback: {fileID: 4385249257082475097, guid: 2869f6d5674cd4027aafbcdd722dd7dd, type: 3}
+  agentActorFallback: {fileID: 1856945008544614001, guid: fc47cec2e61ab4c74ba57d58878ce6ac, type: 3}
   projectileFallback: {fileID: 8097695316699210315, guid: d387eb85eb4494e34b163d0d1870cb2d, type: 3}
   propFallback: {fileID: 7923727376853824161, guid: 4b778f70892c1408b9f70dd911655c5a, type: 3}
   entityFallback: {fileID: 1856945008544614001, guid: fc47cec2e61ab4c74ba57d58878ce6ac, type: 3}
