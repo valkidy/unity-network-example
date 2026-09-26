@@ -72,6 +72,14 @@ namespace NetworkExample.UnityDemo.Client
         private float diagnosticLogIntervalSeconds = 1.0f;
 
         [SerializeField]
+        [Tooltip(
+            "Logs a [G0] line every diagnostic interval: world freezes (every remote " +
+            "thing stops at once -- the snapshot stream is late), entity freezes (one " +
+            "stops while others move -- a missing sample), jumps, stale actors, and " +
+            "rtt / jitter / loss / dropped remote presentation from the network stats.")]
+        private bool logRemotePresentation = true;
+
+        [SerializeField]
         private float readyWithoutRenderWarningSeconds = 1.0f;
 
         [SerializeField]
@@ -159,6 +167,7 @@ namespace NetworkExample.UnityDemo.Client
         private ThirdPersonFollowCamera followCamera;
         private AimReticleView aimReticleView;
         private readonly NetworkPresentationClock presentationClock = new NetworkPresentationClock();
+        private readonly RemotePresentationProbe remotePresentationProbe = new RemotePresentationProbe();
         private NetworkInputSubmissionClock inputSubmissionClock;
         private GameplayCatalogSyncOptions gameplayCatalogSyncOptions;
         private bool started;
@@ -332,6 +341,15 @@ namespace NetworkExample.UnityDemo.Client
                 ? renderStates.Length
                 : (int)renderCount;
             LogDiagnosticRenderSummary(renderCount, safeRenderCount);
+            if (logRemotePresentation)
+            {
+                remotePresentationProbe.Capture(
+                    renderStates,
+                    safeRenderCount,
+                    client.LocalPlayerNetId,
+                    Time.unscaledDeltaTime);
+                remotePresentationProbe.ReportIfDue(client.Kernel, diagnosticLogIntervalSeconds);
+            }
             WarnIfReadyWithoutRenderStates(safeRenderCount);
             ObserveFireStall(safeRenderCount);
             renderStateApplier.Apply(renderStates, safeRenderCount);
@@ -440,6 +458,7 @@ namespace NetworkExample.UnityDemo.Client
             catalogConfigureFailureLogged = false;
             nextCatalogConfigureTime = 0f;
             presentationClock.Reset();
+            remotePresentationProbe.Reset();
             inputSubmissionClock?.Reset();
         }
 
