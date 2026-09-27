@@ -733,6 +733,16 @@ namespace NetworkExample.UnityDemo.Rendering
                     state.action_instance_id != 0;
             }
 
+            // The kernel draws this player's own throw from the moment it
+            // leaves the hand, before the server has named the prop, so it has
+            // no net id yet. Waiting for one put the bottle on screen a round
+            // trip late, already well along its arc.
+            if (state.entity_type == KernelEntityType.Prop &&
+                state.status == RenderEntityStatus.Predicted)
+            {
+                return state.entity_id != 0;
+            }
+
             return state.net_id != 0;
         }
 
