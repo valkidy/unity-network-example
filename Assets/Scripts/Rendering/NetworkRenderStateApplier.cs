@@ -207,13 +207,23 @@ namespace NetworkExample.UnityDemo.Rendering
                 knownEntities[entityKey] = new KnownEntity(
                     wasServerBacked || state.net_id != 0,
                     isDead,
-                    isStaggered);
+                    isStaggered,
+                    state.entity_type == KernelEntityType.Projectile);
             }
 
+            // A projectile leaves the render state the moment it is over, and
+            // for many that is all there is: the derived ones a targeted strike
+            // chain produces (net_id 0) never get a despawn, and a strike's
+            // marker is only despawned once the whole chain ends, about 3 s
+            // after it vanished. So a projectile's view goes with its render
+            // state, server-backed or not. It is removed quietly -- a strike's
+            // impact is drawn by the blast entity appearing, not by this.
+            // Everything else server-backed still waits for its despawn.
             entityKeysToRemove.Clear();
             foreach (KeyValuePair<ulong, KnownEntity> pair in knownEntities)
             {
-                if (visibleThisFrame.Contains(pair.Key) || pair.Value.serverBacked)
+                if (visibleThisFrame.Contains(pair.Key) ||
+                    (pair.Value.serverBacked && !pair.Value.isProjectile))
                 {
                     continue;
                 }
@@ -335,11 +345,36 @@ namespace NetworkExample.UnityDemo.Rendering
             GetOrAddActorView(visual).TriggerItemThrow();
         }
 
+        /// <summary>
+        /// Raised for each local action the server refused because its effect
+        /// could not happen -- a targeted strike aimed at nothing in range. It
+        /// costs no ammo and no cooldown, so the player only learns of it here.
+        /// </summary>
+        public event System.Action<KernelLocalActionResult> LocalActionEffectFailed;
+
+        public static bool IsEffectFailure(KernelLocalActionResult result)
+        {
+            return result.result == KernelLocalActionResultType.Corrected &&
+                result.reason == KernelLocalActionResultReason.EffectFailed;
+        }
+
         public void ApplyLocalActionResults(
             uint localPlayerNetId,
             KernelLocalActionResult[] results,
             int count)
         {
+            if (results != null && LocalActionEffectFailed != null)
+            {
+                int resultCount = Mathf.Clamp(count, 0, results.Length);
+                for (int index = 0; index < resultCount; ++index)
+                {
+                    if (IsEffectFailure(results[index]))
+                    {
+                        LocalActionEffectFailed(results[index]);
+                    }
+                }
+            }
+
             if (results == null ||
                 entityRegistry == null ||
                 !entityRegistry.TryGetByNetId(localPlayerNetId, out GameObject visual))
@@ -854,12 +889,18 @@ namespace NetworkExample.UnityDemo.Rendering
             public readonly bool wasDead;
             // The staggered flag's edge, kept the same way.
             public readonly bool wasStaggered;
+            public readonly bool isProjectile;
 
-            public KnownEntity(bool serverBacked, bool wasDead, bool wasStaggered)
+            public KnownEntity(
+                bool serverBacked,
+                bool wasDead,
+                bool wasStaggered,
+                bool isProjectile)
             {
                 this.serverBacked = serverBacked;
                 this.wasDead = wasDead;
                 this.wasStaggered = wasStaggered;
+                this.isProjectile = isProjectile;
             }
         }
 

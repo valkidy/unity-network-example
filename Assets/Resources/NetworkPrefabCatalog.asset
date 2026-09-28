@@ -64,6 +64,22 @@ MonoBehaviour:
     prefab: {fileID: 7301948210556231011, guid: d299aab41c61b44f48326ac71aeb8c77, type: 3}
   - projectileTemplateId: 17
     prefab: {fileID: 7301948210556231011, guid: c213b244f31264f9d97ce326abbdb733, type: 3}
+  - projectileTemplateId: 18
+    prefab: {fileID: 4875674824984218969, guid: 0a1b9d25e3974cdb85aefddff1f7c5d5, type: 3}
+  - projectileTemplateId: 19
+    prefab: {fileID: 184415505619003752, guid: d5affee433e9404c81add600fcfecb3b, type: 3}
+  - projectileTemplateId: 20
+    prefab: {fileID: 7525938599801046915, guid: ce3a014c10ba4794b1c37ae86ccbc1d1, type: 3}
+  - projectileTemplateId: 21
+    prefab: {fileID: 8455971310138081891, guid: fcd763babcc84ad5bdbc0857a04de65a, type: 3}
+  - projectileTemplateId: 22
+    prefab: {fileID: 3531979103492523998, guid: 219fa28d72734830b390f97186568673, type: 3}
+  - projectileTemplateId: 23
+    prefab: {fileID: 7097268833217501494, guid: a58bc26acf0441d1b3748c8a25928adc, type: 3}
+  - projectileTemplateId: 24
+    prefab: {fileID: 4578328284486206686, guid: 0e998138e5f844a8926decae0a5c8c7b, type: 3}
+  - projectileTemplateId: 25
+    prefab: {fileID: 651483207099507107, guid: 4bbe851d2128474d967126c3879ec123, type: 3}
   propPrefabs:
   - itemTemplateId: 3003
     prefab: {fileID: 1918210473873687710, guid: 3ab47a83ed0404599baaf5509417beba, type: 3}

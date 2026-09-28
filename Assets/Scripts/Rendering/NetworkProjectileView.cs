@@ -13,6 +13,19 @@ namespace NetworkExample.UnityDemo.Rendering
             "Left empty, the first child is used.")]
         private Transform beamBody;
 
+        [SerializeField]
+        [Tooltip(
+            "Stretches the body from where this projectile was first seen to " +
+            "where it is now, like a column of light falling from the sky. " +
+            "For projectiles that are drawn by their trail, not their tip.")]
+        private bool spanFromFirstPosition;
+
+        [SerializeField]
+        [Tooltip(
+            "Points local +Z along the replicated velocity instead of using the " +
+            "replicated rotation. For bodies that fall or fly nose first.")]
+        private bool faceVelocity;
+
         public ulong EntityId { get; private set; }
         public uint ActionInstanceId { get; private set; }
         public uint ServerEntityId { get; private set; }
@@ -23,6 +36,20 @@ namespace NetworkExample.UnityDemo.Rendering
         private float authoredGirthX = 1f;
         private float authoredGirthZ = 1f;
         private bool girthCaptured;
+        private bool firstPositionCaptured;
+        private Vector3 firstPosition;
+
+        public bool SpanFromFirstPosition
+        {
+            get => spanFromFirstPosition;
+            set => spanFromFirstPosition = value;
+        }
+
+        public bool FaceVelocity
+        {
+            get => faceVelocity;
+            set => faceVelocity = value;
+        }
 
         public void ApplyKernelState(RenderEntityState state)
         {
@@ -34,10 +61,53 @@ namespace NetworkExample.UnityDemo.Rendering
             }
 
             gameObject.name = NameFor(state);
-            transform.SetPositionAndRotation(
-                ToVector3(state.position),
-                ToQuaternion(state.rotation));
+            Vector3 position = ToVector3(state.position);
+            if (!firstPositionCaptured)
+            {
+                firstPosition = position;
+                firstPositionCaptured = true;
+            }
+
+            if (spanFromFirstPosition)
+            {
+                ApplyColumnSpan(position);
+                return;
+            }
+
+            Quaternion rotation = ToQuaternion(state.rotation);
+            Vector3 velocity = ToVector3(state.velocity);
+            if (faceVelocity && velocity.sqrMagnitude > 1e-6f)
+            {
+                rotation = Quaternion.LookRotation(velocity.normalized, UpFor(velocity));
+            }
+
+            transform.SetPositionAndRotation(position, rotation);
             ApplyBeamSpan(state);
+        }
+
+        /// <summary>
+        /// Draws the body from the first position this view saw back up to the
+        /// current one. The render state carries no start point for this, so the
+        /// view's own first sighting stands in for it -- which is the drop height
+        /// for anything first seen at spawn.
+        /// </summary>
+        private void ApplyColumnSpan(Vector3 position)
+        {
+            Vector3 span = firstPosition - position;
+            Quaternion rotation = span.sqrMagnitude > 1e-8f
+                ? Quaternion.LookRotation(span.normalized, UpFor(span))
+                : transform.rotation;
+            transform.SetPositionAndRotation(position, rotation);
+            StretchBody(span.magnitude);
+        }
+
+        // LookRotation needs an up that is not parallel to the direction, and a
+        // falling body's direction is often straight down.
+        private static Vector3 UpFor(Vector3 direction)
+        {
+            return Mathf.Abs(Vector3.Dot(direction.normalized, Vector3.up)) > 0.99f
+                ? Vector3.forward
+                : Vector3.up;
         }
 
         /// <summary>
@@ -70,6 +140,16 @@ namespace NetworkExample.UnityDemo.Rendering
                 return;
             }
 
+            StretchBody(span.magnitude);
+        }
+
+        private void StretchBody(float length)
+        {
+            if (length <= 1e-4f)
+            {
+                return;
+            }
+
             Transform body = ResolveBeamBody();
             if (body == null)
             {
@@ -88,7 +168,7 @@ namespace NetworkExample.UnityDemo.Rendering
             // localScale.y of half the span produces a mesh exactly as long as
             // the beam. Offsetting by the same amount puts the near end on the
             // origin instead of the middle.
-            float halfLength = span.magnitude * 0.5f;
+            float halfLength = length * 0.5f;
             body.localPosition = new Vector3(0f, 0f, halfLength);
             body.localScale = new Vector3(authoredGirthX, halfLength, authoredGirthZ);
         }

@@ -65,6 +65,7 @@ namespace NetworkExample.UnityDemo.Host
         private NetworkPropShatter propShatter;
         private ThirdPersonFollowCamera followCamera;
         private AimReticleView aimReticleView;
+        private TargetedStrikePreview strikePreview;
         private readonly NetworkPresentationClock presentationClock = new NetworkPresentationClock();
         private bool started;
         private bool readinessLogged;
@@ -98,6 +99,7 @@ namespace NetworkExample.UnityDemo.Host
                     return;
                 }
                 ConfigureInstantWeaponTracers(bundleBytes, entryPath);
+                ConfigureTargetedStrikes(bundleBytes, entryPath);
                 // Bone layouts and the template-to-skeleton pairing come out of
                 // the same bytes the host is about to simulate. Without them a
                 // rigged actor's KernelSkeletonBinding cannot validate, and every
@@ -157,7 +159,7 @@ namespace NetworkExample.UnityDemo.Host
             if (followCamera != null)
             {
                 followCamera.SetAiming(inputSampler.IsAiming);
-                inputSampler.SetAimDirection(followCamera.AimDirection);
+                inputSampler.SetAimDirection(followCamera.ShotAimDirection);
             }
 
             KernelActionIntent predictedIntent = default;
@@ -227,6 +229,7 @@ namespace NetworkExample.UnityDemo.Host
             renderStateApplier.ApplyEntityLifecycleEvents(
                 lifecycleEvents,
                 SafeCount(lifecycleEventCount, lifecycleEvents.Length));
+            UpdateStrikePreview(safeRenderCount);
 
             if (debugView != null)
             {
@@ -246,6 +249,7 @@ namespace NetworkExample.UnityDemo.Host
 
         private void OnDisable()
         {
+            strikePreview?.Hide();
             followCamera?.SetTarget(null);
             renderStateApplier?.Clear();
             inputSampler?.ResetSession();
@@ -311,6 +315,15 @@ namespace NetworkExample.UnityDemo.Host
             {
                 hitSplatters = gameObject.AddComponent<NetworkHitSplatters>();
             }
+
+            strikePreview = GetComponent<TargetedStrikePreview>();
+            if (strikePreview == null)
+            {
+                strikePreview = gameObject.AddComponent<TargetedStrikePreview>();
+            }
+            strikePreview.Configure(aimReticleView);
+            renderStateApplier.LocalActionEffectFailed -= OnLocalActionEffectFailed;
+            renderStateApplier.LocalActionEffectFailed += OnLocalActionEffectFailed;
 
             propShatter = GetComponent<NetworkPropShatter>();
             if (propShatter == null)
@@ -557,6 +570,66 @@ namespace NetworkExample.UnityDemo.Host
                 airborne: view != null && (view.IsAirborne || view.IsReviveFalling),
                 launched: view != null && view.IsLaunched,
                 Time.unscaledDeltaTime);
+        }
+
+        /// <summary>
+        /// Hands the strike preview the targeted strike weapons and their reach.
+        /// Presentation only: without it the preview never shows and the reticle
+        /// never turns invalid, and casting still works.
+        /// </summary>
+        private void ConfigureTargetedStrikes(byte[] bundleBytes, string entryPath)
+        {
+            if (strikePreview == null)
+            {
+                return;
+            }
+
+            if (!NetworkGameplayCatalogBundle.TryReadTargetedStrikeRanges(
+                    bundleBytes,
+                    entryPath,
+                    out Dictionary<byte, float> ranges,
+                    out string diagnostic))
+            {
+                strikePreview.ConfigureWeapons(null);
+                Debug.LogWarning(
+                    "HostMode could not read the catalog's targeted strike weapons, so " +
+                    "their landing point will not be previewed: " + diagnostic,
+                    this);
+                return;
+            }
+
+            strikePreview.ConfigureWeapons(ranges);
+        }
+
+        private void UpdateStrikePreview(int safeRenderCount)
+        {
+            if (strikePreview == null)
+            {
+                return;
+            }
+
+            bool hasLocalPlayer = TryGetLocalPlayerState(
+                safeRenderCount,
+                host.LocalPlayerNetId,
+                out RenderEntityState localPlayer);
+            Vector3 fireOrigin = default;
+            bool canAim = hasLocalPlayer &&
+                (localPlayer.visual_flags & KernelConstants.VisualFlagDead) == 0 &&
+                followCamera != null &&
+                followCamera.TryGetFireOrigin(out fireOrigin);
+            strikePreview.UpdatePreview(
+                canAim,
+                inputSampler.SelectedWeaponId,
+                fireOrigin,
+                canAim ? followCamera.ShotAimDirection : Vector3.forward,
+                renderStates,
+                safeRenderCount,
+                host.LocalPlayerNetId);
+        }
+
+        private void OnLocalActionEffectFailed(KernelLocalActionResult result)
+        {
+            aimReticleView?.FlashRejected();
         }
 
         private bool TryGetLocalPlayerState(
