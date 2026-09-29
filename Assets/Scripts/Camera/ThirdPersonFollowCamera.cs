@@ -153,6 +153,12 @@ namespace NetworkExample.UnityDemo.CameraSystem
         private Vector2 aimReticleViewportOffset = new Vector2(0.13f, 0f);
 
         [SerializeField]
+        [Tooltip(
+            "What the reticle ray can land on when converging the shot aim. " +
+            "Unity's only collider in the scene is the terrain.")]
+        private LayerMask aimTargetMask = ~0;
+
+        [SerializeField]
         private float minimumPitch = -10f;
 
         [SerializeField]
@@ -223,7 +229,8 @@ namespace NetworkExample.UnityDemo.CameraSystem
         /// This is a direction, not a convergence solution. The shot leaves the
         /// character and the ray leaves the camera, so at close range there is
         /// still parallax between where the reticle sits and where the shot lands.
-        /// Closing that needs a hit point to aim the muzzle at, not just an angle.
+        /// Closing that needs a hit point to aim the muzzle at, not just an angle,
+        /// which is what <see cref="ShotAimDirection"/> does.
         /// </remarks>
         public Vector3 AimDirection
         {
@@ -242,6 +249,67 @@ namespace NetworkExample.UnityDemo.CameraSystem
                 }
 
                 return transform.forward;
+            }
+        }
+
+        /// <summary>
+        /// Where the server fires from: the followed character's position plus
+        /// this offset. Only used to converge <see cref="ShotAimDirection"/>.
+        /// </summary>
+        public static readonly Vector3 FireOriginOffset = new Vector3(0f, 1f, 0f);
+
+        /// <summary>
+        /// The ray through <see cref="CurrentReticleViewportPoint"/>.
+        /// </summary>
+        public Ray ReticleRay
+        {
+            get
+            {
+                if (controlledCamera != null)
+                {
+                    Vector2 point = CurrentReticleViewportPoint;
+                    return controlledCamera.ViewportPointToRay(new Vector3(point.x, point.y, 0f));
+                }
+
+                return new Ray(transform.position, transform.forward);
+            }
+        }
+
+        /// <summary>
+        /// Where the followed character fires from, or false with no target.
+        /// </summary>
+        public bool TryGetFireOrigin(out Vector3 fireOrigin)
+        {
+            if (followTarget == null)
+            {
+                fireOrigin = default;
+                return false;
+            }
+
+            fireOrigin = followTarget.position + FireOriginOffset;
+            return true;
+        }
+
+        /// <summary>
+        /// The direction to send as the player's aim: from the fire point to the
+        /// point under the reticle (see <see cref="ReticleAimConvergence"/>).
+        /// Falls back to <see cref="AimDirection"/> with nothing to follow.
+        /// </summary>
+        public Vector3 ShotAimDirection
+        {
+            get
+            {
+                Vector3 fallback = AimDirection;
+                if (!TryGetFireOrigin(out Vector3 fireOrigin))
+                {
+                    return fallback;
+                }
+
+                Vector3 target = ReticleAimConvergence.TargetPoint(
+                    ReticleRay,
+                    fireOrigin,
+                    aimTargetMask);
+                return ReticleAimConvergence.DirectionTo(fireOrigin, target, fallback);
             }
         }
 

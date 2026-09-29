@@ -24,6 +24,25 @@ namespace NetworkExample.UnityDemo.Rendering
     [DisallowMultipleComponent]
     public sealed class NetworkDebugView : MonoBehaviour
     {
+        /// <summary>
+        /// A projectile template drawn as a ring on the ground, the size of the
+        /// area it warns about.
+        /// </summary>
+        [System.Serializable]
+        public struct WarningRing
+        {
+            public uint projectileTemplateId;
+
+            [Min(0.05f)]
+            public float radius;
+
+            public WarningRing(uint projectileTemplateId, float radius)
+            {
+                this.projectileTemplateId = projectileTemplateId;
+                this.radius = radius;
+            }
+        }
+
         [SerializeField]
         private bool enableVisualDebug = true;
 
@@ -38,6 +57,31 @@ namespace NetworkExample.UnityDemo.Rendering
 
         [SerializeField]
         private bool drawStats = true;
+
+        [SerializeField]
+        [Tooltip("Marks where the targeted strike in hand would land.")]
+        private bool drawStrikePreview = true;
+
+        [SerializeField]
+        [Min(0.05f)]
+        private float strikePreviewRadius = 0.75f;
+
+        [SerializeField]
+        [Tooltip(
+            "Targeted strike warnings with no art of their own. List a template " +
+            "here and in the prefab catalog's debug-drawn projectiles.")]
+        private bool drawStrikeWarnings = true;
+
+        [SerializeField]
+        private WarningRing[] strikeWarningRings =
+        {
+            // meteor_storm_marker: where the storm is centred; meteors land
+            // within 6 m of it.
+            new WarningRing(21, 6f),
+            // meteor_storm_fuse: one meteor's landing point, ringed at the
+            // 4 m radius of the blast it becomes.
+            new WarningRing(22, 4f),
+        };
 
         [SerializeField]
         private float directionLength = 1.0f;
@@ -73,6 +117,12 @@ namespace NetworkExample.UnityDemo.Rendering
         [SerializeField]
         private Color visionTargetColor = new Color(1f, 0.2f, 0.2f, 1f);
 
+        [SerializeField]
+        private Color strikePreviewColor = new Color(0.45f, 1f, 0.55f, 1f);
+
+        [SerializeField]
+        private Color strikeWarningColor = new Color(1f, 0.35f, 0.1f, 1f);
+
         private Material lineMaterial;
         private GUIStyle statsStyle;
         private readonly StringBuilder statsBuilder = new StringBuilder(256);
@@ -83,6 +133,8 @@ namespace NetworkExample.UnityDemo.Rendering
         private int visionStateCount;
         private KernelNetworkStats networkStats;
         private bool hasNetworkStats;
+        private bool hasStrikePreview;
+        private Vector3 strikePreviewLanding;
 
         // Skeleton pose read-back. This is the one signal that says whether a pose came
         // from a solve at all: an entity this kernel does not simulate has no locomotion
@@ -109,6 +161,19 @@ namespace NetworkExample.UnityDemo.Rendering
         public void SetEnabled(bool value)
         {
             enableVisualDebug = value;
+        }
+
+        public bool HasStrikePreview => hasStrikePreview;
+        public Vector3 StrikePreviewLanding => strikePreviewLanding;
+
+        /// <summary>
+        /// Where the targeted strike in hand would land this frame, or
+        /// <paramref name="show"/> false when there is nothing to mark.
+        /// </summary>
+        public void SetStrikePreview(bool show, Vector3 landing)
+        {
+            hasStrikePreview = show;
+            strikePreviewLanding = landing;
         }
 
         /// <summary>
@@ -224,6 +289,19 @@ namespace NetworkExample.UnityDemo.Rendering
                 {
                     DrawDirection(renderStates[index]);
                 }
+            }
+
+            if (drawStrikeWarnings && renderStates != null)
+            {
+                for (int index = 0; index < renderStateCount; ++index)
+                {
+                    DrawStrikeWarning(renderStates[index]);
+                }
+            }
+
+            if (drawStrikePreview && hasStrikePreview)
+            {
+                DrawStrikePreview(strikePreviewLanding);
             }
 
             GL.End();
@@ -566,6 +644,72 @@ namespace NetworkExample.UnityDemo.Rendering
         {
             GL.Vertex(a);
             GL.Vertex(b);
+        }
+
+        private void DrawStrikePreview(Vector3 landing)
+        {
+            GL.Color(strikePreviewColor);
+            Vector3 center = DrawGroundRing(landing, strikePreviewRadius);
+            float radius = strikePreviewRadius;
+            float half = radius * 0.5f;
+            Line(center + new Vector3(-half, 0f, 0f), center + new Vector3(half, 0f, 0f));
+            Line(center + new Vector3(0f, 0f, -half), center + new Vector3(0f, 0f, half));
+            Line(center, center + new Vector3(0f, radius, 0f));
+        }
+
+        public bool TryGetStrikeWarningRadius(uint projectileTemplateId, out float radius)
+        {
+            if (strikeWarningRings != null)
+            {
+                for (int index = 0; index < strikeWarningRings.Length; ++index)
+                {
+                    if (strikeWarningRings[index].projectileTemplateId == projectileTemplateId)
+                    {
+                        radius = strikeWarningRings[index].radius;
+                        return true;
+                    }
+                }
+            }
+
+            radius = 0f;
+            return false;
+        }
+
+        private void DrawStrikeWarning(RenderEntityState state)
+        {
+            if (state.entity_type != KernelEntityType.Projectile ||
+                !TryGetStrikeWarningRadius(state.template_id, out float radius))
+            {
+                return;
+            }
+
+            GL.Color(strikeWarningColor);
+            // Held until the entity leaves the render state: the fuse's
+            // lifetime is not replicated, so there is nothing to count down.
+            DrawGroundRing(ToVector3(state.position), radius);
+        }
+
+        /// <summary>
+        /// A horizontal ring just above <paramref name="ground"/>, so it is not
+        /// lost in the surface. Returns the ring's centre.
+        /// </summary>
+        private static Vector3 DrawGroundRing(Vector3 ground, float radius)
+        {
+            Vector3 center = ground + new Vector3(0f, 0.03f, 0f);
+            const int segments = 32;
+            Vector3 previous = center + new Vector3(radius, 0f, 0f);
+            for (int step = 1; step <= segments; ++step)
+            {
+                float angle = step / (float)segments * Mathf.PI * 2f;
+                Vector3 next = center + new Vector3(
+                    Mathf.Cos(angle) * radius,
+                    0f,
+                    Mathf.Sin(angle) * radius);
+                Line(previous, next);
+                previous = next;
+            }
+
+            return center;
         }
 
         private static void DrawAxisAlignedBox(Vector3 center, Vector3 halfExtents)

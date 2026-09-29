@@ -67,6 +67,12 @@ namespace NetworkExample.UnityDemo.Rendering
         [SerializeField]
         private PropPrefabBinding[] propPrefabs = Array.Empty<PropPrefabBinding>();
 
+        [SerializeField]
+        [Tooltip(
+            "Projectile templates that get no GameObject at all: only the visual " +
+            "debug view draws them. Takes precedence over a prefab binding.")]
+        private uint[] debugDrawnProjectileTemplateIds = Array.Empty<uint>();
+
         [Header("Fallbacks")]
         [SerializeField]
         private GameObject playerActorFallback;
@@ -110,6 +116,12 @@ namespace NetworkExample.UnityDemo.Rendering
 
             prefab = null;
             return false;
+        }
+
+        public bool IsDebugDrawnProjectile(uint projectileTemplateId)
+        {
+            return debugDrawnProjectileTemplateIds != null &&
+                Array.IndexOf(debugDrawnProjectileTemplateIds, projectileTemplateId) >= 0;
         }
 
         public bool TryGetProjectilePrefab(uint projectileTemplateId, out GameObject prefab)

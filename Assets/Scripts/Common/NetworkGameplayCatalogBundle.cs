@@ -588,6 +588,80 @@ namespace NetworkExample.UnityDemo.Common
         }
 
         /// <summary>
+        /// Reads the <c>max_range</c> of every targeted strike weapon, by weapon id.
+        /// </summary>
+        /// <remarks>
+        /// The client needs it to preview where a strike lands and whether the
+        /// server would accept it. The weapon mechanics that carry it are only
+        /// queryable on a server, but the bundle every client syncs holds the
+        /// same number.
+        /// </remarks>
+        public static bool TryReadTargetedStrikeRanges(
+            byte[] bundleBytes,
+            string entryPath,
+            out Dictionary<byte, float> maxRangeByWeaponId,
+            out string diagnostic)
+        {
+            maxRangeByWeaponId = null;
+            diagnostic = null;
+            if (bundleBytes == null || bundleBytes.Length == 0)
+            {
+                diagnostic = "Gameplay catalog bundle is empty.";
+                return false;
+            }
+
+            try
+            {
+                using (var stream = new MemoryStream(bundleBytes, false))
+                using (var archive = new ZipArchive(stream, ZipArchiveMode.Read, false))
+                {
+                    if (!TryReadTextEntry(
+                            archive,
+                            entryPath,
+                            out string catalogYaml,
+                            out diagnostic))
+                    {
+                        return false;
+                    }
+
+                    if (!TryReadTopLevelScalar(
+                            catalogYaml,
+                            "weapon_template_dir",
+                            out string weaponDirectory))
+                    {
+                        diagnostic = "Gameplay catalog does not declare weapon_template_dir.";
+                        return false;
+                    }
+
+                    var found = new Dictionary<byte, float>();
+                    foreach (string weaponYaml in ReadYamlEntries(archive, weaponDirectory))
+                    {
+                        if (TryReadTopLevelScalar(weaponYaml, "weapon_type", out string weaponType) &&
+                            weaponType == "targeted_strike" &&
+                            TryReadTopLevelScalar(weaponYaml, "id", out string idText) &&
+                            byte.TryParse(
+                                idText,
+                                NumberStyles.None,
+                                CultureInfo.InvariantCulture,
+                                out byte weaponId))
+                        {
+                            found[weaponId] = ReadFloat(weaponYaml, "max_range", 0f);
+                        }
+                    }
+
+                    maxRangeByWeaponId = found;
+                    return true;
+                }
+            }
+            catch (Exception exception)
+            {
+                diagnostic =
+                    "Gameplay catalog targeted strike range read failed: " + exception.Message;
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Reads the navigation mesh artifact the catalog's
         /// <c>navigation_mesh.entry_path</c> names -- the same file the server's
         /// patrols path over.

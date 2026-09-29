@@ -166,6 +166,7 @@ namespace NetworkExample.UnityDemo.Client
         private NetworkPropShatter propShatter;
         private ThirdPersonFollowCamera followCamera;
         private AimReticleView aimReticleView;
+        private TargetedStrikePreview strikePreview;
         private readonly NetworkPresentationClock presentationClock = new NetworkPresentationClock();
         private readonly RemotePresentationProbe remotePresentationProbe = new RemotePresentationProbe();
         private NetworkInputSubmissionClock inputSubmissionClock;
@@ -248,7 +249,7 @@ namespace NetworkExample.UnityDemo.Client
             {
                 inputSampler.UpdateAimState();
                 if (followCamera != null)
-                    inputSampler.SetAimDirection(followCamera.AimDirection);
+                    inputSampler.SetAimDirection(followCamera.ShotAimDirection);
             }
             if (followCamera != null)
                 followCamera.SetAiming(inputSampler.IsAiming);
@@ -317,6 +318,8 @@ namespace NetworkExample.UnityDemo.Client
                 itemPropController.ResetSession();
                 inputSubmissionClock.Reset();
                 ClearAgentObservation();
+                strikePreview?.Hide();
+                debugView?.SetStrikePreview(false, Vector3.zero);
                 localPlayerDead = false;
                 started = false;
                 return;
@@ -386,6 +389,7 @@ namespace NetworkExample.UnityDemo.Client
             renderStateApplier.ApplyEntityLifecycleEvents(
                 lifecycleEvents,
                 SafeCount(lifecycleEventCount, lifecycleEvents.Length));
+            UpdateStrikePreview(hasLocalPlayer, safeRenderCount);
             if (followCamera != null)
             {
                 itemPropController.SetAimDirection(followCamera.AimDirection);
@@ -440,6 +444,8 @@ namespace NetworkExample.UnityDemo.Client
             agentMode = false;
             pendingInputHandoff = false;
             localPlayerDead = false;
+            strikePreview?.Hide();
+            debugView?.SetStrikePreview(false, Vector3.zero);
             aimReticleView?.SetVisible(true);
             followCamera?.SetTarget(null);
             renderStateApplier?.Clear();
@@ -653,6 +659,15 @@ namespace NetworkExample.UnityDemo.Client
             {
                 hitSplatters = gameObject.AddComponent<NetworkHitSplatters>();
             }
+
+            strikePreview = GetComponent<TargetedStrikePreview>();
+            if (strikePreview == null)
+            {
+                strikePreview = gameObject.AddComponent<TargetedStrikePreview>();
+            }
+            strikePreview.Configure(aimReticleView);
+            renderStateApplier.LocalActionEffectFailed -= OnLocalActionEffectFailed;
+            renderStateApplier.LocalActionEffectFailed += OnLocalActionEffectFailed;
 
             propShatter = GetComponent<NetworkPropShatter>();
             if (propShatter == null)
@@ -1102,6 +1117,7 @@ namespace NetworkExample.UnityDemo.Client
             }
 
             ConfigureInstantWeaponTracers(bundleBytes, syncResult.Manifest.entry_path);
+            ConfigureTargetedStrikes(bundleBytes, syncResult.Manifest.entry_path);
             ConfigureWeaponFireTriggerModes(bundleBytes, syncResult.Manifest.entry_path);
             ConfigureAgentNavMesh(bundleBytes, syncResult.Manifest.entry_path);
             agentColliderShapes.InvalidateCatalog();
@@ -1139,6 +1155,64 @@ namespace NetworkExample.UnityDemo.Client
             }
 
             hitscanTracers.ConfigureWeapons(weapons);
+        }
+
+        /// <summary>
+        /// Hands the strike preview the targeted strike weapons and their reach.
+        /// Presentation only: without it the preview never shows and the reticle
+        /// never turns invalid, and casting still works.
+        /// </summary>
+        private void ConfigureTargetedStrikes(byte[] bundleBytes, string entryPath)
+        {
+            if (strikePreview == null)
+            {
+                return;
+            }
+
+            if (!NetworkGameplayCatalogBundle.TryReadTargetedStrikeRanges(
+                    bundleBytes,
+                    entryPath,
+                    out Dictionary<byte, float> ranges,
+                    out string diagnostic))
+            {
+                strikePreview.ConfigureWeapons(null);
+                Debug.LogWarning(
+                    "Client could not read the catalog's targeted strike weapons, so " +
+                    "their landing point will not be previewed: " + diagnostic,
+                    this);
+                return;
+            }
+
+            strikePreview.ConfigureWeapons(ranges);
+        }
+
+        private void UpdateStrikePreview(bool hasLocalPlayer, int renderCount)
+        {
+            if (strikePreview == null)
+            {
+                return;
+            }
+
+            Vector3 fireOrigin = default;
+            bool canAim = hasLocalPlayer &&
+                !localPlayerDead &&
+                !agentMode &&
+                followCamera != null &&
+                followCamera.TryGetFireOrigin(out fireOrigin);
+            strikePreview.UpdatePreview(
+                canAim,
+                inputSampler.SelectedWeaponId,
+                fireOrigin,
+                canAim ? followCamera.ShotAimDirection : Vector3.forward,
+                renderStates,
+                renderCount,
+                client.LocalPlayerNetId);
+            debugView?.SetStrikePreview(strikePreview.HasTarget, strikePreview.Landing);
+        }
+
+        private void OnLocalActionEffectFailed(KernelLocalActionResult result)
+        {
+            aimReticleView?.FlashRejected();
         }
 
         /// <summary>

@@ -19,6 +19,17 @@ namespace NetworkExample.UnityDemo.UI
     [DisallowMultipleComponent]
     public sealed class AimReticleView : MonoBehaviour
     {
+        /// <summary>
+        /// What the reticle says about the weapon in hand. Only weapons that land
+        /// on a target point (targeted strikes) set anything but None.
+        /// </summary>
+        public enum TargetState
+        {
+            None,
+            Valid,
+            Invalid,
+        }
+
         [SerializeField]
         [Min(0f)]
         private float tickLength = 10f;
@@ -48,6 +59,22 @@ namespace NetworkExample.UnityDemo.UI
         private Color reticleColor = Color.white;
 
         [SerializeField]
+        private Color validTargetColor = new Color(0.45f, 1f, 0.55f, 1f);
+
+        [SerializeField]
+        private Color invalidTargetColor = new Color(1f, 0.3f, 0.25f, 1f);
+
+        [SerializeField]
+        [Min(0f)]
+        [Tooltip("How long the reticle flashes after the server refuses a cast.")]
+        private float rejectedFlashSeconds = 0.35f;
+
+        [SerializeField]
+        [Min(0f)]
+        [Tooltip("How far the ticks spread out at the start of a rejected flash.")]
+        private float rejectedFlashGap = 14f;
+
+        [SerializeField]
         private bool showCenterDot = true;
 
         [SerializeField]
@@ -59,14 +86,33 @@ namespace NetworkExample.UnityDemo.UI
         private RectTransform centerDot;
         private Graphic[] graphics;
 
+        private float rejectedFlashRemaining;
+
         public RectTransform Root => root;
         public float CurrentGap { get; private set; }
         public float CurrentAlpha { get; private set; }
+        public TargetState CurrentTargetState { get; private set; }
+        public Color CurrentColor { get; private set; }
+        public bool IsFlashingRejected => rejectedFlashRemaining > 0f;
 
         public void Configure(ThirdPersonFollowCamera camera)
         {
             followCamera = camera;
             EnsureBuilt();
+        }
+
+        public void SetTargetState(TargetState state)
+        {
+            CurrentTargetState = state;
+        }
+
+        /// <summary>
+        /// Flashes the reticle to say the server refused the cast. The refusal
+        /// costs no ammo and no cooldown, so this is the only sign of it.
+        /// </summary>
+        public void FlashRejected()
+        {
+            rejectedFlashRemaining = rejectedFlashSeconds;
         }
 
         public void SetVisible(bool visible)
@@ -82,6 +128,13 @@ namespace NetworkExample.UnityDemo.UI
 
         private void LateUpdate()
         {
+            if (rejectedFlashRemaining > 0f)
+            {
+                rejectedFlashRemaining = Mathf.Max(
+                    0f,
+                    rejectedFlashRemaining - Time.unscaledDeltaTime);
+            }
+
             if (followCamera == null)
             {
                 return;
@@ -102,6 +155,10 @@ namespace NetworkExample.UnityDemo.UI
             float blend = Mathf.Clamp01(aimBlend);
             CurrentGap = Mathf.Lerp(hipGap, aimGap, blend);
             CurrentAlpha = Mathf.Lerp(hipAlpha, aimAlpha, blend);
+            float flash = rejectedFlashSeconds > 0f
+                ? Mathf.Clamp01(rejectedFlashRemaining / rejectedFlashSeconds)
+                : 0f;
+            CurrentGap += rejectedFlashGap * flash;
 
             // Anchors are already normalized viewport coordinates, so the reticle
             // can be placed by anchor alone and stays put across resolutions.
@@ -122,8 +179,16 @@ namespace NetworkExample.UnityDemo.UI
                 centerDot.anchoredPosition = Vector2.zero;
             }
 
-            Color color = reticleColor;
-            color.a = CurrentAlpha;
+            Color color = flash > 0f || CurrentTargetState == TargetState.Invalid
+                ? invalidTargetColor
+                : CurrentTargetState == TargetState.Valid
+                    ? validTargetColor
+                    : reticleColor;
+            // A target state is worth reading even from the hip.
+            color.a = CurrentTargetState == TargetState.None && flash <= 0f
+                ? CurrentAlpha
+                : Mathf.Max(CurrentAlpha, aimAlpha);
+            CurrentColor = color;
             for (int index = 0; index < graphics.Length; ++index)
             {
                 graphics[index].color = color;
