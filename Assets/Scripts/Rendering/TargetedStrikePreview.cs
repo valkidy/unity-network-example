@@ -6,8 +6,9 @@ using UnityEngine;
 namespace NetworkExample.UnityDemo.Rendering
 {
     /// <summary>
-    /// Shows where a targeted strike would land while one is in hand, and tells
-    /// the reticle whether the cast would be accepted.
+    /// Works out where a targeted strike would land while one is in hand, and
+    /// tells the reticle whether the cast would be accepted. The landing point
+    /// itself is only drawn by <see cref="NetworkDebugView"/>.
     /// </summary>
     /// <remarks>
     /// The landing point comes from <see cref="TargetedStrikeTargeting"/>, which
@@ -18,12 +19,6 @@ namespace NetworkExample.UnityDemo.Rendering
     [DisallowMultipleComponent]
     public sealed class TargetedStrikePreview : MonoBehaviour
     {
-        [SerializeField]
-        [Tooltip(
-            "Drawn at the predicted landing point. Left empty, a flat box " +
-            "placeholder is built at runtime.")]
-        private GameObject markerPrefab;
-
         [SerializeField]
         [Tooltip("What counts as the world for the preview's rays.")]
         private LayerMask worldMask = ~0;
@@ -37,23 +32,16 @@ namespace NetworkExample.UnityDemo.Rendering
         [SerializeField]
         private Vector3 actorBoxHalfExtents = new Vector3(0.35f, 0.9f, 0.35f);
 
-        [SerializeField]
-        [Min(0f)]
-        [Tooltip("Lifts the marker off the ground so it does not z-fight it.")]
-        private float markerLift = 0.03f;
-
         private readonly Dictionary<byte, float> maxRangeByWeaponId =
             new Dictionary<byte, float>();
         private readonly List<TargetedStrikeTargeting.ActorBox> actorBoxes =
             new List<TargetedStrikeTargeting.ActorBox>();
         private AimReticleView reticle;
-        private GameObject marker;
         private TargetedStrikeTargeting.WorldRaycast worldRaycast;
 
         public bool IsActive { get; private set; }
         public bool HasTarget { get; private set; }
         public Vector3 Landing { get; private set; }
-        public GameObject Marker => marker;
 
         public void Configure(AimReticleView aimReticle)
         {
@@ -100,7 +88,7 @@ namespace NetworkExample.UnityDemo.Rendering
             if (!IsActive)
             {
                 HasTarget = false;
-                ShowMarker(false);
+                Landing = Vector3.zero;
                 reticle?.SetTargetState(AimReticleView.TargetState.None);
                 return;
             }
@@ -119,13 +107,6 @@ namespace NetworkExample.UnityDemo.Rendering
                 actorBoxes,
                 out Vector3 landing);
             Landing = HasTarget ? landing : Vector3.zero;
-            if (HasTarget)
-            {
-                EnsureMarker();
-                marker.transform.position = landing + Vector3.up * markerLift;
-            }
-
-            ShowMarker(HasTarget);
             reticle?.SetTargetState(HasTarget
                 ? AimReticleView.TargetState.Valid
                 : AimReticleView.TargetState.Invalid);
@@ -135,21 +116,13 @@ namespace NetworkExample.UnityDemo.Rendering
         {
             IsActive = false;
             HasTarget = false;
-            ShowMarker(false);
+            Landing = Vector3.zero;
             reticle?.SetTargetState(AimReticleView.TargetState.None);
         }
 
         private void OnDisable()
         {
             Hide();
-        }
-
-        private void OnDestroy()
-        {
-            if (marker != null)
-            {
-                Destroy(marker);
-            }
         }
 
         private void CollectActorBoxes(
@@ -182,47 +155,6 @@ namespace NetworkExample.UnityDemo.Rendering
                 actorBoxes.Add(new TargetedStrikeTargeting.ActorBox(
                     position + actorBoxCenter,
                     actorBoxHalfExtents));
-            }
-        }
-
-        private void EnsureMarker()
-        {
-            if (marker != null)
-            {
-                return;
-            }
-
-            if (markerPrefab != null)
-            {
-                marker = Instantiate(markerPrefab, transform);
-            }
-            else
-            {
-                // A box stands in until the real marker art exists.
-                marker = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                marker.transform.SetParent(transform, false);
-                marker.transform.localScale = new Vector3(1.2f, 0.04f, 1.2f);
-                Collider collider = marker.GetComponent<Collider>();
-                if (collider != null)
-                {
-                    // It would otherwise be the first thing the next frame's
-                    // rays hit.
-                    DestroyImmediate(collider);
-                }
-            }
-
-            marker.name = "TargetedStrikePreview";
-            foreach (Collider collider in marker.GetComponentsInChildren<Collider>(true))
-            {
-                collider.enabled = false;
-            }
-        }
-
-        private void ShowMarker(bool visible)
-        {
-            if (marker != null && marker.activeSelf != visible)
-            {
-                marker.SetActive(visible);
             }
         }
     }

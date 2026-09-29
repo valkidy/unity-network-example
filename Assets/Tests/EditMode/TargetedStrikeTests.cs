@@ -324,13 +324,13 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
 
             preview.UpdatePreview(true, 13, FireOrigin, aim, null, 0, 1);
             Assert.That(preview.HasTarget, Is.True);
-            Assert.That(preview.Marker.activeSelf, Is.True);
-            Assert.That(preview.Marker.GetComponentInChildren<Collider>(), Is.Null);
+            Assert.That(Vector3.Distance(preview.Landing, new Vector3(0f, 0f, 10f)), Is.LessThan(0.05f));
+            // Nothing is drawn in the world: the landing point is debug-only.
+            Assert.That(host.transform.childCount, Is.Zero);
             Assert.That(reticle.CurrentTargetState, Is.EqualTo(AimReticleView.TargetState.Valid));
 
             preview.UpdatePreview(true, 13, FireOrigin, Vector3.up, null, 0, 1);
             Assert.That(preview.HasTarget, Is.False);
-            Assert.That(preview.Marker.activeSelf, Is.False);
             Assert.That(reticle.CurrentTargetState, Is.EqualTo(AimReticleView.TargetState.Invalid));
         }
 

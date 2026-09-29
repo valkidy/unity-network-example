@@ -250,6 +250,7 @@ namespace NetworkExample.UnityDemo.Host
         private void OnDisable()
         {
             strikePreview?.Hide();
+            debugView?.SetStrikePreview(false, Vector3.zero);
             followCamera?.SetTarget(null);
             renderStateApplier?.Clear();
             inputSampler?.ResetSession();
@@ -625,6 +626,7 @@ namespace NetworkExample.UnityDemo.Host
                 renderStates,
                 safeRenderCount,
                 host.LocalPlayerNetId);
+            debugView?.SetStrikePreview(strikePreview.HasTarget, strikePreview.Landing);
         }
 
         private void OnLocalActionEffectFailed(KernelLocalActionResult result)

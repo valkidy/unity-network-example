@@ -319,6 +319,7 @@ namespace NetworkExample.UnityDemo.Client
                 inputSubmissionClock.Reset();
                 ClearAgentObservation();
                 strikePreview?.Hide();
+                debugView?.SetStrikePreview(false, Vector3.zero);
                 localPlayerDead = false;
                 started = false;
                 return;
@@ -444,6 +445,7 @@ namespace NetworkExample.UnityDemo.Client
             pendingInputHandoff = false;
             localPlayerDead = false;
             strikePreview?.Hide();
+            debugView?.SetStrikePreview(false, Vector3.zero);
             aimReticleView?.SetVisible(true);
             followCamera?.SetTarget(null);
             renderStateApplier?.Clear();
@@ -1205,6 +1207,7 @@ namespace NetworkExample.UnityDemo.Client
                 renderStates,
                 renderCount,
                 client.LocalPlayerNetId);
+            debugView?.SetStrikePreview(strikePreview.HasTarget, strikePreview.Landing);
         }
 
         private void OnLocalActionEffectFailed(KernelLocalActionResult result)

@@ -40,6 +40,14 @@ namespace NetworkExample.UnityDemo.Rendering
         private bool drawStats = true;
 
         [SerializeField]
+        [Tooltip("Marks where the targeted strike in hand would land.")]
+        private bool drawStrikePreview = true;
+
+        [SerializeField]
+        [Min(0.05f)]
+        private float strikePreviewRadius = 0.75f;
+
+        [SerializeField]
         private float directionLength = 1.0f;
 
         [SerializeField]
@@ -73,6 +81,9 @@ namespace NetworkExample.UnityDemo.Rendering
         [SerializeField]
         private Color visionTargetColor = new Color(1f, 0.2f, 0.2f, 1f);
 
+        [SerializeField]
+        private Color strikePreviewColor = new Color(0.45f, 1f, 0.55f, 1f);
+
         private Material lineMaterial;
         private GUIStyle statsStyle;
         private readonly StringBuilder statsBuilder = new StringBuilder(256);
@@ -83,6 +94,8 @@ namespace NetworkExample.UnityDemo.Rendering
         private int visionStateCount;
         private KernelNetworkStats networkStats;
         private bool hasNetworkStats;
+        private bool hasStrikePreview;
+        private Vector3 strikePreviewLanding;
 
         // Skeleton pose read-back. This is the one signal that says whether a pose came
         // from a solve at all: an entity this kernel does not simulate has no locomotion
@@ -109,6 +122,19 @@ namespace NetworkExample.UnityDemo.Rendering
         public void SetEnabled(bool value)
         {
             enableVisualDebug = value;
+        }
+
+        public bool HasStrikePreview => hasStrikePreview;
+        public Vector3 StrikePreviewLanding => strikePreviewLanding;
+
+        /// <summary>
+        /// Where the targeted strike in hand would land this frame, or
+        /// <paramref name="show"/> false when there is nothing to mark.
+        /// </summary>
+        public void SetStrikePreview(bool show, Vector3 landing)
+        {
+            hasStrikePreview = show;
+            strikePreviewLanding = landing;
         }
 
         /// <summary>
@@ -224,6 +250,11 @@ namespace NetworkExample.UnityDemo.Rendering
                 {
                     DrawDirection(renderStates[index]);
                 }
+            }
+
+            if (drawStrikePreview && hasStrikePreview)
+            {
+                DrawStrikePreview(strikePreviewLanding);
             }
 
             GL.End();
@@ -566,6 +597,31 @@ namespace NetworkExample.UnityDemo.Rendering
         {
             GL.Vertex(a);
             GL.Vertex(b);
+        }
+
+        private void DrawStrikePreview(Vector3 landing)
+        {
+            GL.Color(strikePreviewColor);
+            // Just above the ground so the ring is not lost in it.
+            Vector3 center = landing + new Vector3(0f, 0.03f, 0f);
+            const int segments = 24;
+            float radius = strikePreviewRadius;
+            Vector3 previous = center + new Vector3(radius, 0f, 0f);
+            for (int step = 1; step <= segments; ++step)
+            {
+                float angle = step / (float)segments * Mathf.PI * 2f;
+                Vector3 next = center + new Vector3(
+                    Mathf.Cos(angle) * radius,
+                    0f,
+                    Mathf.Sin(angle) * radius);
+                Line(previous, next);
+                previous = next;
+            }
+
+            float half = radius * 0.5f;
+            Line(center + new Vector3(-half, 0f, 0f), center + new Vector3(half, 0f, 0f));
+            Line(center + new Vector3(0f, 0f, -half), center + new Vector3(0f, 0f, half));
+            Line(center, center + new Vector3(0f, radius, 0f));
         }
 
         private static void DrawAxisAlignedBox(Vector3 center, Vector3 halfExtents)
