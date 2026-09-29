@@ -26,6 +26,17 @@ namespace NetworkExample.UnityDemo.Rendering
 
         public NetworkPrefabCatalog Catalog => ResolveCatalog();
 
+        /// <summary>
+        /// True for a projectile the catalog leaves to the visual debug view, so
+        /// it must not be given a visual.
+        /// </summary>
+        public bool IsDebugDrawnProjectile(uint projectileTemplateId)
+        {
+            NetworkPrefabCatalog resolvedCatalog = ResolveCatalog();
+            return resolvedCatalog != null &&
+                resolvedCatalog.IsDebugDrawnProjectile(projectileTemplateId);
+        }
+
         public void Configure(NetworkPrefabCatalog prefabCatalog)
         {
             catalog = prefabCatalog;

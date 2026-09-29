@@ -117,7 +117,9 @@ namespace NetworkExample.UnityDemo.Rendering
             {
                 RenderEntityState state = states[index];
                 ulong entityKey = EntityKeyFor(state);
-                if (entityKey == 0 || !ShouldRender(state))
+                if (entityKey == 0 || !ShouldRender(state) ||
+                    (state.entity_type == KernelEntityType.Projectile &&
+                        prefabRegistry.IsDebugDrawnProjectile(state.template_id)))
                 {
                     continue;
                 }

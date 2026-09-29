@@ -205,9 +205,9 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             NetworkRenderStateApplier applier = created[created.Count - 1]
                 .GetComponent<NetworkRenderStateApplier>();
 
-            RenderEntityState fuse = Projectile(entityId: 11, netId: 0, templateId: 22);
+            RenderEntityState blast = Projectile(entityId: 11, netId: 0, templateId: 20);
             RenderEntityState meteor = Projectile(entityId: 12, netId: 0, templateId: 19);
-            applier.Apply(new[] { fuse, meteor }, 2);
+            applier.Apply(new[] { blast, meteor }, 2);
             Assert.That(root.childCount, Is.EqualTo(2));
 
             applier.Apply(new[] { meteor }, 1);
@@ -224,7 +224,7 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             Applier(out NetworkEntityRegistry registry, out _, out _);
             NetworkRenderStateApplier applier = created[created.Count - 1]
                 .GetComponent<NetworkRenderStateApplier>();
-            applier.Apply(new[] { Projectile(entityId: 7, netId: 900, templateId: 21) }, 1);
+            applier.Apply(new[] { Projectile(entityId: 7, netId: 900, templateId: 18) }, 1);
             applier.Apply(System.Array.Empty<RenderEntityState>(), 0);
 
             Assert.DoesNotThrow(() => applier.ApplyEntityLifecycleEvents(
@@ -361,6 +361,13 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
 
             for (uint templateId = 18; templateId <= 25; ++templateId)
             {
+                if (templateId == 21 || templateId == 22)
+                {
+                    Assert.That(catalog.IsDebugDrawnProjectile(templateId), Is.True, "template " + templateId);
+                    continue;
+                }
+
+                Assert.That(catalog.IsDebugDrawnProjectile(templateId), Is.False, "template " + templateId);
                 Assert.That(
                     catalog.TryGetProjectilePrefab(templateId, out GameObject prefab),
                     Is.True,
@@ -372,6 +379,42 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             Assert.That(laser.GetComponent<NetworkProjectileView>().SpanFromFirstPosition, Is.True);
             catalog.TryGetProjectilePrefab(19, out GameObject meteor);
             Assert.That(meteor.GetComponent<NetworkProjectileView>().FaceVelocity, Is.True);
+        }
+
+        [Test]
+        public void StormWarnings_GetNoVisual()
+        {
+            Applier(out NetworkEntityRegistry registry, out _, out Transform root);
+            NetworkRenderStateApplier applier = created[created.Count - 1]
+                .GetComponent<NetworkRenderStateApplier>();
+
+            applier.Apply(
+                new[]
+                {
+                    Projectile(entityId: 40, netId: 950, templateId: 21),
+                    Projectile(entityId: 41, netId: 0, templateId: 22),
+                    Projectile(entityId: 42, netId: 0, templateId: 19),
+                },
+                3);
+
+            Assert.That(registry.TryGet(40, out _), Is.False);
+            Assert.That(registry.TryGet(41, out _), Is.False);
+            Assert.That(registry.TryGet(42, out _), Is.True);
+            Assert.That(root.childCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void DebugView_RingsTheStormWarningsAtTheirAreaRadius()
+        {
+            var host = new GameObject("DebugView");
+            created.Add(host);
+            NetworkDebugView debugView = host.AddComponent<NetworkDebugView>();
+
+            Assert.That(debugView.TryGetStrikeWarningRadius(21, out float stormRadius), Is.True);
+            Assert.That(stormRadius, Is.EqualTo(6f));
+            Assert.That(debugView.TryGetStrikeWarningRadius(22, out float fuseRadius), Is.True);
+            Assert.That(fuseRadius, Is.EqualTo(4f));
+            Assert.That(debugView.TryGetStrikeWarningRadius(18, out _), Is.False);
         }
 
         [Test]
