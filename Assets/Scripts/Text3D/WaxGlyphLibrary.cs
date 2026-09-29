@@ -47,7 +47,7 @@ namespace NetworkExample.UnityDemo.Text3D
 
             string resolvedFontPath = Path.GetFullPath(
                 Path.IsPathRooted(fontPath) ? fontPath : Path.Combine(Application.streamingAssetsPath, fontPath));
-            var key = new Key(resolvedFontPath, codepoint, settings, pedestal, template.GetInstanceID());
+            var key = new Key(resolvedFontPath, codepoint, settings, pedestal, template.GetEntityId());
             if (Entries.TryGetValue(key, out Entry entry))
             {
                 return entry;
@@ -278,9 +278,9 @@ namespace NetworkExample.UnityDemo.Text3D
             private readonly int codepoint;
             private readonly WaxGlyphSettings settings;
             private readonly WaxGlyphPedestalSettings? pedestal;
-            private readonly int templateId;
+            private readonly EntityId templateId;
 
-            public Key(string fontPath, int codepoint, WaxGlyphSettings settings, WaxGlyphPedestalSettings? pedestal, int templateId)
+            public Key(string fontPath, int codepoint, WaxGlyphSettings settings, WaxGlyphPedestalSettings? pedestal, EntityId templateId)
             {
                 this.fontPath = fontPath;
                 this.codepoint = codepoint;
