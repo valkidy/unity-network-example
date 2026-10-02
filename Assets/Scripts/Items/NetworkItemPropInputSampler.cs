@@ -12,6 +12,7 @@ namespace NetworkExample.UnityDemo.Items
         Pickup = 1 << 1,
         Use = 1 << 2,
         SelectNextItem = 1 << 3,
+        Interact = 1 << 4,
     }
 
     [DisallowMultipleComponent]
@@ -21,10 +22,12 @@ namespace NetworkExample.UnityDemo.Items
         private InputAction pickupAction;
         private InputAction useAction;
         private InputAction selectNextItemAction;
+        private InputAction interactAction;
         private bool wasThrowPressed;
         private bool wasPickupPressed;
         private bool wasUsePressed;
         private bool wasSelectNextItemPressed;
+        private bool wasInteractPressed;
 
         private void Awake()
         {
@@ -44,6 +47,9 @@ namespace NetworkExample.UnityDemo.Items
             selectNextItemAction = CreateButtonAction(
                 "SelectNextItem",
                 "<Keyboard>/tab");
+            // Going into a building and coming back out. E is taken by the
+            // camera's orbit.
+            interactAction = CreateButtonAction("Interact", "<Keyboard>/f");
         }
 
         private void OnEnable()
@@ -52,6 +58,7 @@ namespace NetworkExample.UnityDemo.Items
             pickupAction?.Enable();
             useAction?.Enable();
             selectNextItemAction?.Enable();
+            interactAction?.Enable();
         }
 
         private void OnDisable()
@@ -60,6 +67,7 @@ namespace NetworkExample.UnityDemo.Items
             pickupAction?.Disable();
             useAction?.Disable();
             selectNextItemAction?.Disable();
+            interactAction?.Disable();
             ResetSession();
         }
 
@@ -69,6 +77,7 @@ namespace NetworkExample.UnityDemo.Items
             DisposeAction(ref pickupAction);
             DisposeAction(ref useAction);
             DisposeAction(ref selectNextItemAction);
+            DisposeAction(ref interactAction);
         }
 
         public ItemPropInputCommand SampleCommands()
@@ -96,6 +105,11 @@ namespace NetworkExample.UnityDemo.Items
                 ItemPropInputCommand.SelectNextItem,
                 ref wasSelectNextItemPressed,
                 ref commands);
+            AddPressedCommand(
+                interactAction,
+                ItemPropInputCommand.Interact,
+                ref wasInteractPressed,
+                ref commands);
             return commands;
         }
 
@@ -105,6 +119,7 @@ namespace NetworkExample.UnityDemo.Items
             wasPickupPressed = false;
             wasUsePressed = false;
             wasSelectNextItemPressed = false;
+            wasInteractPressed = false;
         }
 
         private static InputAction CreateButtonAction(string name, string binding)
@@ -120,6 +135,7 @@ namespace NetworkExample.UnityDemo.Items
             pickupAction?.Enable();
             useAction?.Enable();
             selectNextItemAction?.Enable();
+            interactAction?.Enable();
         }
 
         private static void AddPressedCommand(

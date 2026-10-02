@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using NetworkExample.Kernel;
 using NetworkExample.Kernel.Client;
+using NetworkExample.UnityDemo.Common;
 using UnityEngine;
 
 namespace NetworkExample.UnityDemo.Items
@@ -46,6 +47,13 @@ namespace NetworkExample.UnityDemo.Items
         /// </summary>
         private Vector3 reticleAimDirection;
 
+        /// <summary>
+        /// Every building this session's catalog lets a player go inside, by
+        /// entity template id. Empty until the synchronized catalog is read.
+        /// </summary>
+        private IReadOnlyDictionary<uint, NetworkShelterTemplate> shelterTemplates =
+            new Dictionary<uint, NetworkShelterTemplate>();
+
         private readonly Dictionary<ulong, PendingRequest> pendingRequests =
             new Dictionary<ulong, PendingRequest>();
         private readonly LocalInventorySelectionModel selection =
@@ -82,6 +90,12 @@ namespace NetworkExample.UnityDemo.Items
             inputSampler = sampler;
             viewTransform = cameraTransform;
             throwSubmitted = onThrowSubmitted;
+        }
+
+        public void ConfigureShelters(
+            IReadOnlyDictionary<uint, NetworkShelterTemplate> templates)
+        {
+            shelterTemplates = templates ?? new Dictionary<uint, NetworkShelterTemplate>();
         }
 
         /// <summary>
@@ -136,11 +150,17 @@ namespace NetworkExample.UnityDemo.Items
         /// Drops throw, pickup and use presses -- dropped, not queued -- while
         /// the local actor is in the air. Cycling the selection still works.
         /// </param>
+        /// <param name="shelterNetId">
+        /// The building the local player is inside, 0 when outside. Inside,
+        /// interact leaves it and every item command is dropped: the server
+        /// refuses anything else with InstigatorSheltered.
+        /// </param>
         public void ProcessInput(
             NetworkClient client,
             RenderEntityState[] renderStates,
             int renderStateCount,
-            bool itemUseBlocked)
+            bool itemUseBlocked,
+            uint shelterNetId)
         {
             if (inputSampler == null)
             {
@@ -158,7 +178,9 @@ namespace NetworkExample.UnityDemo.Items
                 SelectNextItem();
             }
 
-            if (itemUseBlocked)
+            // Leaving is never held back by the air gate: whatever the grounded
+            // flag says about a sheltered actor, the way out must stay open.
+            if (itemUseBlocked && shelterNetId == 0)
             {
                 return;
             }
@@ -166,6 +188,22 @@ namespace NetworkExample.UnityDemo.Items
             if (client == null || !client.IsReady || client.IsDisconnected)
             {
                 LogWarning("Item input ignored because the network client is not ready.");
+                return;
+            }
+
+            if ((commands & ItemPropInputCommand.Interact) != 0)
+            {
+                SubmitActivateRequest(client, renderStates, renderStateCount, shelterNetId);
+            }
+
+            if (shelterNetId != 0)
+            {
+                if ((commands & (ItemPropInputCommand.Use |
+                        ItemPropInputCommand.Throw |
+                        ItemPropInputCommand.Pickup)) != 0)
+                {
+                    Log("Item input ignored while inside building " + shelterNetId + ".");
+                }
                 return;
             }
 
@@ -261,9 +299,11 @@ namespace NetworkExample.UnityDemo.Items
                     " committed_prop=" + outcome.prop_entity_id +
                     " quantity=" + outcome.committed_quantity;
                 // A request that raced the player's death is refused for that
-                // alone. Nothing is wrong with the request or the item.
+                // alone, and one that raced going inside a building likewise.
+                // Nothing is wrong with the request or the item.
                 if (status == KernelGameplayRequestStatus.Rejected &&
-                    rejection != KernelGameplayRequestRejectionReason.InstigatorDead)
+                    rejection != KernelGameplayRequestRejectionReason.InstigatorDead &&
+                    rejection != KernelGameplayRequestRejectionReason.InstigatorSheltered)
                 {
                     LogWarning(message);
                 }
@@ -481,6 +521,47 @@ namespace NetworkExample.UnityDemo.Items
                 selectedItemInstanceId: target.item_instance_id,
                 targetNetId: target.net_id);
             Submit(client, request, KernelDomainAction.Pickup);
+        }
+
+        /// <summary>
+        /// Goes into the nearest building in reach, or comes back out of the one
+        /// the player is in. Both are the same Activate on the building.
+        /// </summary>
+        /// <remarks>
+        /// Nothing opens here. The server moves the player in or out a tick
+        /// after it accepts this, and the client learns that only from the
+        /// local shelter state; a refused request -- out of range, full, dead,
+        /// mid-knockback -- leaves that state as it was.
+        /// </remarks>
+        private void SubmitActivateRequest(
+            NetworkClient client,
+            RenderEntityState[] renderStates,
+            int renderStateCount,
+            uint shelterNetId)
+        {
+            uint targetNetId = shelterNetId;
+            if (targetNetId == 0)
+            {
+                if (!ItemPropTargetSelector.TrySelectShelterTarget(
+                        renderStates,
+                        renderStateCount,
+                        client.LocalPlayerNetId,
+                        shelterTemplates,
+                        out RenderEntityState target))
+                {
+                    Log("Interact ignored because no building is within reach.");
+                    return;
+                }
+
+                targetNetId = target.net_id;
+            }
+
+            KernelGameplayRequest request = requestSender.CreateRequest(
+                client.LocalPeerId,
+                client.LocalPlayerNetId,
+                KernelDomainAction.Activate,
+                targetNetId: targetNetId);
+            Submit(client, request, KernelDomainAction.Activate);
         }
 
         private bool Submit(

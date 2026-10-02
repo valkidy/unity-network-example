@@ -86,6 +86,7 @@ namespace NetworkExample.UnityDemo.Input
         private bool isAiming;
         // The local actor's replicated state, pushed by the runner each frame.
         private bool localActorStaggered;
+        private bool localActorSheltered;
         private bool localActorGrounded = true;
         // Set when the view reports a fall and held until the grounded flag
         // returns: the view stops calling the body airborne a landing lead
@@ -137,13 +138,14 @@ namespace NetworkExample.UnityDemo.Input
         public int SelectedWeaponSlot => selectedWeaponSlot;
 
         /// <summary>
-        /// Whether the local actor is stunned in a way the server refuses actions
-        /// for -- staggered, or knocked back and not yet landed. While it is, a
-        /// press sends no intent, and a held trigger waits to restart until it
-        /// lifts.
+        /// Whether the local actor is in a state the server refuses actions
+        /// for -- staggered, knocked back and not yet landed, or inside a
+        /// building. While it is, a press sends no intent, and a held trigger
+        /// waits to restart until it lifts.
         /// </summary>
         public bool IsActionBlocked =>
-            localActorStaggered || staggerRefusalHoldRemaining > 0f || knockbackLocked;
+            localActorStaggered || staggerRefusalHoldRemaining > 0f || knockbackLocked ||
+            localActorSheltered;
 
         /// <summary>
         /// Whether movement is sent as zero. Only a stagger pins the actor; a
@@ -162,6 +164,16 @@ namespace NetworkExample.UnityDemo.Input
         public bool IsItemUseBlocked => itemAirHold || knockbackLocked;
 
         public byte SelectedWeaponId => selectedWeapon;
+
+        /// <summary>
+        /// Whether the local actor is inside a building, from the local shelter
+        /// state. Movement is still sent: the kernel's prediction holds a
+        /// sheltered actor still on its own.
+        /// </summary>
+        public void SetSheltered(bool sheltered)
+        {
+            localActorSheltered = sheltered;
+        }
 
         public void SetViewTransform(Transform target)
         {
@@ -708,9 +720,10 @@ namespace NetworkExample.UnityDemo.Input
         /// ammo, reloading, cooling down, dead -- waits for a fresh press, so the
         /// sampler cannot spin one intent per sample against a kernel saying no.
         ///
-        /// Staggered and KnockedBack are refusals that end on their own, which
-        /// puts them with the first group: the restart is held back by
-        /// <see cref="IsActionBlocked"/> until the stun lifts, and then fires
+        /// Staggered, KnockedBack and Sheltered are refusals that end on their
+        /// own, which puts them with the first group: the restart is held back
+        /// by <see cref="IsActionBlocked"/> until the stun lifts or the actor
+        /// comes out of the building, and then fires
         /// for the trigger the player never let go of.
         /// </remarks>
         public static bool CanRestartWhileHeld(KernelLocalActionResultReason reason)
@@ -723,6 +736,7 @@ namespace NetworkExample.UnityDemo.Input
                 case KernelLocalActionResultReason.InvalidActionId:
                 case KernelLocalActionResultReason.Staggered:
                 case KernelLocalActionResultReason.KnockedBack:
+                case KernelLocalActionResultReason.Sheltered:
                     return true;
                 default:
                     return false;
@@ -742,6 +756,7 @@ namespace NetworkExample.UnityDemo.Input
             wasAimPressed = false;
             isAiming = false;
             localActorStaggered = false;
+            localActorSheltered = false;
             localActorGrounded = true;
             itemAirHold = false;
             staggerRefusalHoldRemaining = 0f;

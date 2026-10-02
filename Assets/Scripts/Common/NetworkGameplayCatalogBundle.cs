@@ -81,6 +81,25 @@ namespace NetworkExample.UnityDemo.Common
         }
     }
 
+    /// <summary>
+    /// A building a player can go inside, carrying only what the client needs to
+    /// enter it and count it down.
+    /// </summary>
+    public readonly struct NetworkShelterTemplate
+    {
+        public NetworkShelterTemplate(uint lifetimeTicks, float interactionRange)
+        {
+            LifetimeTicks = lifetimeTicks;
+            InteractionRange = interactionRange;
+        }
+
+        /// <summary>Ticks from spawn to expiry; 0 when it never expires.</summary>
+        public uint LifetimeTicks { get; }
+
+        /// <summary>3D distance the server accepts an activation from.</summary>
+        public float InteractionRange { get; }
+    }
+
     public static class NetworkGameplayCatalogBundle
     {
         public const string DefaultBundleDisplayPath =
@@ -657,6 +676,114 @@ namespace NetworkExample.UnityDemo.Common
             {
                 diagnostic =
                     "Gameplay catalog targeted strike range read failed: " + exception.Message;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Reads every building a player can go inside -- every entity template
+        /// with a <c>shelter:</c> block -- by entity template id.
+        /// </summary>
+        /// <remarks>
+        /// A client needs both numbers and has no other source for either. The
+        /// interaction range decides which tent a press of interact means, and
+        /// the lifetime is what the rest UI counts down from: a render state
+        /// carries the tent's spawn tick but not how long it lives. Nothing on
+        /// the server changes a tent's remaining lifetime after it spawns, so
+        /// spawn tick plus this is when it collapses.
+        /// </remarks>
+        public static bool TryReadShelterTemplates(
+            byte[] bundleBytes,
+            string entryPath,
+            out Dictionary<uint, NetworkShelterTemplate> shelterByTemplateId,
+            out string diagnostic)
+        {
+            shelterByTemplateId = null;
+            diagnostic = null;
+            if (bundleBytes == null || bundleBytes.Length == 0)
+            {
+                diagnostic = "Gameplay catalog bundle is empty.";
+                return false;
+            }
+
+            try
+            {
+                using (var stream = new MemoryStream(bundleBytes, false))
+                using (var archive = new ZipArchive(stream, ZipArchiveMode.Read, false))
+                {
+                    if (!TryReadTextEntry(
+                            archive,
+                            entryPath,
+                            out string catalogYaml,
+                            out diagnostic))
+                    {
+                        return false;
+                    }
+
+                    if (!TryReadTopLevelScalar(
+                            catalogYaml,
+                            "entity_template_dir",
+                            out string entityTemplateDirectory))
+                    {
+                        diagnostic =
+                            "Gameplay catalog does not declare entity_template_dir.";
+                        return false;
+                    }
+
+                    var found = new Dictionary<uint, NetworkShelterTemplate>();
+                    foreach (string templateYaml in ReadYamlEntries(archive, entityTemplateDirectory))
+                    {
+                        if (!TryReadNestedScalar(templateYaml, "shelter", "capacity", out _) ||
+                            !TryReadTopLevelScalar(templateYaml, "id", out string idText) ||
+                            !uint.TryParse(
+                                idText,
+                                NumberStyles.None,
+                                CultureInfo.InvariantCulture,
+                                out uint templateId) ||
+                            templateId == 0)
+                        {
+                            continue;
+                        }
+
+                        uint lifetimeTicks = 0;
+                        if (TryReadNestedScalar(
+                                templateYaml,
+                                "lifecycle",
+                                "lifetime_ticks",
+                                out string lifetimeText))
+                        {
+                            uint.TryParse(
+                                lifetimeText,
+                                NumberStyles.None,
+                                CultureInfo.InvariantCulture,
+                                out lifetimeTicks);
+                        }
+
+                        float range = 0f;
+                        if (TryReadNestedScalar(
+                                templateYaml,
+                                "interaction",
+                                "range",
+                                out string rangeText))
+                        {
+                            float.TryParse(
+                                rangeText,
+                                NumberStyles.Float,
+                                CultureInfo.InvariantCulture,
+                                out range);
+                        }
+
+                        found[templateId] = new NetworkShelterTemplate(lifetimeTicks, range);
+                    }
+
+                    shelterByTemplateId = found;
+                    return true;
+                }
+            }
+            catch (Exception exception)
+            {
+                diagnostic =
+                    "Gameplay catalog shelter template read failed: " + exception.Message;
                 return false;
             }
         }

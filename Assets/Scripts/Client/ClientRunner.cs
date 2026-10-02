@@ -25,6 +25,10 @@ namespace NetworkExample.UnityDemo.Client
         /// </summary>
         private const float CatalogConfigureRetrySeconds = 0.25f;
 
+        /// <summary>The server simulation rate the shelter countdown converts ticks with.</summary>
+        private static readonly uint ServerTickRate =
+            KernelConfig.CreateDefault(KernelMode.Client).tick.server_tick_rate;
+
         [SerializeField]
         private string serverAddress = "127.0.0.1:7777";
 
@@ -166,6 +170,12 @@ namespace NetworkExample.UnityDemo.Client
         private NetworkPropShatter propShatter;
         private ThirdPersonFollowCamera followCamera;
         private AimReticleView aimReticleView;
+        private ShelterRestView shelterRestView;
+        private Dictionary<uint, NetworkShelterTemplate> shelterTemplates;
+        // The newest local shelter state; shelterNetId is 0 while outside.
+        private uint shelterNetId;
+        private uint shelterUiId;
+        private uint shelterAuthoritativeTick;
         private TargetedStrikePreview strikePreview;
         private readonly NetworkPresentationClock presentationClock = new NetworkPresentationClock();
         private readonly RemotePresentationProbe remotePresentationProbe = new RemotePresentationProbe();
@@ -290,6 +300,7 @@ namespace NetworkExample.UnityDemo.Client
             LogDiagnosticEvents(eventCount);
             LogConnectionState();
             itemPropController.UpdateAuthoritativeState(client);
+            UpdateLocalShelterState();
 
             uint localActionResultCount = client.Kernel.PollLocalActionResults(
                 localActionResults);
@@ -320,6 +331,7 @@ namespace NetworkExample.UnityDemo.Client
                 ClearAgentObservation();
                 strikePreview?.Hide();
                 debugView?.SetStrikePreview(false, Vector3.zero);
+                ClearLocalShelterState();
                 localPlayerDead = false;
                 started = false;
                 return;
@@ -356,6 +368,7 @@ namespace NetworkExample.UnityDemo.Client
             WarnIfReadyWithoutRenderStates(safeRenderCount);
             ObserveFireStall(safeRenderCount);
             renderStateApplier.Apply(renderStates, safeRenderCount);
+            UpdateShelterRestView(safeRenderCount);
             bool hasLocalPlayer = TryGetLocalPlayerState(
                 safeRenderCount,
                 client.LocalPlayerNetId,
@@ -400,7 +413,8 @@ namespace NetworkExample.UnityDemo.Client
                     client,
                     renderStates,
                     safeRenderCount,
-                    inputSampler.IsItemUseBlocked);
+                    inputSampler.IsItemUseBlocked,
+                    shelterNetId);
 
             // Retain this completed frame for the next input tick. Lifecycle events
             // win over render samples from the same update.
@@ -446,6 +460,7 @@ namespace NetworkExample.UnityDemo.Client
             localPlayerDead = false;
             strikePreview?.Hide();
             debugView?.SetStrikePreview(false, Vector3.zero);
+            ClearLocalShelterState();
             aimReticleView?.SetVisible(true);
             followCamera?.SetTarget(null);
             renderStateApplier?.Clear();
@@ -596,6 +611,12 @@ namespace NetworkExample.UnityDemo.Client
             }
             aimReticleView.Configure(followCamera);
 
+            shelterRestView = GetComponent<ShelterRestView>();
+            if (shelterRestView == null)
+            {
+                shelterRestView = gameObject.AddComponent<ShelterRestView>();
+            }
+
             inputSampler = GetComponent<NetworkInputSampler>();
             if (inputSampler == null)
             {
@@ -683,6 +704,139 @@ namespace NetworkExample.UnityDemo.Client
             renderStateApplier.ConfigureSplatters(hitSplatters);
             propShatter.Configure(entityRoot);
             renderStateApplier.ConfigureShatter(propShatter);
+        }
+
+        /// <summary>
+        /// Reads which building the local player is inside and opens or closes
+        /// the rest UI on the change.
+        /// </summary>
+        /// <remarks>
+        /// The UI follows this state and nothing else -- not the activation
+        /// request. The server moves the player in or out a tick after it
+        /// accepts one, so a refused request never changes it, and being thrown
+        /// out when the building collapses changes it back to 0 the same way
+        /// leaving does.
+        /// </remarks>
+        private void UpdateLocalShelterState()
+        {
+            uint netId = 0;
+            uint uiId = 0;
+            if (client.IsReady &&
+                client.Kernel.TryGetLocalShelterState(out KernelLocalShelterState state))
+            {
+                netId = state.shelter_net_id;
+                uiId = state.ui_id;
+                shelterAuthoritativeTick = state.authoritative_tick;
+            }
+
+            if (netId != shelterNetId || uiId != shelterUiId)
+            {
+                if (enableDiagnostics)
+                {
+                    Debug.Log(
+                        "Client local shelter changed from " + shelterNetId +
+                        " to " + netId + " ui=" + uiId +
+                        " at tick " + shelterAuthoritativeTick + ".");
+                }
+
+                shelterNetId = netId;
+                shelterUiId = uiId;
+                if (netId != 0 && uiId != 0)
+                {
+                    shelterRestView?.Open(uiId);
+                }
+                else
+                {
+                    shelterRestView?.Close();
+                }
+            }
+
+            inputSampler.SetSheltered(netId != 0);
+            renderStateApplier.SetShelteredActor(netId != 0 ? client.LocalPlayerNetId : 0u);
+        }
+
+        private void ClearLocalShelterState()
+        {
+            shelterNetId = 0;
+            shelterUiId = 0;
+            shelterAuthoritativeTick = 0;
+            shelterRestView?.Close();
+            inputSampler?.SetSheltered(false);
+            renderStateApplier?.SetShelteredActor(0);
+        }
+
+        /// <summary>
+        /// Feeds the rest UI the building's countdown and HP from this frame's
+        /// render state of it.
+        /// </summary>
+        /// <remarks>
+        /// The countdown is measured against the shelter state's tick, the
+        /// newest snapshot's, rather than the interpolated render time: it is
+        /// the one server tick this client is told outright.
+        /// </remarks>
+        private void UpdateShelterRestView(int safeRenderCount)
+        {
+            if (shelterRestView == null || !shelterRestView.IsOpen || shelterNetId == 0)
+            {
+                return;
+            }
+
+            bool hasBuilding = false;
+            RenderEntityState building = default;
+            for (int index = 0; index < safeRenderCount; ++index)
+            {
+                if (renderStates[index].net_id == shelterNetId)
+                {
+                    building = renderStates[index];
+                    hasBuilding = true;
+                    break;
+                }
+            }
+
+            uint lifetimeTicks = 0;
+            if (hasBuilding &&
+                shelterTemplates != null &&
+                shelterTemplates.TryGetValue(
+                    building.template_id,
+                    out NetworkShelterTemplate template))
+            {
+                lifetimeTicks = template.LifetimeTicks;
+            }
+
+            shelterRestView.SetStatus(
+                hasBuilding,
+                lifetimeTicks != 0,
+                ShelterRestView.RemainingTicks(
+                    building.spawn_tick,
+                    lifetimeTicks,
+                    shelterAuthoritativeTick),
+                ServerTickRate,
+                building.hp,
+                building.max_hp);
+        }
+
+        /// <summary>
+        /// Hands the item controller the buildings a player can go inside.
+        /// </summary>
+        /// <remarks>
+        /// A warning rather than a failure: without it interact finds nothing to
+        /// go into and the rest UI shows no countdown, and nothing else changes.
+        /// </remarks>
+        private void ConfigureShelters(byte[] bundleBytes, string entryPath)
+        {
+            if (!NetworkGameplayCatalogBundle.TryReadShelterTemplates(
+                    bundleBytes,
+                    entryPath,
+                    out shelterTemplates,
+                    out string diagnostic))
+            {
+                Debug.LogWarning(
+                    "Client could not read shelter templates, so buildings cannot be entered: " +
+                    diagnostic);
+                shelterTemplates = new Dictionary<uint, NetworkShelterTemplate>();
+            }
+
+            itemPropController.ConfigureShelters(shelterTemplates);
         }
 
         private void UpdateCameraTarget(uint localPlayerNetId)
@@ -812,7 +966,8 @@ namespace NetworkExample.UnityDemo.Client
             if (!logActionResultFailures ||
                 result.result == KernelLocalActionResultType.Accepted ||
                 result.reason == KernelLocalActionResultReason.Staggered ||
-                result.reason == KernelLocalActionResultReason.KnockedBack)
+                result.reason == KernelLocalActionResultReason.KnockedBack ||
+                result.reason == KernelLocalActionResultReason.Sheltered)
             {
                 return;
             }
@@ -1120,6 +1275,7 @@ namespace NetworkExample.UnityDemo.Client
             ConfigureTargetedStrikes(bundleBytes, syncResult.Manifest.entry_path);
             ConfigureWeaponFireTriggerModes(bundleBytes, syncResult.Manifest.entry_path);
             ConfigureAgentNavMesh(bundleBytes, syncResult.Manifest.entry_path);
+            ConfigureShelters(bundleBytes, syncResult.Manifest.entry_path);
             agentColliderShapes.InvalidateCatalog();
             return true;
         }

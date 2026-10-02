@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using NetworkExample.Kernel;
+using NetworkExample.UnityDemo.Common;
 using UnityEngine;
 
 namespace NetworkExample.UnityDemo.Items
@@ -75,6 +77,72 @@ namespace NetworkExample.UnityDemo.Items
                     bestDistanceSquared = distanceSquared;
                     found = true;
                 }
+            }
+
+            return found;
+        }
+
+        /// <summary>
+        /// Picks the nearest building the local player is close enough to go
+        /// inside, measured the way the server measures it: straight-line 3D
+        /// distance against that template's own interaction range.
+        /// </summary>
+        /// <remarks>
+        /// Nearest rather than best-aligned, unlike a pickup. A tent is big
+        /// enough to stand beside without facing it, and the server checks no
+        /// facing either.
+        /// </remarks>
+        public static bool TrySelectShelterTarget(
+            RenderEntityState[] states,
+            int count,
+            uint localPlayerNetId,
+            IReadOnlyDictionary<uint, NetworkShelterTemplate> shelterTemplates,
+            out RenderEntityState target)
+        {
+            target = default;
+            if (states == null || localPlayerNetId == 0 ||
+                shelterTemplates == null || shelterTemplates.Count == 0)
+            {
+                return false;
+            }
+
+            int safeCount = Mathf.Clamp(count, 0, states.Length);
+            if (!TryFindLocalPlayerPosition(
+                    states,
+                    safeCount,
+                    localPlayerNetId,
+                    out Vector3 playerPosition))
+            {
+                return false;
+            }
+
+            float bestDistanceSquared = float.PositiveInfinity;
+            bool found = false;
+            for (int index = 0; index < safeCount; ++index)
+            {
+                RenderEntityState state = states[index];
+                if (state.entity_type != KernelEntityType.Prop ||
+                    state.net_id == 0 ||
+                    !shelterTemplates.TryGetValue(
+                        state.template_id,
+                        out NetworkShelterTemplate shelter) ||
+                    shelter.InteractionRange <= 0f)
+                {
+                    continue;
+                }
+
+                float distanceSquared =
+                    (ToVector3(state.position) - playerPosition).sqrMagnitude;
+                if (!float.IsFinite(distanceSquared) ||
+                    distanceSquared > shelter.InteractionRange * shelter.InteractionRange ||
+                    distanceSquared >= bestDistanceSquared)
+                {
+                    continue;
+                }
+
+                target = state;
+                bestDistanceSquared = distanceSquared;
+                found = true;
             }
 
             return found;

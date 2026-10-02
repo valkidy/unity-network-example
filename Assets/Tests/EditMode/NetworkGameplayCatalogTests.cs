@@ -10,6 +10,25 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
     public sealed class NetworkGameplayCatalogTests
     {
         [Test]
+        public void TryReadShelterTemplates_ReadsTheTentsLifetimeAndReach()
+        {
+            Assert.That(
+                NetworkGameplayCatalogBundle.TryLoadDefault(out byte[] bundle, out string entry),
+                Is.True);
+
+            bool read = NetworkGameplayCatalogBundle.TryReadShelterTemplates(
+                bundle,
+                entry,
+                out Dictionary<uint, NetworkShelterTemplate> shelters,
+                out string diagnostic);
+
+            Assert.That(read, Is.True, diagnostic);
+            Assert.That(shelters.Keys, Is.EquivalentTo(new uint[] { 216 }));
+            Assert.That(shelters[216].LifetimeTicks, Is.EqualTo(5400));
+            Assert.That(shelters[216].InteractionRange, Is.EqualTo(2.5f));
+        }
+
+        [Test]
         public void TryLoadDefault_LoadsGameplayCatalogBundleBytesFromResources()
         {
             bool loaded = NetworkGameplayCatalogBundle.TryLoadDefault(

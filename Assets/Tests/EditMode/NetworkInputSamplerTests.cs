@@ -670,6 +670,31 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
         }
 
         [Test]
+        public void CanRestartWhileHeld_WaitsOutAShelter()
+        {
+            Assert.That(
+                NetworkInputSampler.CanRestartWhileHeld(
+                    KernelLocalActionResultReason.Sheltered),
+                Is.True);
+        }
+
+        [Test]
+        public void SampleExplicit_WhileSheltered_SendsNoActionButKeepsMovement()
+        {
+            sampler.SetSheltered(true);
+
+            KernelPlayerInput fire = sampler.SampleExplicit(
+                Vector2.right, Vector3.forward, false, true, false);
+
+            Assert.That(sampler.IsActionBlocked, Is.True);
+            Assert.That(fire.action_intent.action_instance_id, Is.Zero);
+            Assert.That(fire.move.x, Is.EqualTo(1f));
+
+            sampler.SetSheltered(false);
+            Assert.That(sampler.IsActionBlocked, Is.False);
+        }
+
+        [Test]
         public void SampleExplicit_WhileStaggered_SendsNoActionAndNoMovement()
         {
             sampler.UpdateLocalActorState(staggered: true, grounded: true, airborne: false, launched: false, 0.1f);

@@ -79,6 +79,17 @@ namespace NetworkExample.UnityDemo.Rendering
         private const int MaxRememberedRemoteCommits = 512;
         private const int MaxRememberedActorTickEvents = 512;
 
+        private uint shelteredActorNetId;
+
+        /// <summary>
+        /// The actor to hide because it is inside a building, 0 for none. Set
+        /// before <see cref="Apply"/> each frame from the local shelter state.
+        /// </summary>
+        public void SetShelteredActor(uint netId)
+        {
+            shelteredActorNetId = netId;
+        }
+
         public void Configure(
             NetworkEntityRegistry registry,
             NetworkPrefabRegistry prefabs,
@@ -185,8 +196,14 @@ namespace NetworkExample.UnityDemo.Rendering
                         // Dead. Driven from the flag every frame rather than
                         // from its edges, so a player first seen already dead
                         // is hidden from the frame it is instantiated.
+                        //
+                        // A player inside a building is hidden the same way and
+                        // from the same call, so the two cannot fight over it.
+                        // Only the local player: nothing tells this client who
+                        // else is inside.
                         GetOrAddActorView(visual).SetBodyHidden(
-                            isDead && state.actor_type == KernelActorType.Player);
+                            isDead && state.actor_type == KernelActorType.Player ||
+                            state.net_id != 0 && state.net_id == shelteredActorNetId);
 
                         // The same edge rule as death, and for the same reason:
                         // an actor first seen mid-stagger was staggered out of
@@ -305,6 +322,7 @@ namespace NetworkExample.UnityDemo.Rendering
 
         public void Clear()
         {
+            shelteredActorNetId = 0;
             skeletonApplicators.Clear();
             skeletonApplyErrors.Clear();
             knownEntities.Clear();

@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using NetworkExample.Kernel;
+using NetworkExample.UnityDemo.Common;
 using NetworkExample.UnityDemo.Items;
 using NetworkExample.UnityDemo.Rendering;
 using NUnit.Framework;
@@ -52,6 +54,16 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
             ItemPropInputCommand commands = itemSampler.SampleCommands();
 
             Assert.That(commands, Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void SampleCommands_InteractKey_ReturnsInteract()
+        {
+            SetKeys(Key.F);
+
+            Assert.That(
+                itemSampler.SampleCommands() & ItemPropInputCommand.Interact,
+                Is.EqualTo(ItemPropInputCommand.Interact));
         }
 
         [Test]
@@ -306,6 +318,58 @@ namespace NetworkExample.UnityDemo.Tests.EditMode
                     3f,
                     out _),
                 Is.False);
+        }
+
+        private static readonly Dictionary<uint, NetworkShelterTemplate> Tents =
+            new Dictionary<uint, NetworkShelterTemplate>
+            {
+                { 216, new NetworkShelterTemplate(5400, 2.5f) },
+            };
+
+        [Test]
+        public void ShelterTarget_PicksNearestTentInReachWhateverTheFacing()
+        {
+            RenderEntityState[] states =
+            {
+                Player(10, Vector3.zero),
+                Building(30, 216, new Vector3(0f, 0f, 2.2f)),
+                Building(31, 216, new Vector3(0f, 0f, -1.5f)),
+            };
+
+            bool found = ItemPropTargetSelector.TrySelectShelterTarget(
+                states, states.Length, 10, Tents, out RenderEntityState target);
+
+            Assert.That(found, Is.True);
+            Assert.That(target.net_id, Is.EqualTo(31));
+        }
+
+        [Test]
+        public void ShelterTarget_MeasuresRangeIn3DAndIgnoresOtherProps()
+        {
+            RenderEntityState[] states =
+            {
+                Player(10, Vector3.zero),
+                // 2.0 across, 3.0 up: 3.6 m away, out of a 2.5 m reach.
+                Building(30, 216, new Vector3(2f, 3f, 0f)),
+                // Close, but not a building.
+                Building(31, 204, new Vector3(0.5f, 0f, 0f)),
+            };
+
+            Assert.That(
+                ItemPropTargetSelector.TrySelectShelterTarget(
+                    states, states.Length, 10, Tents, out _),
+                Is.False);
+        }
+
+        private static RenderEntityState Building(uint netId, uint templateId, Vector3 position)
+        {
+            return new RenderEntityState
+            {
+                net_id = netId,
+                entity_type = KernelEntityType.Prop,
+                template_id = templateId,
+                position = ToKernel(position),
+            };
         }
 
         private static RenderEntityState Player(uint netId, Vector3 position)
